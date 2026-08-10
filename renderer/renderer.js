@@ -833,12 +833,25 @@ function launchMenuEntries(cwd) {
   });
 }
 
+// Закрыть открытое сейчас меню (оно одно на окно) и кнопка, под которой оно висит.
+let launchMenuClose = null;
+let launchMenuAnchor = null;
+
 // Показать это меню под кнопкой. Отвечает опциями для createSession ({} — «как в папке»,
 // то есть сегодняшнее наследование) или null, если меню закрыли не выбрав: тогда вкладки
 // не будет вовсе — как при отмене в pickAgent.
 function openLaunchMenu(anchor, cwd) {
   const entries = launchMenuEntries(cwd);
   if (!entries) return Promise.resolve({});
+  // Меню одно на всё окно, поэтому прежнее закрываем ЧЕСТНО, через его же close: иначе его
+  // обещание не разрешится никогда (тот, кто его ждёт, повиснет навсегда), а слушатели мыши и
+  // клавиш останутся на document и будут гасить чужое меню. Повторный клик по ТОЙ ЖЕ кнопке —
+  // это «закрыть», как у меню команд: мимо кнопки-хозяйки закрытие по клику снаружи не срабатывает.
+  if (launchMenuClose) {
+    const again = launchMenuAnchor === anchor;
+    launchMenuClose(null);
+    if (again) return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     launchMenu.innerHTML = '';
     for (const e of entries) {
@@ -852,10 +865,19 @@ function openLaunchMenu(anchor, cwd) {
     }
     const close = (val) => {
       launchMenu.classList.add('hidden');
+      launchMenuClose = null;
+      launchMenuAnchor = null;
       document.removeEventListener('mousedown', outside);
       document.removeEventListener('keydown', onKey, true);
+      // Фокус мы забрали у терминала (нижняя строка), а вкладку не открыли — значит вернуть его
+      // некому: он остался бы на спрятанной кнопке, то есть нигде, и всё набранное после Esc
+      // уходило бы в никуда до клика мышью. На выбранном пункте возвращать не надо — там фокус
+      // заберёт новая вкладка.
+      if (!val) sessions.get(activeId)?.term.focus();
       resolve(val || null);
     };
+    launchMenuClose = close;
+    launchMenuAnchor = anchor;
     const outside = (ev) => {
       if (!launchMenu.contains(ev.target) && !anchor.contains(ev.target)) close(null);
     };
@@ -913,11 +935,20 @@ window.swarm.onTabProcess(({ id, cmd }) => {
   const s = sessions.get(id);
   if (!s || s.blank || s.cmd === word) return;
   if (LAUNCH_API.isAliasExpansion(s.cmd, word)) return;
-  s.cmd = word;
+  relearnCmd(s, word);
   // Запущено не нами — значит и строка запуска у main устарела (см. session:forgetLaunch).
   window.swarm.forgetLaunch(id);
   persistTabs();
 });
+
+// Вкладка сменила агента. Флаги СТИРАЕМ вместе с именем: они были от прежнего запуска, а какие
+// набрал человек — мы не знаем. Иначе папка, открытая как `claude --model opus`, после ручного
+// перехода на codex предлагала бы в меню «codex --model opus» и запускала бы codex с чужим
+// флагом; до меню это же враньё уезжало в восстановление вкладки после релонча.
+function relearnCmd(s, cmd) {
+  s.cmd = cmd;
+  s.flags = '';
+}
 
 function rememberStartCommand(line, sessionId) {
   const cmd = launchWordFrom(line);
@@ -930,7 +961,7 @@ function rememberStartCommand(line, sessionId) {
   // Don't bind a clean terminal to a cmd: it restores empty regardless, so the
   // learned cmd would be dead data.
   if (s && !s.blank && s.cmd !== cmd) {
-    s.cmd = cmd;
+    relearnCmd(s, cmd);
     window.swarm.forgetLaunch(sessionId);   // см. session:forgetLaunch
     persistTabs();
   }
