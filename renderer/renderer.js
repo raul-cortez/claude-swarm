@@ -4142,12 +4142,11 @@ window.swarm.onRestartAgent(async ({ id, prompt }) => {
   const s = sessions.get(sid);
   if (!s || s.blank) return;
   const key = resumeSessions && RESUME_API.supports(s.cmd) ? RESUME_API.newSessionKey() : null;
-  const r = await window.swarm.relaunchSession({ id: sid, sessionKey: key, prompt });
-  if (!r || !r.ok) return;
-  s.sessionKey = key;
-  // Новый claudeSessionId придёт своим каналом (session:claude) — им же вкладка узнаёт про
-  // /clear и про `claude`, набранный руками. Здесь его не трогаем, чтобы не затереть.
-  persistTabs();
+  // Ответ на вызов нам не нужен: и ярлык, и новый claudeSessionId приезжают известиями
+  // (session:restarted и session:claude), потому что напечатать запуск может не только этот
+  // вызов, но и main сам, позже — когда прежний агент вышел не сразу. Сохранение по ответу
+  // теряло бы ярлык именно в этом случае.
+  await window.swarm.relaunchSession({ id: sid, sessionKey: key, prompt });
 });
 
 // Строки в журнал приложения: утром видно не только «работал восемь часов», но и сколько раз
@@ -4159,8 +4158,15 @@ function restartJournal(id, text) {
   recordLog(name, 'info', text);
 }
 
-window.swarm.onRestarted(({ id, n }) => {
+window.swarm.onRestarted(({ id, n, sessionKey }) => {
   restartJournal(id, `перезапуск №${n}: контекст заполнился, начал с чистой сессии`);
+  // Ярлык нового разговора. Старый указывает на брошенный, и оставить его — значит однажды
+  // вернуться в него: после релонча сворма вкладка ищет разговор сначала по id, а если того на
+  // диске нет — по ИМЕНИ, то есть по ярлыку.
+  const s = sessions.get(String(id));
+  if (!s) return;
+  s.sessionKey = sessionKey || null;
+  persistTabs();
 });
 
 // Всё, что случилось по дороге и НЕ кончилось перезапуском: «не сейчас», нет ответа, отмена.

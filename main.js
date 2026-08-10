@@ -4235,6 +4235,21 @@ function restartAnswerFile(id, d) {
   return path.join(restartDir(), name);
 }
 
+function restartHandoffName(id, d) {
+  return '.swarm-handoff-' + restartKeyOf(id, d) + '.md';
+}
+
+// Наши файлы из ПАПКИ ВКЛАДКИ. Внутри репозитория им жить незачем: ответ прочитан, эстафета
+// прочитана свежей сессией, а лежать в чужом `git status` они не должны — однажды уедут в
+// чей-нибудь `git add -A`. Архив эстафет остаётся у нас, там их и смотреть.
+function restartSweepCwd(id, d) {
+  const cwd = d && d.cwd;
+  if (!cwd) return;
+  for (const f of [restartAnswerFile(id, d), path.join(cwd, restartHandoffName(id, d))]) {
+    try { fs.unlinkSync(f); } catch (_) { /* нет — и хорошо */ }
+  }
+}
+
 // Заполнение контекста для решения о перезапуске. Тот же снимок от статуслайна, что у полоски и
 // /usage, но со своим сроком годности: у /usage он пять минут, потому что там человек ищет
 // признак жизни и пятиминутная давность соврала бы. Здесь наоборот — мы спрашиваем именно
@@ -4275,6 +4290,16 @@ function restartType(id, text) {
 }
 
 function restartAsk(id, d, pct) {
+  // А агент-то там есть? «Готов» на пустой оболочке выглядит точно так же, как «готов» у
+  // отдохнувшего агента, а снимок расхода живёт своей жизнью ещё три четверти часа после того,
+  // как Клода закрыли руками. Без этой проверки двадцать строк просьбы уезжали бы в ШЕЛЛ, и он
+  // послушно попытался бы их выполнить. `undefined` — это Windows, где про процессы мы не знаем
+  // ничего (см. scanTabProcesses); там остаётся как было.
+  if (d.shellBusy === false) {
+    restartLog(`вкладка ${id}: в оболочке пусто — агента нет, не спрашиваю`);
+    d.rsRetryAt = Date.now() + RESTART_BLOCKED_MS;
+    return;
+  }
   // Та же проверка, что перед печатью команды из телеги (tgTypeClaudeCommand) и по той же
   // причине: рамка на экране съест просьбу, и агент её даже не увидит.
   if (parsePrompt(promptSnapshot(d))) {
@@ -4304,9 +4329,12 @@ function restartSaveHandoff(id, d, text) {
   try {
     fs.writeFileSync(path.join(restartDir(), restartKeyOf(id, d) + '-' + stamp + '.md'), body, 'utf8');
   } catch (_) { /* архив не главное — главное та копия, которую прочитают */ }
+  // С ключом вкладки, как и файл ответа, и ровно по той же причине: две вкладки в одном
+  // репозитории — норма, а на общем имени второй агент затёр бы записку первого, и свежая сессия
+  // прочитала бы чужую задачу вместо своей.
   const cwd = d && d.cwd;
   const file = cwd && fs.existsSync(cwd)
-    ? path.join(cwd, '.swarm-handoff.md')
+    ? path.join(cwd, restartHandoffName(id, d))
     : path.join(restartDir(), restartKeyOf(id, d) + '-' + stamp + '.md');
   try {
     fs.writeFileSync(file, body, 'utf8');
@@ -4364,6 +4392,21 @@ function restartReadAnswer(id, d) {
     }
     return;
   }
+  // Разрешение получено — но исполняем его только по спокойной вкладке, и проверять это надо
+  // ЗДЕСЬ, а не только в момент вопроса. Между вопросом и ответом проходит до десяти минут, и за
+  // это время вкладка успевает снова взяться за работу двумя путями: агент дописал ответ
+  // инструментом, не закончив ход, — или человек утром сам написал в неё, пока ночное «можно» ещё
+  // не просрочилось. В обоих случаях `/exit` уехал бы в работающего агента, а свежая сессия
+  // стартовала бы с ночным промптом поверх начатого разговора. Ответ не выбрасываем: он ещё
+  // годен, дождёмся тишины.
+  if (d.status !== 'ready') {
+    if (d.rsWaitCalm !== d.status) {
+      d.rsWaitCalm = d.status;
+      restartLog(`вкладка ${id}: разрешение есть, но она снова занята (${d.status}) — жду тишины`);
+    }
+    return;
+  }
+  d.rsWaitCalm = '';
   d.rsUnparsed = 0;
   try { fs.unlinkSync(file); } catch (_) {}
   if (!a.restart) {
@@ -4400,10 +4443,15 @@ setInterval(() => {
     // оболочкой, если строку не напечатать. Снять галочку в этот момент — значит бросить вкладку,
     // а настройка «на будущее» не должна доламывать то, что уже началось.
     if (d.rsPendingLine) {
+      // Пока перезапуском занят его собственный обработчик — не лезем. Иначе тик успевает
+      // напечатать строку между двумя его проверками, обработчик находит заготовку уже пустой и
+      // докладывает рендереру о неудаче — а тот на неудаче не сохраняет новый ярлык разговора.
+      // Перезапуск при этом состоялся: получилась вкладка с новым разговором и старым ярлыком.
+      if (d.rsBusy && now - (d.rsBusyAt || 0) < RESTART_BUSY_MS) continue;
       // Ждём столько, сколько нужно: `/exit` из очереди никуда не денется, агент выйдет и через
       // час. Отменять по таймеру мы пробовали — именно так и получается голая оболочка, потому
       // что отмена и выход агента расходятся во времени.
-      if (d.shellBusy === false) restartFire(id, d);
+      if (agentGone(d)) restartFire(id, d);
       continue;
     }
     if (!RESTART_ENABLED) continue;
@@ -4451,16 +4499,32 @@ function pruneRestart() {
 // (shouldAsk) — из простоя `/exit` выполняется сразу, и слепое ожидание перестаёт быть ставкой.
 function shellFree(id, d) {
   return new Promise((resolve) => {
-    if (d.shellBusy === undefined) { setTimeout(resolve, RESTART_EXIT_BLIND_MS); return; }
     const until = Date.now() + RESTART_EXIT_WAIT_MS;
     const wait = () => {
       if (!sessions.has(id)) return resolve();      // вкладку закрыли — пусть решает вызвавший
-      if (d.shellBusy === false) return resolve();
+      if (agentGone(d)) return resolve();
       if (Date.now() > until) return resolve();
       setTimeout(wait, 500);
     };
     wait();
   });
+}
+
+// Ушёл ли агент из вкладки. Два ответа на один вопрос, потому что источники разной надёжности:
+//
+//   • `ps` (scanTabProcesses) отвечает точно: в оболочке пусто. Так на маке и линуксе.
+//   • Windows: `ps` там нет, и раньше мы просто ждали десять секунд и печатали вслепую — то есть
+//     на медленном выходе строка запуска уезжала живому агенту репликой в разговор. Теперь
+//     смотрим на экран: мебель Клода (строка режима под полем ввода) исчезает вместе с ним.
+//     Ответ грубее, но это проверка, а не ставка.
+//
+// Открытый диалог считаем «агент на месте» в любом случае: строки режима при нём тоже нет, и
+// принять это за уход означало бы напечатать запуск в рамку запроса.
+function agentGone(d) {
+  if (parsePrompt(promptSnapshot(d))) return false;
+  if (d.shellBusy === false) return true;
+  if (d.shellBusy === undefined) return !readMode(snapshot(d));
+  return false;
 }
 
 // Собрать строку нового запуска из той, которой вкладку запустили. Берём именно её, а не
@@ -4521,8 +4585,17 @@ function restartFire(id, d) {
   d.restarts = (d.restarts || 0) + 1;
   d.rsAskedAt = 0;
   d.rsRetryAt = 0;
+  // Уговор «отвечаешь коротко и в телегу» живёт в первом сообщении разговора и уходит вместе с
+  // ним — ровно как при /clear (см. forgets в tgTypeClaudeCommand). Не снять отметку значит: с
+  // утра первое сообщение с телефона придёт без уговора, и свежий агент ответит в чат простынёй.
+  // Заодно и tgLastSent: по нему стенограмма ищет файл вкладки, а он от прошлого разговора.
+  d.tgPrimed = false;
+  d.tgLastSent = '';
   restartLog(`вкладка ${id}: перезапуск №${d.restarts}, новый разговор ${sessionId || '—'}`);
-  safeSend('session:restarted', { id, n: d.restarts });
+  // Ярлык уезжает вкладке вместе с известием: печатать запуск может и тик (когда агент вышел
+  // позже, чем мы ждали), а тогда рендерер про новый ярлык иначе не узнает — и после релонча
+  // сворма запасной путь по ИМЕНИ поднял бы брошенный разбухший разговор.
+  safeSend('session:restarted', { id, n: d.restarts, sessionKey: d.rsKey || null });
   return true;
 }
 
@@ -4558,6 +4631,7 @@ ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
   d.rsPendingLine = line;
   d.rsPendingBase = built.cmd;
   d.rsPendingSession = built.sessionId || null;
+  d.rsKey = String(opts.sessionKey || '') || null;
   restartType(id, '/exit');
   await shellFree(id, d);
   if (!sessions.has(id)) {
@@ -4565,7 +4639,7 @@ ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
     d.rsPendingLine = '';
     return done({ ok: false });
   }
-  if (d.shellBusy) {
+  if (!agentGone(d)) {
     // Агент не вышел за отведённое время. Печатать сейчас нельзя — строка уедет ему репликой в
     // разговор, — но и отменять нечего: `/exit` уже в очереди. Заготовка ждёт своей оболочки.
     restartLog(`вкладка ${id}: агент ещё не вышел — запуск ждёт освободившейся оболочки`);
@@ -4636,10 +4710,9 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
 
   child.onExit(({ exitCode }) => {
     tgOnTabGone(det.get(id));
-    // Файл ответа лежит в папке вкладки, то есть в чужом репозитории. Обычно он живёт секунды —
-    // прочитали и удалили, — но если вкладку закрыли между записью и чтением, он остался бы
-    // висеть в `git status` навсегда и однажды уехал бы в чей-нибудь `git add -A`.
-    try { fs.unlinkSync(restartAnswerFile(id, det.get(id))); } catch (_) {}
+    // Наши служебные файлы лежат в папке вкладки, то есть в чужом репозитории. Обычно они живут
+    // секунды, но если вкладку закрыли между записью и чтением — остались бы висеть в `git status`.
+    restartSweepCwd(id, det.get(id));
     sessions.delete(id);
     safeSend('session:exit', { id, code: exitCode });
   });
