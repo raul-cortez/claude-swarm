@@ -140,17 +140,17 @@ test('мусор вместо ответа — null, а не догадка', ()
 // Эстафета приходит оттуда, куда пишет не только наш агент (комментарий в чужом таске).
 // Поэтому текст от агента становится ОДНИМ аргументом, а не строкой для шелла.
 test('промпт уезжает одним аргументом, шелл в него не влезает', () => {
-  const line = R.launchLine('claude -n swarm-ab12', 'продолжи; rm -rf ~ && echo `whoami`');
+  const line = R.launchLine('claude -n swarm-ab12', 'продолжи; rm -rf ~ && echo `whoami`', 'posix');
   assert.strictEqual(line, "claude -n swarm-ab12 'продолжи; rm -rf ~ && echo `whoami`'");
   assert.ok(!/^[^']*&&/.test(line), 'команда не должна распадаться на две');
 });
 
 test('кавычка в промпте не разрывает аргумент', () => {
-  assert.strictEqual(R.launchLine('claude', "файл 'a.js'"), "claude 'файл '\\''a.js'\\'''");
+  assert.strictEqual(R.launchLine('claude', "файл 'a.js'", 'posix'), "claude 'файл '\\''a.js'\\'''");
 });
 
 test('перевод строки в промпте не превращается в Enter', () => {
-  const line = R.launchLine('claude', 'первая строка\nвторая строка');
+  const line = R.launchLine('claude', 'первая строка\nвторая строка', 'posix');
   assert.ok(!line.includes('\n'), 'иначе половина промпта уедет в шелл отдельной командой');
   assert.strictEqual(line, "claude 'первая строка вторая строка'");
 });
@@ -168,9 +168,19 @@ test('powershell — одинарные с удвоением, обратный 
   assert.strictEqual(R.quoteArg("файл 'a.js'", 'powershell'), "'файл ''a.js'''");
 });
 
+// Незнакомая оболочка (nushell, xonsh, что-то своё в $SHELL): синтаксис экранирования нам
+// неизвестен, гадать нельзя. Двойные кавычки понимают все, а особые знаки из промпта убираем —
+// кусок формулировки дешевле сломанной команды.
+test('незнакомая оболочка — двойные кавычки и никаких особых знаков внутри', () => {
+  assert.strictEqual(R.quoteArg("файл 'a.js'", null), '"файл \'a.js\'"');
+  const risky = R.quoteArg('эхо `whoami` и $HOME и "кавычка" и \\слэш', null);
+  assert.ok(!/[`$"\\]/.test(risky.slice(1, -1)), 'внутри кавычек не должно остаться особых знаков');
+  assert.ok(risky.startsWith('"') && risky.endsWith('"'));
+});
+
 test('пустой промпт — просто команда, без пустых кавычек', () => {
-  assert.strictEqual(R.launchLine('claude -n swarm-1', ''), 'claude -n swarm-1');
-  assert.strictEqual(R.launchLine('', 'что-то'), '');
+  assert.strictEqual(R.launchLine('claude -n swarm-1', '', 'posix'), 'claude -n swarm-1');
+  assert.strictEqual(R.launchLine('', 'что-то', 'posix'), '');
 });
 
 test('в просьбе есть и путь ответа, и процент, и все поля', () => {
