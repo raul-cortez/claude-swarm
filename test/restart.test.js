@@ -85,7 +85,8 @@ test('спрашиваем только отдохнувшую вкладку', 
 // уезжали в ШЕЛЛ, и он послушно пытался их выполнить.
 test('агента в оболочке нет — не спрашиваем', () => {
   assert.strictEqual(step(idle(), { shellBusy: false }).action, 'nothing');
-  // undefined — Windows, там про процессы неизвестно ничего; спрашиваем как обычно.
+  // undefined — Windows, где `ps` недоступен: там решает мебель Клода на экране (см. отдельный
+  // тест ниже). В sig() она видна, поэтому спрашиваем как обычно.
   assert.strictEqual(step(idle(), { shellBusy: undefined }).action, 'ask');
 });
 
@@ -231,6 +232,34 @@ test('без строки запуска гасить нечем, но и жда
   assert.strictEqual(r.action, 'drop');
   assert.strictEqual(r.state.phase, 'idle');
   assert.ok(r.state.retryAt > NOW, 'и с отсрочкой, иначе следующий тик придёт через полминуты');
+});
+
+// Ревью, проход 7: проверка «агент в оболочке есть» стояла только у просьбы, а гасит `/exit`
+// больше. За время ожидания покоя человек мог закрыть Клода и запустить в той же оболочке npm test —
+// и наш `/exit` с Enter уезжал туда.
+test('гасить тоже нельзя, если агента в оболочке уже нет', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  assert.strictEqual(R.step(granted, sig({ hasLine: true, shellBusy: false })).action, 'nothing');
+  assert.strictEqual(
+    R.step(granted, sig({ hasLine: true, shellBusy: undefined, modeVisible: false })).action,
+    'nothing',
+  );
+  assert.strictEqual(R.step(granted, sig({ hasLine: true })).action, 'exit');
+});
+
+// Ревью, проход 7: у просроченного разрешения не было потолка. Агент, который разрешает и уходит
+// работать дольше срока годности, вежлив, но результат тот же: круг каждые полчаса всю ночь.
+test('разрешил и не дождались — тоже считается молчанием, с тем же потолком', () => {
+  let st = { ...idle(), phase: 'granted', at: NOW - R.GRANT_CALM_MS - 1, prompt: 'дальше' };
+  for (let i = 1; i < R.MAX_SILENT; i++) {
+    const r = R.step(st, sig({ hasLine: true }));
+    assert.strictEqual(r.state.phase, 'idle');
+    assert.strictEqual(r.state.silent, i);
+    st = { ...r.state, phase: 'granted', at: NOW - R.GRANT_CALM_MS - 1, prompt: 'дальше' };
+  }
+  const last = R.step(st, sig({ hasLine: true }));
+  assert.strictEqual(last.state.phase, 'muted');
+  assert.ok(last.note.includes('больше не спрашиваю'));
 });
 
 // Ревью, проход 2: отмена и выход агента расходятся во времени. /exit уже в очереди, отменить его
