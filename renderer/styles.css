@@ -656,6 +656,21 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .set-hint { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 5px; }
 /* A hint that sits ABOVE its field (the «why» line before the phrase box). */
 .set-hint-top { margin-top: 0; margin-bottom: 7px; }
+/* Ползунок с числом рядом (порог самоперезапуска). Число ведущее, а не подпись: настройка
+   читается против полоски контекста на вкладке, где стоит ровно это же число. Отсюда его
+   размер и моноширинность — чтобы при перетаскивании оно не дёргало ползунок шириной. */
+.set-range { display: flex; align-items: center; gap: 10px; }
+.set-range-input { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.set-range-input:disabled { cursor: default; opacity: 0.45; }
+.set-range-num {
+  min-width: 42px;
+  text-align: right;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.set-range-num.off { color: var(--muted); font-weight: 400; }
 /* «Will this phrase call me?» — a sample line plus the verdict, in the status colors
    the tab itself would take, so the answer reads the same way the dashboard does. */
 .ask-test { display: flex; align-items: center; gap: 8px; margin-top: 7px; }

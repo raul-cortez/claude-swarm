@@ -107,6 +107,26 @@ contextBridge.exposeInMainWorld('swarm', {
   // Показать журнал моста в Finder: «пришли журнал» не должно означать «открой терминал».
   showTgLog: () => ipcRenderer.invoke('telegram:showLog'),
 
+  // Самоперезапуск вкладки, когда её контекст заполнился (restart.js). Порог в процентах,
+  // отмеренных от точки автосжатия — то же число, что на полоске контекста.
+  setRestart: (opts) => ipcRenderer.send('settings:restart', opts),
+  // main дал добро на перезапуск (агент разрешил и прислал промпт). Ярлык разговора заводит
+  // рендерер: он же его хранит и восстанавливает вкладку после перезапуска приложения.
+  onRestartAgent: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('app:restartAgent', handler);
+    return () => ipcRenderer.removeListener('app:restartAgent', handler);
+  },
+  // Погасить прежнего агента и стартовать свежую сессию в той же вкладке. Возвращает id
+  // нового разговора — его вкладке и хранить.
+  relaunchSession: (opts) => ipcRenderer.invoke('session:relaunch', opts),
+  // Перезапуск случился — строка в журнал вкладки.
+  onRestarted: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:restarted', handler);
+    return () => ipcRenderer.removeListener('session:restarted', handler);
+  },
+
   // main просит открыть вкладку (это /new из телеги: main не умеет делать xterm и DOM).
   onCreateTab: (cb) => {
     const handler = (_e, payload) => cb(payload);

@@ -131,6 +131,7 @@ const APPEARANCE = window.SWARM_THEMES;       // terminal theme presets + helper
 const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scopes
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
+const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
 // persisted as a single JSON blob in localStorage (see swarm.appearance). Read by
@@ -638,6 +639,12 @@ let agentRules = localStorage.getItem('swarm.agentRules') !== '0';
 // Смысл настройки в том, что «разреши уже всё» — самое частое, что делают руками сразу после
 // открытия вкладки, а с телефона Shift+Tab не нажать вообще.
 let permMode = localStorage.getItem('swarm.permMode') || '';
+// «Перезапускать агента, когда контекст заполнится» (Settings → Запуск). Выключено по
+// умолчанию: функция сама решает, когда стереть разговор, и включать такое за человека нельзя.
+// Порог — в процентах с полоски контекста, то есть отмеренных от точки автосжатия. Логика вся
+// в restart.js, здесь только память о выборе.
+let restartOn = localStorage.getItem('swarm.restart') === '1';
+let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
 // The phrases that mean «the agent is calling me» — the only signal that tells a
 // finished turn («готов») from a turn that ended with a question («ждёт ответа»).
 // Taught to the agent at launch (agentRules) and/or by the user's own CLAUDE.md, so
@@ -1251,6 +1258,27 @@ function showSettingsModal(tab) {
             <select class="set-input set-select" id="set-perm-mode"></select>
             <span class="set-hint" id="set-perm-mode-note"></span>
           </div>
+          <label class="set-check">
+            <input type="checkbox" id="set-restart" />
+            <span class="set-check-tx">Перезапускать агента, когда контекст заполнится
+              <span class="set-check-sub">агент тупеет задолго до конца окна, а сам себя почистить не может. Спросим
+                его, можно ли сейчас: он зафиксирует эстафету — записку себе будущему — и мы стартуем свежую сессию
+                в этой же вкладке, с её задачей. Решает он: пока стоит на середине работы, отвечает «не сейчас».
+                Нужна наша строка статуса — из неё берётся заполнение контекста</span></span>
+          </label>
+          <div class="set-sub">
+            <div class="set-field">
+              <span class="set-label">Спрашивать при заполнении</span>
+              <span class="set-hint set-hint-top">То же число, что на полоске контекста вкладки. Считается от точки
+                автосжатия: на 100% Клод сжимает разговор сам, так что позже нас уже поздно.</span>
+              <div class="set-range">
+                <input type="range" class="set-range-input" id="set-restart-pct" />
+                <span class="set-range-num" id="set-restart-pct-num"></span>
+              </div>
+              <span class="set-hint">Левее — чаще перезапуски, агент свежее. Правее — реже, одна сессия живёт
+                дольше.</span>
+            </div>
+          </div>
           <div class="set-field">
             <span class="set-label">Фразы, которыми агент зовёт вас</span>
             <span class="set-hint set-hint-top">Клод заканчивает ход одинаково и когда сделал дело, и когда задал
@@ -1625,6 +1653,27 @@ function showSettingsModal(tab) {
     permI.value = permTitles.has(permMode) ? permMode : '';
     syncPermNote();
   });
+  // Самоперезапуск: галочка и порог. Границы ползунка приходят из restart.js — того же
+  // модуля, по которому main решает «пора спросить», иначе панель обещала бы порог, с
+  // которым перезапуск не работает.
+  const restartI = overlay.querySelector('#set-restart');
+  restartI.checked = restartOn;
+  const restartPctI = overlay.querySelector('#set-restart-pct');
+  const restartNumEl = overlay.querySelector('#set-restart-pct-num');
+  restartPctI.min = String(RESTART_API.MIN_PCT);
+  restartPctI.max = String(RESTART_API.MAX_PCT);
+  restartPctI.step = '5';
+  restartPctI.value = String(restartPct);
+  const syncRestart = () => {
+    restartNumEl.textContent = restartPctI.value + '%';
+    // Выключенная функция не должна выглядеть настраиваемой: серый ползунок объясняет
+    // порядок действий сам, без подписи «сначала включите».
+    restartPctI.disabled = !restartI.checked;
+    restartNumEl.classList.toggle('off', !restartI.checked);
+  };
+  restartPctI.addEventListener('input', syncRestart);
+  restartI.addEventListener('change', syncRestart);
+  syncRestart();
   const askI = overlay.querySelector('#set-ask-phrases');
   askI.value = askPhrases.join('\n');   // empty box = the default phrase (placeholder)
   // Live «will this call me?» check. Runs the SAME matcher the detector and the hook
@@ -2433,6 +2482,14 @@ function showSettingsModal(tab) {
       permMode = permI.value;
       localStorage.setItem('swarm.permMode', permMode);
       window.swarm.setPermissionMode(permMode);  // main adds/drops --permission-mode
+    }
+    const nextRestartPct = RESTART_API.clampPct(restartPctI.value);
+    if (restartI.checked !== restartOn || nextRestartPct !== restartPct) {
+      restartOn = restartI.checked;
+      restartPct = nextRestartPct;
+      localStorage.setItem('swarm.restart', restartOn ? '1' : '0');
+      localStorage.setItem('swarm.restartPct', String(restartPct));
+      window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
     }
     const nextAsk = askI.value.split('\n').map((s) => s.trim()).filter(Boolean);
     if (nextAsk.join('\n') !== askPhrases.join('\n')) {
@@ -4033,6 +4090,7 @@ window.swarm.setStatuslineEnabled(statuslineEnabled); // тем же поряд�
 window.swarm.setAskPhrases(askPhrases); // same reason: the hook file must be current
 window.swarm.setAgentRules(agentRules); // and the launch flag before the first command
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
+window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
 // то, что ест whisper.cpp. Обратно уходит Float32, WAV собирает main.
@@ -4071,6 +4129,31 @@ window.swarm.onRenameTab(({ id, name }) => {
 // Кнопка «закрыть вкладку» в телеге. Через тот же closeSession, что и крестик: иначе
 // остались бы висеть xterm, DOM и место в раскладке.
 window.swarm.onCloseTab(({ id }) => closeSession(String(id)));
+
+// Самоперезапуск: агент разрешил и прислал промпт, main просит стартовать свежую сессию.
+// Ярлык разговора заводится ЗДЕСЬ, потому что храним его мы — и он обязан быть новым. Со
+// старым вкладка после перезапуска приложения вернулась бы в тот самый разбухший разговор,
+// из которого мы только что ушли, и все перезапуски отменились бы одним релончем.
+window.swarm.onRestartAgent(async ({ id, prompt }) => {
+  const sid = String(id);
+  const s = sessions.get(sid);
+  if (!s || s.blank) return;
+  const key = resumeSessions && RESUME_API.supports(s.cmd) ? RESUME_API.newSessionKey() : null;
+  const r = await window.swarm.relaunchSession({ id: sid, sessionKey: key, prompt });
+  if (!r || !r.ok) return;
+  s.sessionKey = key;
+  // Новый claudeSessionId придёт своим каналом (session:claude) — им же вкладка узнаёт про
+  // /clear и про `claude`, набранный руками. Здесь его не трогаем, чтобы не затереть.
+  persistTabs();
+});
+
+// Строка в журнал: утром видно не только «работал восемь часов», но и сколько раз начинал
+// заново. Не ошибка — красный значок не зажигаем.
+window.swarm.onRestarted(({ id, n }) => {
+  const s = sessions.get(String(id));
+  const name = s ? s.tab.querySelector('.label').textContent : 'вкладка';
+  recordLog(name, 'info', `перезапуск №${n}: контекст заполнился, начал с чистой сессии`);
+});
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 

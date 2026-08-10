@@ -140,6 +140,7 @@ const { systemPromptRule } = require('./agent-rules');
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
 const { envPassing, clearPrefix, tabEnv } = require('./launch-line');
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
+const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
 // Opt-in: precise status via Claude hooks. Off by default; the renderer pushes the
@@ -1007,8 +1008,14 @@ function scanTabProcesses() {
       // Первый потомок шелла и есть запущенная команда. Глубже не идём: `claude` там уже
       // будет своими node-процессами, а нам нужно имя, которым его зовут.
       const run = (kids.get(shellPid) || [])[0];
+      const dd = det.get(id);
+      // Пусто ли в оболочке — на этом стоит самоперезапуск: свежий запуск нельзя печатать,
+      // пока прежний агент не вышел, иначе строка уедет ему в поле ввода репликой в разговор.
+      // Флаг остаётся undefined там, где `ps` недоступен (Windows) — там перезапуск ждёт по
+      // часам, а не по процессам (см. shellFree).
+      if (dd) dd.shellBusy = !!run;
       if (!run) continue;                // в шелле пусто — вкладка помнит прежнее
-      const d = det.get(id);
+      const d = dd;
       if (!d) continue;
       // Процесс нашего запуска узнаём по pid: он поднялся первым и никуда не девался. Всё, что
       // человек запустит в этой вкладке потом (`agent`, `codex`), — это уже другой pid.
@@ -1281,14 +1288,21 @@ const TG_LOG_MAX = 512 * 1024;
 
 function tgLogPath() { return path.join(app.getPath('userData'), 'telegram.log'); }
 
-function tgLog(line) {
+// Журнал в файл с той же ротацией. Своё имя файла у каждого дела: мост и самоперезапуск
+// разбираются по-отдельности, и мешать их в одну ленту значит читать чужие строки в поисках
+// своих. Правило общее и для тех, и для этих — журнал не важнее работы, поэтому всё в try.
+function logTo(name, line) {
   try {
-    const file = tgLogPath();
+    const file = path.join(app.getPath('userData'), name);
     try {
       if (fs.statSync(file).size > TG_LOG_MAX) fs.renameSync(file, file + '.1');
     } catch (_) { /* файла ещё нет — обычное дело */ }
     fs.appendFileSync(file, new Date().toISOString().slice(11, 23) + ' ' + line + '\n');
   } catch (_) { /* diagnostics must never break the bridge */ }
+}
+
+function tgLog(line) {
+  logTo('telegram.log', line);
 }
 
 // Момент времени в том же виде, что и метка строки журнала (UTC, чч:мм:сс). Нужен, чтобы
@@ -4153,6 +4167,261 @@ ipcMain.handle('git:difftext', (_e, cwd, path) => git.gitDiffText(cwd, path));
 // cwd + '/' + rel would hand Windows a mixed-separator path.
 ipcMain.handle('shell:openPath', (_e, cwd, rel) => shell.openPath(path.join(cwd, rel)));
 
+// --- самоперезапуск вкладки: чистая сессия без потери нити --------------------
+// Спека: docs/superpowers/specs/2026-08-08-self-restart-design.md. Чистая логика (когда пора,
+// текст просьбы, разбор ответа) — в restart.js и под тестом; здесь только руки: печать в pty,
+// чтение расхода и сборка новой строки запуска.
+//
+// Главное решение: приложение НЕ определяет, безопасно ли сейчас чистить сессию, — оно
+// спрашивает агента. Снаружи «всё закоммичено» и «три файла разобраны наполовину» выглядят
+// одинаково, и цена ошибки здесь невозвратна.
+let RESTART_ENABLED = false;
+let RESTART_PCT = restart.DEFAULT_PCT;
+
+const RESTART_TICK_MS = 30_000;
+// Диалог на экране забирает себе всё, что печатают: просьба уйдёт в рамку запроса, а не в поле
+// ввода. Тогда просто ждём — она никуда не денется.
+const RESTART_BLOCKED_MS = 5 * 60 * 1000;
+// Сколько ждать выхода прежнего агента после /exit, прежде чем печатать новый запуск.
+const RESTART_EXIT_WAIT_MS = 20_000;
+// Windows без `ps`: про процессы в оболочке мы там ничего не знаем (см. scanTabProcesses), так
+// что ждём по часам. Клод выходит быстро, но пусть будет запас.
+const RESTART_EXIT_BLIND_MS = 4000;
+// Срок годности отметки «перезапускается»: с запасом больше самого перезапуска (/exit, ожидание
+// оболочки, печать), но не настолько, чтобы вкладка молчала полночи из-за одного сбоя.
+const RESTART_BUSY_MS = 2 * 60 * 1000;
+
+function restartDir() {
+  const dir = path.join(app.getPath('userData'), 'restart');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* некуда писать — переживём */ }
+  return dir;
+}
+
+// Ключ вкладки переживает перезапуск процесса, номер — нет. Поэтому файл ответа лежит под
+// ключом: после самоперезапуска это та же вкладка и тот же файл.
+function restartKeyOf(id, d) {
+  const key = String((d && d.tabKey) || '') || ('tab-' + id);
+  return key.replace(/[^\w.-]/g, '_');
+}
+
+function restartAnswerFile(id, d) {
+  return path.join(restartDir(), restartKeyOf(id, d) + '.json');
+}
+
+function restartLog(msg) {
+  logTo('restart.log', msg);
+}
+
+// Печать просьбы в живую сессию. Не через tgAnswer: у того свои побочные действия для
+// телеграма (вкладка объявляется «ведомой из чата»), а здесь никакого чата нет.
+function restartType(id, text) {
+  const p = sessions.get(id);
+  if (!p) return false;
+  const [body, enter] = telegram.inputWrites(text);
+  if (!body) return false;
+  p.write(body);
+  setTimeout(() => {
+    const live = sessions.get(id);
+    if (live) { try { live.write(enter); } catch (_) {} }
+  }, TG_ENTER_DELAY_MS);
+  return true;
+}
+
+function restartAsk(id, d, pct) {
+  // Та же проверка, что перед печатью команды из телеги (tgTypeClaudeCommand) и по той же
+  // причине: рамка на экране съест просьбу, и агент её даже не увидит.
+  if (parsePrompt(promptSnapshot(d))) {
+    d.rsRetryAt = Date.now() + RESTART_BLOCKED_MS;
+    restartLog(`вкладка ${id}: на экране диалог — спрошу позже`);
+    return;
+  }
+  const file = restartAnswerFile(id, d);
+  try { fs.unlinkSync(file); } catch (_) { /* прошлого ответа нет — тем лучше */ }
+  if (!restartType(id, restart.askText({ pct, answerFile: file }))) return;
+  d.rsAskedAt = Date.now();
+  d.rsRetryAt = 0;
+  restartLog(`вкладка ${id}: контекст ${pct}% — спросил про перезапуск`);
+}
+
+// Эстафета, которую положить было некуда. Пишем сами и НЕ перезаписываем прошлые: плохая
+// записка тогда не смертельна, утром видно, чем агент себя кормил.
+function restartSaveHandoff(id, d, text) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(restartDir(), restartKeyOf(id, d) + '-' + stamp + '.md');
+  try {
+    fs.writeFileSync(file, String(text || ''), 'utf8');
+    return file;
+  } catch (e) {
+    restartLog(`вкладка ${id}: эстафету не записал — ${e.message}`);
+    return '';
+  }
+}
+
+function restartReadAnswer(id, d) {
+  const file = restartAnswerFile(id, d);
+  let raw = null;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { raw = null; }
+  if (raw == null) {
+    // Ответа нет. Молча гасить нельзя — ждём, а после срока спросим заново (shouldAsk).
+    if (Date.now() - (d.rsAskedAt || 0) > restart.ANSWER_WAIT_MS) {
+      restartLog(`вкладка ${id}: ответа нет — не перезапускаю, спрошу позже`);
+      d.rsAskedAt = 0;
+      d.rsRetryAt = Date.now() + restart.RETRY_MS;
+    }
+    return;
+  }
+  const a = restart.parseAnswer(raw);
+  try { fs.unlinkSync(file); } catch (_) {}
+  if (!a) {
+    restartLog(`вкладка ${id}: ответ не разобрал — не перезапускаю`);
+    d.rsAskedAt = 0;
+    d.rsRetryAt = Date.now() + restart.RETRY_MS;
+    return;
+  }
+  if (!a.restart) {
+    d.rsAskedAt = 0;
+    d.rsRetryAt = Date.now() + a.retryMs;
+    restartLog(`вкладка ${id}: «не сейчас» (${a.reason}) — переспрошу через`
+      + ` ${Math.round(a.retryMs / 60000)} мин`);
+    return;
+  }
+  let prompt = a.prompt;
+  if (!a.handoff && a.text) {
+    const saved = restartSaveHandoff(id, d, a.text);
+    if (!saved) { d.rsAskedAt = 0; d.rsRetryAt = Date.now() + restart.RETRY_MS; return; }
+    // Промпт агента писался до того, как файл появился, — путь дописываем мы.
+    prompt = `${prompt}. Эстафета лежит в ${saved} — прочитай её первым делом.`;
+  }
+  d.rsAskedAt = 0;
+  d.rsRetryAt = 0;
+  d.rsBusy = true;
+  d.rsBusyAt = Date.now();
+  restartLog(`вкладка ${id}: разрешил перезапуск, эстафета ${a.handoff || 'текстом'}`);
+  // Через рендерер, потому что ярлык разговора храним не мы: после перезапуска он обязан стать
+  // НОВЫМ, иначе вкладка после релонча сворма вернётся в тот самый разбухший разговор, из
+  // которого мы ушли. Он заведёт ярлык и позовёт session:relaunch обратно.
+  safeSend('app:restartAgent', { id, prompt });
+}
+
+setInterval(() => {
+  if (!RESTART_ENABLED) return;
+  const now = Date.now();
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead) continue;
+    // Отметка «перезапускается» снимается тем, кто его закончил. Но просьба уходит в рендерер,
+    // а он может и не ответить — закрыл вкладку, чистый терминал, сбой. Без срока годности
+    // такая отметка навсегда выключила бы самоперезапуск именно для этой вкладки, и понять это
+    // снаружи было бы нечем: функция просто молчит.
+    if (d.rsBusy) {
+      if (now - (d.rsBusyAt || 0) < RESTART_BUSY_MS) continue;
+      restartLog(`вкладка ${id}: перезапуск не завершился — снимаю отметку`);
+      d.rsBusy = false;
+      d.rsRetryAt = now + restart.RETRY_MS;
+      continue;
+    }
+    // Спросили — значит этот тик про ответ, а не про новый вопрос.
+    if (d.rsAskedAt) { restartReadAnswer(id, d); continue; }
+    const ctx = tgCtxOf(d, now);            // тот же снимок расхода, что у полоски и /usage
+    const tab = {
+      pct: ctx ? ctx.pct : null,
+      status: d.status,
+      startedAt: d.sessionStartAt || 0,
+      retryAt: d.rsRetryAt || 0,
+    };
+    if (restart.shouldAsk(tab, { enabled: true, threshold: RESTART_PCT, now })) {
+      restartAsk(id, d, tab.pct);
+    }
+  }
+}, RESTART_TICK_MS);
+
+// Вышел ли прежний агент. `ps` знает точно (scanTabProcesses), а где его нет — ждём по часам:
+// печатать запуск в живого Клода нельзя, строка уедет ему репликой в разговор.
+function shellFree(id, d) {
+  return new Promise((resolve) => {
+    if (d.shellBusy === undefined) { setTimeout(resolve, RESTART_EXIT_BLIND_MS); return; }
+    const until = Date.now() + RESTART_EXIT_WAIT_MS;
+    const wait = () => {
+      if (!sessions.has(id)) return resolve();      // вкладку закрыли — пусть решает вызвавший
+      if (d.shellBusy === false) return resolve();
+      if (Date.now() > until) return resolve();
+      setTimeout(wait, 500);
+    };
+    wait();
+  });
+}
+
+// Собрать строку нового запуска из той, которой вкладку запустили. Берём именно её, а не
+// собираем заново: в ней уже стоят ссылки на окружение этой оболочки (--settings, правило
+// обращения), а окружение задаётся при создании pty и позже недоступно. Пересборка «как для
+// новой вкладки» дала бы ссылку на переменную, которой в этой оболочке нет, — и Клод отказался
+// бы стартовать, оставив вкладку с мёртвой оболочкой.
+function restartLaunchLine(base, sessionKey, mode) {
+  let cmd = String(base || '').trim();
+  if (!cmd) return { cmd: '', sessionId: null };
+  // Метки прежнего разговора: и ярлык, и id. Иначе новая сессия унаследует чужую.
+  cmd = cmd.replace(/\s--session-id(=|\s+)[^\s]+/g, '')
+    .replace(/\s(-n|--name)(=|\s+)[^\s]+/g, '')
+    .replace(/\s(--resume|-r)(=|\s+)[^\s]+/g, '')
+    .replace(/\s(--continue|-c)(\s|$)/g, ' ')
+    .trim();
+  // Режим разрешений, в котором вкладка РАБОТАЛА. Всё, что накопилось внутри сессии, вместе с
+  // ней и умирает, а Shift+Tab (и кнопка из телеги) настройкой не помнится — без этого агент
+  // после ночного перезапуска встал бы на первом же вопросе, хотя весь вечер работал сам.
+  // Свой флаг в команде побеждает: человек, написавший его руками, знает, чего хочет.
+  const flag = modeFlag(mode);
+  const hasMode = /(^|\s)(--permission-mode(\s|=)|--dangerously-skip-permissions(\s|$))/.test(cmd);
+  if (flag && !hasMode && resume.supports(launcherOf(cmd))) cmd += ` --permission-mode ${flag}`;
+  if (sessionKey && resume.supports(launcherOf(cmd))) cmd += ` -n ${sessionKey}`;
+  return injectSessionId(cmd);
+}
+
+// Перезапуск: /exit прежнему агенту, ждём оболочку, печатаем новый запуск. Возвращаем
+// рендереру новый id разговора — ему его хранить, это он восстанавливает вкладку после
+// перезапуска приложения.
+ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
+  const id = String(opts.id == null ? '' : opts.id);
+  const d = det.get(id);
+  const p = sessions.get(id);
+  if (!d || !p) return { ok: false };
+  const done = (res) => { d.rsBusy = false; return res; };
+  const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode);
+  const line = restart.launchLine(built.cmd, opts.prompt || '');
+  if (!line) { restartLog(`вкладка ${id}: нечего запускать — отменяю`); return done({ ok: false }); }
+  restartType(id, '/exit');
+  await shellFree(id, d);
+  const live = sessions.get(id);
+  if (!live) { restartLog(`вкладка ${id}: закрылась во время перезапуска`); return done({ ok: false }); }
+  if (d.shellBusy) {
+    // Агент не вышел. Печатать сейчас — значит отправить строку запуска ему в разговор
+    // репликой; лучше оставить как есть и переспросить позже.
+    restartLog(`вкладка ${id}: агент не вышел по /exit — перезапуск отменён`);
+    d.rsRetryAt = Date.now() + restart.RETRY_MS;
+    return done({ ok: false });
+  }
+  live.write(clearPrefix(pickShell()) + line + '\r');
+  // Без промпта — она же и станет базой следующего перезапуска. С промптом внутри база
+  // потащила бы за собой прошлую задачу.
+  d.launchCmd = built.cmd;
+  d.claudeSessionId = built.sessionId || null;
+  // Тем же каналом, которым вкладка узнаёт про /clear и про `claude`, набранный руками: он
+  // хранит id и восстанавливает по нему разговор. Иначе вкладка осталась бы с id брошенного.
+  safeSend('session:claude', { id, claudeSessionId: d.claudeSessionId });
+  d.sessionStartAt = Date.now();
+  d.launchAt = Date.now();
+  d.launchPid = null;
+  d.restarts = (d.restarts || 0) + 1;
+  restartLog(`вкладка ${id}: перезапуск №${d.restarts}, новый разговор ${built.sessionId || '—'}`);
+  safeSend('session:restarted', { id, n: d.restarts });
+  return done({ ok: true, claudeSessionId: built.sessionId || null });
+});
+
+ipcMain.on('settings:restart', (_e, opts = {}) => {
+  RESTART_ENABLED = !!(opts && opts.enabled);
+  RESTART_PCT = restart.clampPct(opts && opts.threshold);
+  restartLog(`настройка: ${RESTART_ENABLED ? 'вкл' : 'выкл'}, порог ${RESTART_PCT}%`);
+});
+
 // --- IPC: renderer asks main to spawn a new claude session -------------------
 ipcMain.handle('session:create', (_event, opts = {}) => {
   const id = String(nextId++);
@@ -4206,6 +4475,11 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   // Give the login shell a moment to finish sourcing the profile, then run claude —
   // preceded by a `clear`, so what the user sees first is the agent and not the line we
   // typed for them.
+  // Строку запуска ЗАПОМИНАЕМ целиком: самоперезапуск стартует свежую сессию именно ей, только
+  // с новыми метками разговора. Пересобрать её заново он не может — ссылки на окружение
+  // (--settings, правило обращения) живут в окружении ЭТОГО pty, а оно задаётся один раз здесь.
+  d0.launchCmd = cmd || '';
+  d0.sessionStartAt = Date.now();
   if (cmd) {
     setTimeout(() => {
       const p = sessions.get(id);
