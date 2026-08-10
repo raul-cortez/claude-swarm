@@ -47,7 +47,7 @@ function sig(over) {
   return {
     now: NOW, enabled: true, threshold: 30, pct: 40, status: 'ready',
     dialog: false, shellBusy: true, modeVisible: true, uptimeMs: HOUR,
-    hasLine: false, answer: null, ...over,
+    hasBase: true, hasLine: false, answer: null, ...over,
   };
 }
 const idle = () => R.initial();
@@ -65,6 +65,20 @@ test('ниже порога, при выключенной функции и в 
   assert.strictEqual(step(idle(), { enabled: false }).action, 'nothing');
   assert.strictEqual(step(idle(), { pct: 40, threshold: 75 }).action, 'nothing');
   assert.strictEqual(R.step({ ...idle(), phase: 'muted' }, sig()).action, 'nothing');
+});
+
+// Ревью правки про «+ на папке»: вкладку, которую нечем поднять, спрашивать нельзя вовсе. Иначе
+// круг «спросили — разрешил — не смог» идёт до утра каждые двадцать минут, и потолок молчания его
+// не обрывает: разрешение обнуляет счётчик. Так живут чистый терминал, агент, набранный руками, и
+// вкладка, где агента сменили руками (session:forgetLaunch стирает строку запуска).
+test('нечем запускать — не спрашиваем совсем', () => {
+  for (const hasBase of [false, undefined, '']) {
+    assert.strictEqual(step(idle(), { hasBase }).action, 'nothing');
+  }
+  // И круг не начинается заново: без вопроса нет и разрешения, обнуляющего счётчик молчания.
+  const r = step(idle(), { hasBase: false });
+  assert.strictEqual(r.state.phase, 'idle');
+  assert.strictEqual(r.note, undefined);
 });
 
 test('нет расхода — нет вопроса: статуслайн выключен или снимок протух', () => {

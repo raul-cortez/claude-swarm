@@ -840,18 +840,23 @@ let launchMenuAnchor = null;
 // Показать это меню под кнопкой. Отвечает опциями для createSession ({} — «как в папке»,
 // то есть сегодняшнее наследование) или null, если меню закрыли не выбрав: тогда вкладки
 // не будет вовсе — как при отмене в pickAgent.
-function openLaunchMenu(anchor, cwd) {
-  const entries = launchMenuEntries(cwd);
-  if (!entries) return Promise.resolve({});
-  // Меню одно на всё окно, поэтому прежнее закрываем ЧЕСТНО, через его же close: иначе его
-  // обещание не разрешится никогда (тот, кто его ждёт, повиснет навсегда), а слушатели мыши и
-  // клавиш останутся на document и будут гасить чужое меню. Повторный клик по ТОЙ ЖЕ кнопке —
-  // это «закрыть», как у меню команд: мимо кнопки-хозяйки закрытие по клику снаружи не срабатывает.
+function openLaunchMenu(anchor, cwd, toggle) {
+  // Прежнее меню закрываем ЧЕСТНО, через его же close, и ДО ВСЕГО — включая случай «меню не
+  // понадобится»: иначе оно осталось бы висеть над только что открытой вкладкой, его обещание не
+  // разрешилось бы никогда (ждущий повис навсегда), а слушатели мыши и клавиш остались бы на
+  // document и гасили чужое меню. Мимо кнопки-хозяйки клик снаружи не закрывает, а ⌘O до мыши не
+  // доходит вовсе — сами эти пути и приводят сюда с уже открытым меню.
+  //
+  // Повторный клик по ТОЙ ЖЕ кнопке — это «закрыть», как у меню команд. Но только там, где меню
+  // разворачивается сразу («+» на папке). У кнопки в панели между кликом и меню стоит выбор папки
+  // в проводнике, и «закрыть» съело бы уже сделанный человеком выбор: вкладки не было бы вовсе.
   if (launchMenuClose) {
-    const again = launchMenuAnchor === anchor;
+    const again = toggle && launchMenuAnchor === anchor;
     launchMenuClose(null);
     if (again) return Promise.resolve(null);
   }
+  const entries = launchMenuEntries(cwd);
+  if (!entries) return Promise.resolve({});
   return new Promise((resolve) => {
     launchMenu.innerHTML = '';
     for (const e of entries) {
@@ -890,9 +895,10 @@ function openLaunchMenu(anchor, cwd) {
   });
 }
 
-// Открыть вкладку в этой папке, спросив под кнопкой, чем именно.
-async function createSessionFrom(anchor, cwd) {
-  const pick = await openLaunchMenu(anchor, cwd || '');
+// Открыть вкладку в этой папке, спросив под кнопкой, чем именно. `toggle` — для кнопок, у которых
+// меню разворачивается прямо по клику: повторный клик тогда закрывает (см. openLaunchMenu).
+async function createSessionFrom(anchor, cwd, toggle) {
+  const pick = await openLaunchMenu(anchor, cwd || '', toggle);
   if (!pick) return;
   createSession({ cwd: cwd || undefined, ...pick });
 }
@@ -3007,7 +3013,7 @@ function relayoutTabs() {
     add.className = 'group-add';
     add.title = 'Новая сессия в этой папке';
     add.innerHTML = ICONS.plus;
-    add.addEventListener('click', (e) => { e.stopPropagation(); createSessionFrom(add, cwd); });
+    add.addEventListener('click', (e) => { e.stopPropagation(); createSessionFrom(add, cwd, true); });
     head.append(grip, chev, nameEl, count, dots, add);
     head.addEventListener('click', () => toggleFolder(cwd));
 
