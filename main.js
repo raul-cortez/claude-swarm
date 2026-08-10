@@ -138,7 +138,7 @@ const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, a
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
-const { envPassing, clearPrefix, tabEnv } = require('./launch-line');
+const { envPassing, clearPrefix, tabEnv, shellFamily } = require('./launch-line');
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
@@ -235,6 +235,7 @@ function provisionStatusline() {
   // ничего такого не выбирал. Переписываем состояние под свежее — как и всё остальное здесь.
   tgWriteModes();
   pruneUsage();
+  pruneRestart();
 }
 
 // --- «сколько израсходовано»: снимки от статуслайна ---------------------------
@@ -4185,8 +4186,17 @@ const RESTART_BLOCKED_MS = 5 * 60 * 1000;
 // Сколько ждать выхода прежнего агента после /exit, прежде чем печатать новый запуск.
 const RESTART_EXIT_WAIT_MS = 20_000;
 // Windows без `ps`: про процессы в оболочке мы там ничего не знаем (см. scanTabProcesses), так
-// что ждём по часам. Клод выходит быстро, но пусть будет запас.
-const RESTART_EXIT_BLIND_MS = 4000;
+// что ждём по часам. Там нечем и проверить результат ожидания, поэтому запас щедрый: если
+// напечатать запуск в ещё живого Клода, строка уедет ему репликой в разговор.
+const RESTART_EXIT_BLIND_MS = 10_000;
+// Сколько держать неотправленный запуск, если агент не вышел вовремя. Он всё равно выйдет —
+// /exit уже стоит в очереди, — и тогда запуск надо напечатать в освободившуюся оболочку, иначе
+// вкладка останется с голым шеллом до утра.
+const RESTART_PENDING_MS = 30 * 60 * 1000;
+// Записки не выбрасываем сразу — по ним видно, чем агент себя кормил. Но и вечно им не лежать:
+// месяц это несколько сотен перезапусков, дальше они говорят только о прошлой жизни. Та же
+// мысль, что у pruneUsage.
+const RESTART_KEEP_MS = 30 * 24 * 3600 * 1000;
 // Срок годности отметки «перезапускается»: с запасом больше самого перезапуска (/exit, ожидание
 // оболочки, печать), но не настолько, чтобы вкладка молчала полночи из-за одного сбоя.
 const RESTART_BUSY_MS = 2 * 60 * 1000;
@@ -4204,12 +4214,29 @@ function restartKeyOf(id, d) {
   return key.replace(/[^\w.-]/g, '_');
 }
 
+// Файл ответа лежит В ПАПКЕ ВКЛАДКИ, а не в настройках приложения, и это не про удобство.
+// Запись за пределы рабочей папки Клод спрашивает отдельным разрешением — то есть ночь, ради
+// которой всё и делалось, кончалась бы вкладкой, замершей на запросе про наш собственный
+// служебный файл, да ещё и звонком в телеграм в три часа. Внутри папки разрешение не нужно.
+//
+// Имя с точки и «swarm» в нём: файл живёт секунды (читаем и удаляем), но за эти секунды его
+// может увидеть и человек в `git status`, и соседний агент в том же дереве — пусть сразу будет
+// понятно, чей он. Папки нет — падаем в настройки приложения, там хоть спросят, но не потеряем.
 function restartAnswerFile(id, d) {
+  const cwd = d && d.cwd;
+  if (cwd && fs.existsSync(cwd)) return path.join(cwd, '.swarm-restart.json');
   return path.join(restartDir(), restartKeyOf(id, d) + '.json');
 }
 
+// В журнал приложения — тот, у которого есть кнопка. Файл рядом с настройками нужен для
+// разбора «что именно спросили и что ответили», но человек про перезапуски узнаёт из вкладки.
 function restartLog(msg) {
   logTo('restart.log', msg);
+}
+
+function restartNote(id, text) {
+  restartLog(`вкладка ${id}: ${text}`);
+  safeSend('session:restartNote', { id, text });
 }
 
 // Печать просьбы в живую сессию. Не через tgAnswer: у того свои побочные действия для
@@ -4257,38 +4284,54 @@ function restartSaveHandoff(id, d, text) {
   }
 }
 
+// Отложить вопрос: и после отказа, и после любой заминки. Одним местом, чтобы ни один откат не
+// забыл поставить срок — забывший спросит снова через полминуты, и так по кругу.
+function restartLater(d, ms) {
+  d.rsAskedAt = 0;
+  d.rsRetryAt = Date.now() + (ms || restart.RETRY_MS);
+}
+
 function restartReadAnswer(id, d) {
   const file = restartAnswerFile(id, d);
   let raw = null;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { raw = null; }
+  let mtime = 0;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+    mtime = fs.statSync(file).mtimeMs;
+  } catch (_) { raw = null; }
   if (raw == null) {
     // Ответа нет. Молча гасить нельзя — ждём, а после срока спросим заново (shouldAsk).
     if (Date.now() - (d.rsAskedAt || 0) > restart.ANSWER_WAIT_MS) {
-      restartLog(`вкладка ${id}: ответа нет — не перезапускаю, спрошу позже`);
-      d.rsAskedAt = 0;
-      d.rsRetryAt = Date.now() + restart.RETRY_MS;
+      restartNote(id, 'ответа про перезапуск нет — оставляю как есть, спрошу позже');
+      restartLater(d);
     }
     return;
   }
   const a = restart.parseAnswer(raw);
   try { fs.unlinkSync(file); } catch (_) {}
+  // Разрешение — на ТОТ разговор, о котором спрашивали. Файл мог остаться с прошлого раза:
+  // функцию выключили с висящим вопросом, агент дописал ответ, а через сутки её включили снова —
+  // и мы стёрли бы разговор, в котором с тех пор работали, по вчерашнему «можно».
+  if (mtime && d.rsAskedAt && mtime < d.rsAskedAt) {
+    restartNote(id, 'ответ остался с прошлого раза — не перезапускаю, спрошу заново');
+    restartLater(d);
+    return;
+  }
   if (!a) {
-    restartLog(`вкладка ${id}: ответ не разобрал — не перезапускаю`);
-    d.rsAskedAt = 0;
-    d.rsRetryAt = Date.now() + restart.RETRY_MS;
+    restartNote(id, 'ответ про перезапуск не разобрал — оставляю как есть');
+    restartLater(d);
     return;
   }
   if (!a.restart) {
-    d.rsAskedAt = 0;
-    d.rsRetryAt = Date.now() + a.retryMs;
-    restartLog(`вкладка ${id}: «не сейчас» (${a.reason}) — переспрошу через`
+    restartLater(d, a.retryMs);
+    restartNote(id, `сказал «не сейчас» (${a.reason}) — переспрошу через`
       + ` ${Math.round(a.retryMs / 60000)} мин`);
     return;
   }
   let prompt = a.prompt;
   if (!a.handoff && a.text) {
     const saved = restartSaveHandoff(id, d, a.text);
-    if (!saved) { d.rsAskedAt = 0; d.rsRetryAt = Date.now() + restart.RETRY_MS; return; }
+    if (!saved) { restartLater(d); return; }
     // Промпт агента писался до того, как файл появился, — путь дописываем мы.
     prompt = `${prompt}. Эстафета лежит в ${saved} — прочитай её первым делом.`;
   }
@@ -4320,6 +4363,19 @@ setInterval(() => {
       d.rsRetryAt = now + restart.RETRY_MS;
       continue;
     }
+    // Недопечатанный запуск. Агент не успел выйти за отведённое время, но `/exit` у него уже в
+    // очереди — он выйдет сам, и вот тогда строку надо напечатать. Без этого вкладка осталась бы
+    // с голой оболочкой до утра: агента нет, значит нет и расхода, значит спросить о перезапуске
+    // будет уже не у кого.
+    if (d.rsPendingLine) {
+      if (d.shellBusy === false) { restartFire(id, d); continue; }
+      if (now - (d.rsPendingAt || 0) > RESTART_PENDING_MS) {
+        restartNote(id, 'агент так и не вышел — запуск отменён, вкладка как была');
+        d.rsPendingLine = '';
+        restartLater(d);
+      }
+      continue;
+    }
     // Спросили — значит этот тик про ответ, а не про новый вопрос.
     if (d.rsAskedAt) { restartReadAnswer(id, d); continue; }
     const ctx = tgCtxOf(d, now);            // тот же снимок расхода, что у полоски и /usage
@@ -4335,8 +4391,23 @@ setInterval(() => {
   }
 }, RESTART_TICK_MS);
 
-// Вышел ли прежний агент. `ps` знает точно (scanTabProcesses), а где его нет — ждём по часам:
-// печатать запуск в живого Клода нельзя, строка уедет ему репликой в разговор.
+// Записки и забытые файлы ответов. Живут долго, но не вечно — тем же порядком, что pruneUsage.
+function pruneRestart() {
+  try {
+    const dir = path.join(app.getPath('userData'), 'restart');
+    for (const f of fs.readdirSync(dir)) {
+      const p = path.join(dir, f);
+      try {
+        if (Date.now() - fs.statSync(p).mtimeMs > RESTART_KEEP_MS) fs.unlinkSync(p);
+      } catch (_) { /* исчез сам — не наша забота */ }
+    }
+  } catch (_) { /* папки нет — перезапусков ещё не было */ }
+}
+
+// Вышел ли прежний агент. `ps` знает точно (scanTabProcesses), а где его нет (Windows) — ждём по
+// часам и проверить результат нечем. Печатать запуск в живого Клода нельзя ни при каких
+// условиях: строка уедет ему репликой в разговор. Отсюда и просьба только отдохнувшей вкладке
+// (shouldAsk) — из простоя `/exit` выполняется сразу, и слепое ожидание перестаёт быть ставкой.
 function shellFree(id, d) {
   return new Promise((resolve) => {
     if (d.shellBusy === undefined) { setTimeout(resolve, RESTART_EXIT_BLIND_MS); return; }
@@ -4368,42 +4439,38 @@ function restartLaunchLine(base, sessionKey, mode) {
   // Режим разрешений, в котором вкладка РАБОТАЛА. Всё, что накопилось внутри сессии, вместе с
   // ней и умирает, а Shift+Tab (и кнопка из телеги) настройкой не помнится — без этого агент
   // после ночного перезапуска встал бы на первом же вопросе, хотя весь вечер работал сам.
-  // Свой флаг в команде побеждает: человек, написавший его руками, знает, чего хочет.
+  //
+  // Живой режим ЗАМЕЩАЕТ флаг из строки запуска, а не уступает ему: с экрана видно, в чём
+  // вкладка работает сейчас, а флаг говорит лишь о том, в чём её когда-то открыли. Не прочитали
+  // режим — флаг остаётся как был. `--dangerously-skip-permissions` не трогаем вовсе: это выбор
+  // человека, написавшего его руками, и подменять его нашей догадкой нельзя.
   const flag = modeFlag(mode);
-  const hasMode = /(^|\s)(--permission-mode(\s|=)|--dangerously-skip-permissions(\s|$))/.test(cmd);
-  if (flag && !hasMode && resume.supports(launcherOf(cmd))) cmd += ` --permission-mode ${flag}`;
+  const skipFlag = /(^|\s)--dangerously-skip-permissions(\s|$)/.test(cmd);
+  if (flag && !skipFlag && resume.supports(launcherOf(cmd))) {
+    cmd = cmd.replace(/\s--permission-mode(=|\s+)[^\s]+/g, '').trim() + ` --permission-mode ${flag}`;
+  }
   if (sessionKey && resume.supports(launcherOf(cmd))) cmd += ` -n ${sessionKey}`;
   return injectSessionId(cmd);
 }
 
-// Перезапуск: /exit прежнему агенту, ждём оболочку, печатаем новый запуск. Возвращаем
-// рендереру новый id разговора — ему его хранить, это он восстанавливает вкладку после
-// перезапуска приложения.
-ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
-  const id = String(opts.id == null ? '' : opts.id);
-  const d = det.get(id);
-  const p = sessions.get(id);
-  if (!d || !p) return { ok: false };
-  const done = (res) => { d.rsBusy = false; return res; };
-  const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode);
-  const line = restart.launchLine(built.cmd, opts.prompt || '');
-  if (!line) { restartLog(`вкладка ${id}: нечего запускать — отменяю`); return done({ ok: false }); }
-  restartType(id, '/exit');
-  await shellFree(id, d);
+// Напечатать заготовленный запуск в освободившуюся оболочку. Отдельно от session:relaunch,
+// потому что зовут отсюда двое: сам перезапуск и тик, если агент вышел позже, чем мы ждали.
+function restartFire(id, d) {
   const live = sessions.get(id);
-  if (!live) { restartLog(`вкладка ${id}: закрылась во время перезапуска`); return done({ ok: false }); }
-  if (d.shellBusy) {
-    // Агент не вышел. Печатать сейчас — значит отправить строку запуска ему в разговор
-    // репликой; лучше оставить как есть и переспросить позже.
-    restartLog(`вкладка ${id}: агент не вышел по /exit — перезапуск отменён`);
-    d.rsRetryAt = Date.now() + restart.RETRY_MS;
-    return done({ ok: false });
-  }
+  const line = d.rsPendingLine || '';
+  const sessionId = d.rsPendingSession || null;
+  const base = d.rsPendingBase || '';
+  d.rsPendingLine = '';
+  d.rsPendingBase = '';
+  d.rsPendingSession = null;
+  if (!live || !line) return false;
   live.write(clearPrefix(pickShell()) + line + '\r');
-  // Без промпта — она же и станет базой следующего перезапуска. С промптом внутри база
-  // потащила бы за собой прошлую задачу.
-  d.launchCmd = built.cmd;
-  d.claudeSessionId = built.sessionId || null;
+  // Базой следующего перезапуска остаётся строка БЕЗ промпта: с ним внутри она потащила бы за
+  // собой прошлую задачу. Метки разговора и режим в ней есть, но это не беда: restartLaunchLine
+  // снимает их и накладывает заново, иначе режим, схваченный при первом перезапуске, застыл бы
+  // навсегда, а следующая сессия унаследовала бы чужой ярлык.
+  d.launchCmd = base;
+  d.claudeSessionId = sessionId;
   // Тем же каналом, которым вкладка узнаёт про /clear и про `claude`, набранный руками: он
   // хранит id и восстанавливает по нему разговор. Иначе вкладка осталась бы с id брошенного.
   safeSend('session:claude', { id, claudeSessionId: d.claudeSessionId });
@@ -4411,9 +4478,51 @@ ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
   d.launchAt = Date.now();
   d.launchPid = null;
   d.restarts = (d.restarts || 0) + 1;
-  restartLog(`вкладка ${id}: перезапуск №${d.restarts}, новый разговор ${built.sessionId || '—'}`);
+  d.rsAskedAt = 0;
+  d.rsRetryAt = 0;
+  restartLog(`вкладка ${id}: перезапуск №${d.restarts}, новый разговор ${sessionId || '—'}`);
   safeSend('session:restarted', { id, n: d.restarts });
-  return done({ ok: true, claudeSessionId: built.sessionId || null });
+  return true;
+}
+
+// Перезапуск: /exit прежнему агенту, ждём оболочку, печатаем новый запуск.
+ipcMain.handle('session:relaunch', async (_e, opts = {}) => {
+  const id = String(opts.id == null ? '' : opts.id);
+  const d = det.get(id);
+  const p = sessions.get(id);
+  if (!d) return { ok: false };
+  const done = (res) => { d.rsBusy = false; return res; };
+  if (!p) return done({ ok: false });
+  const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode);
+  const line = restart.launchLine(built.cmd, opts.prompt || '', shellFamily(pickShell()));
+  if (!line) {
+    // Пустая база — вкладка, которую мы не запускали (чистый терминал, агент набран руками).
+    // Со сроком, иначе следующий тик придёт через полминуты и упрётся в то же самое.
+    restartNote(id, 'не знаю, чем её запускать — перезапуск отменён');
+    restartLater(d);
+    return done({ ok: false });
+  }
+  // Заготовку кладём ДО /exit: агент выйдет и через минуту, и через десять, а строка к тому
+  // моменту должна уже лежать готовой (см. rsPendingLine в тике).
+  d.rsPendingLine = line;
+  d.rsPendingBase = built.cmd;
+  d.rsPendingSession = built.sessionId || null;
+  d.rsPendingAt = Date.now();
+  restartType(id, '/exit');
+  await shellFree(id, d);
+  if (!sessions.has(id)) {
+    restartLog(`вкладка ${id}: закрылась во время перезапуска`);
+    d.rsPendingLine = '';
+    return done({ ok: false });
+  }
+  if (d.shellBusy) {
+    // Агент не вышел за отведённое время. Печатать сейчас нельзя — строка уедет ему репликой в
+    // разговор, — но и отменять нечего: `/exit` уже в очереди. Заготовка ждёт своей оболочки.
+    restartLog(`вкладка ${id}: агент ещё не вышел — запуск ждёт освободившейся оболочки`);
+    return done({ ok: true, pending: true });
+  }
+  if (!restartFire(id, d)) return done({ ok: false });
+  return done({ ok: true });
 });
 
 ipcMain.on('settings:restart', (_e, opts = {}) => {

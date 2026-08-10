@@ -126,6 +126,12 @@ contextBridge.exposeInMainWorld('swarm', {
     ipcRenderer.on('session:restarted', handler);
     return () => ipcRenderer.removeListener('session:restarted', handler);
   },
+  // Всё остальное про перезапуск, что стоит увидеть в журнале: «не сейчас», нет ответа, отмена.
+  onRestartNote: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:restartNote', handler);
+    return () => ipcRenderer.removeListener('session:restartNote', handler);
+  },
 
   // main просит открыть вкладку (это /new из телеги: main не умеет делать xterm и DOM).
   onCreateTab: (cb) => {

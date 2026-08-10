@@ -26,6 +26,17 @@ test('порог зажат диапазоном 15–75', () => {
   assert.strictEqual(R.clampPct(undefined), R.DEFAULT_PCT);
 });
 
+// Сюда приходит localStorage.getItem, а он на несохранённой настройке даёт null. Через
+// Number(null) это ноль, то есть 15% — самый частый перезапуск, и молча: 15 законное значение.
+// Новый человек получал бы вдвое чаще обещанного, не тронув ползунок.
+test('незаданный порог — это умолчание, а не ноль', () => {
+  assert.strictEqual(R.clampPct(null), R.DEFAULT_PCT);
+  assert.strictEqual(R.clampPct(''), R.DEFAULT_PCT);
+  // А вот строка с числом — настоящая настройка, её уважаем.
+  assert.strictEqual(R.clampPct('45'), 45);
+  assert.strictEqual(R.clampPct('0'), 15);
+});
+
 test('спрашиваем, когда контекст за порогом', () => {
   assert.strictEqual(R.shouldAsk(ready(), OPTS), true);
   assert.strictEqual(R.shouldAsk(ready({ pct: 30 }), OPTS), true);
@@ -46,8 +57,16 @@ test('нет расхода — нет вопроса: статуслайн вы
   assert.strictEqual(R.shouldAsk(ready({ pct: NaN }), OPTS), false);
 });
 
-test('вкладка ждёт человека — не время просить об эстафете', () => {
+// Спрашиваем только отдохнувшую вкладку. «Ждёт» значит, что человек нужен здесь и сейчас.
+// «Работает» — что просьба встанет в очередь за ходом: ответа можно не дождаться за десять
+// минут, а потом мы стёрли бы уже написанный ответ и спросили снова. И `/exit` посреди хода —
+// отдельная беда.
+test('спрашиваем только отдохнувшую вкладку', () => {
   assert.strictEqual(R.shouldAsk(ready({ status: 'waiting' }), OPTS), false);
+  assert.strictEqual(R.shouldAsk(ready({ status: 'running' }), OPTS), false);
+  assert.strictEqual(R.shouldAsk(ready({ status: 'dead' }), OPTS), false);
+  assert.strictEqual(R.shouldAsk(ready({ status: null }), OPTS), false);
+  assert.strictEqual(R.shouldAsk(ready({ status: 'ready' }), OPTS), true);
 });
 
 // Защёлка снизу. Свежая сессия читает таск, спеку и пару файлов и на миллионном окне
@@ -134,6 +153,19 @@ test('перевод строки в промпте не превращаетс�
   const line = R.launchLine('claude', 'первая строка\nвторая строка');
   assert.ok(!line.includes('\n'), 'иначе половина промпта уедет в шелл отдельной командой');
   assert.strictEqual(line, "claude 'первая строка вторая строка'");
+});
+
+// Кавычки по семейству оболочки. На cmd.exe одинарная не значит ничего: `claude 'таск 215'`
+// доедет до Клода тремя аргументами вместо одного, и промпт превратится в мусор.
+test('cmd.exe получает двойные кавычки, а не одинарные', () => {
+  const line = R.launchLine('claude', 'продолжи таск 215', 'cmd');
+  assert.strictEqual(line, 'claude "продолжи таск 215"');
+  // Внутренняя кавычка удваивается, а %VAR% не должно раскрыться внутри кавычек.
+  assert.strictEqual(R.quoteArg('файл "a.js" и %PATH%', 'cmd'), '"файл ""a.js"" и  PATH "');
+});
+
+test('powershell — одинарные с удвоением, обратный слэш там не экранирует', () => {
+  assert.strictEqual(R.quoteArg("файл 'a.js'", 'powershell'), "'файл ''a.js'''");
 });
 
 test('пустой промпт — просто команда, без пустых кавычек', () => {

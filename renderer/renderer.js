@@ -1309,7 +1309,7 @@ function showSettingsModal(tab) {
           <input type="checkbox" id="set-notify-on" />
           <span class="set-check-tx"><b>Уведомления включены</b></span>
         </label>
-        <div class="set-sub">
+        <div class="set-sub" id="set-notify-sub">
           <label class="set-check">
             <input type="checkbox" id="set-notify-ready" />
             <span class="set-check-tx">Когда агент закончил — <span class="set-mono">готов</span></span>
@@ -2078,8 +2078,11 @@ function showSettingsModal(tab) {
   waitingI.checked = notifyOnWaiting;
   activeI.checked = notifyActive;
   soundI.checked = notifySound;
+  // По id, а не по классу: «.set-sub» в панели не один (порог самоперезапуска — второй такой
+  // блок, и в разметке он ВЫШЕ), а querySelector отдаёт первый совпавший. С классом главный
+  // выключатель уведомлений гасил бы чужую настройку и не гасил свою.
   const syncNotify = () => {
-    overlay.querySelector('.set-sub').classList.toggle('disabled', !onI.checked);
+    overlay.querySelector('#set-notify-sub').classList.toggle('disabled', !onI.checked);
   };
   syncNotify();
   onI.addEventListener('change', syncNotify);
@@ -4147,13 +4150,22 @@ window.swarm.onRestartAgent(async ({ id, prompt }) => {
   persistTabs();
 });
 
-// Строка в журнал: утром видно не только «работал восемь часов», но и сколько раз начинал
-// заново. Не ошибка — красный значок не зажигаем.
-window.swarm.onRestarted(({ id, n }) => {
+// Строки в журнал приложения: утром видно не только «работал восемь часов», но и сколько раз
+// начинал заново — и почему не начал, если не начал. Не ошибки, красный значок не зажигаем.
+// Свой файл рядом с настройками у перезапуска тоже есть, но у журнала есть кнопка, а у файла нет.
+function restartJournal(id, text) {
   const s = sessions.get(String(id));
   const name = s ? s.tab.querySelector('.label').textContent : 'вкладка';
-  recordLog(name, 'info', `перезапуск №${n}: контекст заполнился, начал с чистой сессии`);
+  recordLog(name, 'info', text);
+}
+
+window.swarm.onRestarted(({ id, n }) => {
+  restartJournal(id, `перезапуск №${n}: контекст заполнился, начал с чистой сессии`);
 });
+
+// Всё, что случилось по дороге и НЕ кончилось перезапуском: «не сейчас», нет ответа, отмена.
+// Без этого функция молчала бы ровно в тех случаях, когда человек и хочет знать, чем она занята.
+window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 
