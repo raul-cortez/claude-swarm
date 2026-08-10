@@ -67,5 +67,44 @@
     return mine !== theirs && mine.startsWith(theirs);
   }
 
-  return { launchWordFrom, isAliasExpansion, AGENT_CMD_RE, AGENT_FLAGS_RE };
+  // Ярлык команды в списке и в меню: `cmd` вместе со своими флагами.
+  function agentLabel(a) {
+    const cmd = String((a && a.cmd) || '').trim();
+    const flags = String((a && a.flags) || '').trim();
+    return (cmd + (flags ? ' ' + flags : '')).trim();
+  }
+
+  // Пункт «открыть вкладку без команды» — он же подпись такой вкладки в меню.
+  const BLANK_LABEL = 'Чистый терминал';
+
+  // Пункты меню, которое разворачивает «+» на папке. null — меню не нужно, открывай сразу.
+  //
+  // Здесь, а не в рендерере, потому что цена ошибки — вопрос, заданный человеку зря, или
+  // молча унаследованный аккаунт, которого он не выбирал:
+  //   mode 'blank'      — вкладки открываются чистым терминалом, выбирать нечего;
+  //   pick 'always'     — спросит сам resolveLaunch, и меню было бы вторым вопросом подряд;
+  //   одна команда      — выбирать не из чего;
+  //   папка пуста       — в режиме 'folder' спросит resolveLaunch (первая вкладка папки).
+  // Первым пунктом всегда сегодняшнее поведение — «как в этой папке», — чтобы привычный
+  // путь остался кликом по «+» и следующим кликом по верхнему пункту, без раздумий.
+  // `inherited`: { cmd, flags } | { blank: true } | null — чем открылась первая вкладка папки.
+  function launchMenuEntries({ mode, pick, list, inherited } = {}) {
+    if (mode !== 'agent' || pick !== 'folder' || !inherited) return null;
+    const agents = (Array.isArray(list) ? list : []).filter((a) => a && a.cmd);
+    if (agents.length <= 1) return null;
+    const label = inherited.blank ? BLANK_LABEL : agentLabel(inherited);
+    const entries = [{ label, hint: 'как в этой папке', val: {} }];
+    for (const a of agents) {
+      if (agentLabel(a) === label) continue;
+      entries.push({ label: agentLabel(a), hint: '', val: { cmd: a.cmd, flags: a.flags || '' } });
+    }
+    // Один пункт — это не выбор: так бывает, когда в папке крутится единственная команда
+    // из списка, а остальные её же ярлыки. Открываем сразу.
+    return entries.length > 1 ? entries : null;
+  }
+
+  return {
+    launchWordFrom, isAliasExpansion, agentLabel, launchMenuEntries, BLANK_LABEL,
+    AGENT_CMD_RE, AGENT_FLAGS_RE,
+  };
 });

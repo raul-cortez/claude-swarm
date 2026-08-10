@@ -57,6 +57,10 @@ contextBridge.exposeInMainWorld('swarm', {
   // Close a session.
   killSession: (id) => ipcRenderer.send('session:kill', { id }),
 
+  // В этой вкладке запустили ДРУГОГО агента руками — строка запуска, которой её открыл
+  // сворм, больше не про неё (см. session:forgetLaunch).
+  forgetLaunch: (id) => ipcRenderer.send('session:forgetLaunch', { id }),
+
   // Bring the app window forward (used when a notification is clicked).
   focusApp: () => ipcRenderer.send('app:focus'),
 

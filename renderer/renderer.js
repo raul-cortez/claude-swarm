@@ -225,6 +225,7 @@ const stageEl    = document.getElementById('stage');
 const newTabBtn  = document.getElementById('new-session-folder');
 const cmdBtn     = document.getElementById('cmd-menu-btn');
 const cmdMenu    = document.getElementById('cmd-menu');
+const launchMenu = document.getElementById('launch-menu');
 const gitBtn      = document.getElementById('git-branch');
 const gitMenu     = document.getElementById('git-menu');
 const gitMsgEl    = document.getElementById('git-msg');
@@ -725,9 +726,10 @@ function saveResumeSessions() {
   localStorage.setItem('swarm.resumeSessions', resumeSessions ? '1' : '0');
 }
 
-// Human label for a saved agent in the picker: `cmd` plus its flags.
+// Ярлык команды и решение «разворачивать ли меню на +» живут в launch-word.js: свой модуль,
+// свой тест — см. LAUNCH_API ниже.
 function agentLabel(a) {
-  return (a.cmd + (a.flags ? ' ' + a.flags : '')).trim();
+  return window.SWARM_LAUNCH.agentLabel(a);
 }
 
 // Ask which saved agent a new tab should launch. Resolves the chosen { cmd, flags },
@@ -754,7 +756,7 @@ function pickAgent() {
     // A clean shell (no command) is always available as the last option.
     const blankBtn = document.createElement('button');
     blankBtn.className = 'pick-item pick-blank';
-    blankBtn.textContent = 'Чистый терминал';
+    blankBtn.textContent = window.SWARM_LAUNCH.BLANK_LABEL;
     blankBtn.addEventListener('click', () => close({ blank: true }));
     list.appendChild(blankBtn);
     document.body.appendChild(overlay);
@@ -790,15 +792,87 @@ async function resolveLaunch(opts, cwd) {
   if (launchMode === 'blank') return { blank: true };
   if (launchList.length <= 1) return { cmd: launch.cmd, flags: launch.flags };
   if (launchPick === 'folder') {
-    const ids = withinOrder.get(cwd) || [];
-    for (const sid of ids) {
-      const s = sessions.get(sid);
-      if (!s) continue;
-      if (s.blank) return { blank: true };
-      if (s.cmd) return { cmd: s.cmd, flags: s.flags != null ? s.flags : '' };
-    }
+    const inherited = folderChoice(cwd);
+    if (inherited) return inherited;
   }
   return pickAgent();
+}
+
+// Чем открылась первая живая вкладка этой папки: { cmd, flags } | { blank: true } | null.
+// Ровно то, что унаследует новая вкладка в режиме «как в первой вкладке папки» — поэтому
+// и меню на «+», и сам resolveLaunch спрашивают об этом одну функцию: разойдись они, меню
+// обещало бы одно, а вкладка открывалась бы другим.
+function folderChoice(cwd) {
+  const ids = withinOrder.get(cwd) || [];
+  for (const sid of ids) {
+    const s = sessions.get(sid);
+    if (!s) continue;
+    if (s.blank) return { blank: true };
+    if (s.cmd) return { cmd: s.cmd, flags: s.flags != null ? s.flags : '' };
+  }
+  return null;
+}
+
+// «+» на папке разворачивает выбор: открыть как открывались соседи — или другой командой
+// из настроек. Ради одного случая, который иначе тупиковый: упёрся в лимит рабочей подписки
+// и хочешь в ЭТОЙ ЖЕ папке вкладку под личной. Раньше выхода было два, и оба плохие — лезть
+// в настройки и переключать спрашивание глобально, или набрать `claude-my` руками. Набранное
+// руками сворм не достраивает: такая вкладка остаётся без строки статуса с лимитами, без
+// хуков, без закреплённого id разговора — то есть без половины того, зачем он нужен.
+//
+// Меню появляется РОВНО там, где выбор иначе унаследовался бы молча: команд в настройках
+// больше одной, папка уже кем-то занята, и режим — «как в первой вкладке папки». В режиме
+// «спрашивать каждый раз» спросит сам resolveLaunch, и второе меню поверх первого было бы
+// издевательством; при одной команде выбирать не из чего.
+function launchMenuEntries(cwd) {
+  return window.SWARM_LAUNCH.launchMenuEntries({
+    mode: launchMode,
+    pick: launchPick,
+    list: launchList,
+    inherited: folderChoice(cwd),
+  });
+}
+
+// Показать это меню под кнопкой. Отвечает опциями для createSession ({} — «как в папке»,
+// то есть сегодняшнее наследование) или null, если меню закрыли не выбрав: тогда вкладки
+// не будет вовсе — как при отмене в pickAgent.
+function openLaunchMenu(anchor, cwd) {
+  const entries = launchMenuEntries(cwd);
+  if (!entries) return Promise.resolve({});
+  return new Promise((resolve) => {
+    launchMenu.innerHTML = '';
+    for (const e of entries) {
+      const b = document.createElement('button');
+      b.className = 'cmd-item';
+      b.innerHTML = '<span class="cmd-name"></span><span class="cmd-hint"></span>';
+      b.querySelector('.cmd-name').textContent = e.label;
+      b.querySelector('.cmd-hint').textContent = e.hint;
+      b.addEventListener('click', () => close(e.val));
+      launchMenu.appendChild(b);
+    }
+    const close = (val) => {
+      launchMenu.classList.add('hidden');
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(val || null);
+    };
+    const outside = (ev) => {
+      if (!launchMenu.contains(ev.target) && !anchor.contains(ev.target)) close(null);
+    };
+    const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(null); } };
+    launchMenu.classList.remove('hidden');
+    placeMenuUnder(launchMenu, anchor);
+    setTimeout(() => document.addEventListener('mousedown', outside), 0);
+    document.addEventListener('keydown', onKey, true);
+    launchMenu.querySelector('.cmd-item')?.focus();
+  });
+}
+
+// Открыть вкладку в этой папке, спросив под кнопкой, чем именно.
+async function createSessionFrom(anchor, cwd) {
+  const pick = await openLaunchMenu(anchor, cwd || '');
+  if (!pick) return;
+  createSession({ cwd: cwd || undefined, ...pick });
 }
 
 // Build the line typed into a new/restored tab: optional Claude -n / --resume.
@@ -840,6 +914,8 @@ window.swarm.onTabProcess(({ id, cmd }) => {
   if (!s || s.blank || s.cmd === word) return;
   if (LAUNCH_API.isAliasExpansion(s.cmd, word)) return;
   s.cmd = word;
+  // Запущено не нами — значит и строка запуска у main устарела (см. session:forgetLaunch).
+  window.swarm.forgetLaunch(id);
   persistTabs();
 });
 
@@ -855,6 +931,7 @@ function rememberStartCommand(line, sessionId) {
   // learned cmd would be dead data.
   if (s && !s.blank && s.cmd !== cmd) {
     s.cmd = cmd;
+    window.swarm.forgetLaunch(sessionId);   // см. session:forgetLaunch
     persistTabs();
   }
 }
@@ -1061,7 +1138,10 @@ async function createSessionInFolder() {
   const dir = await window.swarm.pickFolder(base);
   if (!dir) return;
   lastFolder = dir;
-  createSession({ cwd: dir });
+  // Та же развилка, что и у «+» на папке, — но только если папка уже занята: выбранная в
+  // проводнике пустая папка спросит сама (первая вкладка папки), и меню было бы вторым
+  // вопросом подряд об одном и том же.
+  createSessionFrom(newTabBtn, dir);
 }
 
 // --- git status bar ----------------------------------------------------------
@@ -1221,7 +1301,8 @@ function showSettingsModal(tab) {
             <label class="set-radio">
               <input type="radio" name="set-pick" value="folder" />
               <span class="set-check-tx">Как в первой вкладке папки
-                <span class="set-check-sub">спросим только на первой вкладке папки, дальше — тот же выбор</span></span>
+                <span class="set-check-sub">спросим только на первой вкладке папки, дальше — тот же выбор;
+                  открыть другой командой можно через «+» на папке</span></span>
             </label>
           </div>
           <label class="set-check">
@@ -2895,7 +2976,7 @@ function relayoutTabs() {
     add.className = 'group-add';
     add.title = 'Новая сессия в этой папке';
     add.innerHTML = ICONS.plus;
-    add.addEventListener('click', (e) => { e.stopPropagation(); createSession({ cwd: cwd || undefined }); });
+    add.addEventListener('click', (e) => { e.stopPropagation(); createSessionFrom(add, cwd); });
     head.append(grip, chev, nameEl, count, dots, add);
     head.addEventListener('click', () => toggleFolder(cwd));
 
