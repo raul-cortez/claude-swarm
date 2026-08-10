@@ -39,6 +39,27 @@ const DEFAULT_ASK_PHRASES = ['Сейчас от тебя'];
 // находиться, и вкладка честного «мне ничего не нужно» красилась как «ждёт ответа».
 const NONE_TAIL = '[\\s:.\\u2014*_`~-]*(?:ничего|жд[иёе]|ждать|ждите|подожди(?:те)?|дождись|дождитесь|не\\s+(?:нужно|требуется|надо))';
 
+// Третий случай, и он не про человека, а про АГЕНТА: «Сейчас от тебя: ничего, жду замер
+// стенда». От тебя правда ничего не нужно — но и работа не кончилась: агент запустил
+// фоновую задачу, ход закрыл, и его разбудит её завершение. Вкладка при этом красилась
+// зелёной, то есть «свободна, дай задачу», хотя давать ей нечего.
+//
+// Отличие от NONE_TAIL — В ЛИЦЕ глагола, и это не придирка, а единственный признак,
+// который есть в самой фразе: «жди результата» — повелительное, обращено к тебе и
+// значит «я закончил»; «жду замер» — первое лицо, ждёт агент, значит работа идёт.
+// Поэтому здесь только формы первого лица, и проверяются они РАНЬШЕ NONE_TAIL: «ничего,
+// жду сборку» начинается со слова «ничего», и без порядка этот случай уходил бы в
+// «готов» по первому же слову.
+//
+// Между фразой и глаголом пропускаем только «ничего» и знаки — не произвольные слова.
+// Иначе «Сейчас от тебя: решение по схеме, жду ответа» (настоящий зов!) читалось бы как
+// фоновая работа, и вкладка молчала бы вместо того, чтобы звать.
+// Конец слова здесь пишется как «дальше не буква», а НЕ как \b: границу слова JS считает
+// по [A-Za-z0-9_], кириллица в неё не входит, и «жду» с \b на конце не находилось вообще.
+const WAIT_GAP = '[\\s:.,\\u2014*_`~-]*';
+const WAIT_END = '(?![а-яёА-ЯЁa-zA-Z])';
+const WAIT_TAIL = `${WAIT_GAP}(?:ничего${WAIT_GAP})?(?:жду|ждём|ждем|дождусь|дожидаюсь|ожидаю)${WAIT_END}`;
+
 const MAX_PHRASES = 12;   // a sane ceiling; the regex is run on every tick
 const MAX_LEN = 60;       // one phrase, not a paragraph
 
@@ -63,23 +84,64 @@ function normalizePhrases(list) {
   return out.length ? out : DEFAULT_ASK_PHRASES.slice();
 }
 
-// The two regex SOURCES (strings, so they survive JSON on the way to the hook):
-//   mark — any of the phrases;  none — a phrase followed by a «ничего/жди» tail.
+// The regex SOURCES (strings, so they survive JSON on the way to the hook):
+//   mark — any of the phrases;  none — a phrase followed by a «ничего/жди» tail;
+//   wait — a phrase followed by a first-person «жду …» tail (see WAIT_TAIL).
 function phraseSources(list) {
   const alt = normalizePhrases(list).map(escapeRe).join('|');
-  return { mark: `(?:${alt})`, none: `(?:${alt})${NONE_TAIL}` };
+  return { mark: `(?:${alt})`, none: `(?:${alt})${NONE_TAIL}`, wait: `(?:${alt})${WAIT_TAIL}` };
 }
 
 // Compiled form for in-process use.
 function buildAskMatcher(list) {
   const src = phraseSources(list);
-  return { mark: new RegExp(src.mark, 'i'), none: new RegExp(src.none, 'i') };
+  return {
+    mark: new RegExp(src.mark, 'i'),
+    none: new RegExp(src.none, 'i'),
+    wait: new RegExp(src.wait, 'i'),
+  };
 }
 
-// True only for a REAL call: a phrase is present and it isn't a «ничего/жди» one.
-function asksWith(matcher, text) {
+// Хвост текста от ПОСЛЕДНЕГО вхождения фразы — и разбирать надо именно его.
+//
+// Экран — это переписка целиком: над свежим «Сейчас от тебя: ничего» вполне висит
+// позавчерашнее «Сейчас от тебя: путь к схеме», и проверка «фраза есть, а хвоста
+// „ничего“ где-то нет» отвечала по СМЕСИ двух ходов. Живьём это выглядело как вкладка,
+// которая молчит про новый зов, потому что в старом было «ничего». Последнее вхождение —
+// это то, что агент сказал последним, и только оно описывает текущее положение дел.
+function tailFrom(matcher, text) {
   const t = String(text == null ? '' : text);
-  return matcher.mark.test(t) && !matcher.none.test(t);
+  if (!matcher || !matcher.mark) return null;
+  const re = new RegExp(matcher.mark.source, 'gi');
+  let idx = -1;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    idx = m.index;
+    if (m.index === re.lastIndex) re.lastIndex++;   // пустое совпадение не должно зациклить
+  }
+  return idx < 0 ? null : t.slice(idx);
+}
+
+// Что означает последняя фраза агента:
+//   'ask'  — зовёт: нужен ответ, выбор или решение;
+//   'wait' — от человека ничего, но работа продолжается сама (фоновая задача);
+//   null   — фразы нет, либо она говорит «мне ничего не нужно» (ход закончен).
+function callKind(matcher, text) {
+  const tail = tailFrom(matcher, text);
+  if (tail == null) return null;
+  if (matcher.wait && matcher.wait.test(tail)) return 'wait';
+  if (matcher.none && matcher.none.test(tail)) return null;
+  return 'ask';
+}
+
+// True only for a REAL call: a phrase is present and it isn't a «ничего/жди/жду» one.
+function asksWith(matcher, text) {
+  return callKind(matcher, text) === 'ask';
+}
+
+// True when the agent said it keeps working without you.
+function waitsWith(matcher, text) {
+  return callKind(matcher, text) === 'wait';
 }
 
 // WHAT the agent is asking, as text — for the pult tooltip, the notification and
@@ -103,7 +165,7 @@ const DEFAULT_SOURCES = phraseSources(DEFAULT_ASK_PHRASES);
 
 return {
   DEFAULT_ASK_PHRASES, DEFAULT_SOURCES, MAX_PHRASES, MAX_LEN,
-  normalizePhrases, phraseSources, buildAskMatcher, asksWith, askExcerpt,
+  normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, askExcerpt,
 };
 
 });

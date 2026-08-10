@@ -134,7 +134,7 @@ function defaultWorkdir() {
 // provisioning failed (then we simply skip injection and behave as before).
 let STATUSLINE_SETTINGS = null;
 const { hookSettings } = require('./hook-config');
-const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, asksWith, askExcerpt } = require('./ask-phrases');
+const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, callKind, askExcerpt } = require('./ask-phrases');
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
@@ -410,6 +410,9 @@ function makeDetector(cols, rows) {
     // снимок, а байты перерисовки не считаются работой. См. snapshot() ниже.
     scrolledBack: false, liveSnap: '', livePrompt: '',
     status: '', detail: '', statusline: '', question: null, sub: 0, dead: false,
+    // Ход кончился словами «ничего, жду замер стенда»: статус «работает», но работает
+    // не агент, а фоновая задача, и человеку это докладывают иначе. См. detector.js.
+    bg: false,
     // Waiting latch (fallback detection, no hooks): hold «ждёт» through screen
     // noise, release only when the agent genuinely resumed. See detector.js.
     waitLatched: false, waitKind: null, waitingKind: null, chromeGoneSince: 0,
@@ -630,6 +633,11 @@ setInterval(() => {
           || statusline !== d.statusline || question !== d.question || sub !== d.sub
           || kind !== d.waitingKind) {
         const prev = d.status;
+        // «Работает» и «работает в фоне» — один статус, но разные новости, а статус между
+        // ними не меняется. Помним прошлое значение отдельно: по переходу в фон мост
+        // докладывает итог (ход-то кончился), по выходу из него начинается новый ход.
+        const wasBg = !!d.bg;
+        d.bg = !!next.bg;
         d.status = next.status;
         d.detail = next.detail;
         d.statusline = statusline;
@@ -643,7 +651,10 @@ setInterval(() => {
         else tgCancelWaiting(d);
         // Ход НАЧАЛСЯ. Запоминаем момент, чтобы потом отличить свежий текст хода от текста
         // прошлого — см. tgOnDone, это и есть защита от «ответил не на то, что просили».
-        if (next.status === 'running' && prev !== 'running') d.turnStartedAt = now;
+        // Фон досчитал и разбудил агента — это НОВЫЙ ход, хотя статус всё это время был
+        // «работает». Без второго условия его началом считался бы момент, когда человек
+        // отправил задачу час назад, и мост принял бы за свежий текст итог прошлого хода.
+        if (next.status === 'running' && (prev !== 'running' || (wasBg && !next.bg))) d.turnStartedAt = now;
         // Turn finished on a task that came from the phone → report back there.
         //
         // `d.tgAck` — ДОЛГ: в чате висит «получил, думаю…», то есть человек с телефона ждёт
@@ -659,7 +670,15 @@ setInterval(() => {
         // Исключение — ход, который начали МЫ САМИ, спросив агента про перезапуск (rsQuiet):
         // человека он не касается, а в режиме телефона его итог прилетал бы уведомлением в три
         // часа ночи. Долг это не отменяет: на вопрос человека ответить надо.
-        const turnEnded = next.status === 'ready' && prev === 'running';
+        // Ход кончился и словами «ничего, жду замер стенда»: статус остался «работает», а
+        // рассказывать уже есть что. Для человека с телефона это такой же итог, только с
+        // часиками вместо галочки — он получает ответ сразу, а не через двадцать минут, и
+        // видит, что отвечать не нужно. Долг за такой доклад считается уплаченным: на
+        // вопрос ответили, заготовка «получил, думаю…» превращается в текст.
+        // «Готов» — конец хода всегда, в том числе из фона: агент дождался задачи, дописал
+        // итог и замолчал. А вход в фон концом хода считается ровно один раз — на переходе,
+        // иначе каждое шевеление внутри фонового ожидания слало бы в чат один и тот же текст.
+        const turnEnded = prev === 'running' && (next.status === 'ready' || (d.bg && !wasBg));
         const relay = turnEnded && TG.chatId != null && (owed || (tgMirrors() && !d.rsQuiet));
         if (turnEnded) d.rsQuiet = false;
         // В журнал — КАЖДАЯ смена статуса вкладки, за которой следит телеграм, и решение
@@ -1168,7 +1187,7 @@ setInterval(() => {
       const pastLife = transcript.isPastLife(d.trEntries || [], d.startedAt);
       const v = pastLife
         ? null
-        : transcript.classify(d.trEntries || [], now, (t) => asksWith(ASK_MATCHER, t));
+        : transcript.classify(d.trEntries || [], now, (t) => callKind(ASK_MATCHER, t));
       applyTranscript(d, v);
       // The question, word for word — only for a turn that ended asking. Anything else
       // would be quoting streamed prose back at the user.
@@ -1182,7 +1201,10 @@ setInterval(() => {
       // Вместе с ним — ВРЕМЯ той записи, из которой он взят. Только по нему видно, этого хода
       // текст или прошлого: статус «готов» приходит от хука на секунду раньше, чем classify
       // отпустит свой отстой и обновит текст (см. tgOnDone).
-      if (v && v.status === 'ready') {
+      // Ход, закрытый словами «ничего, жду замер стенда», для человека такой же итог: агент
+      // рассказал, что сделал, и ушёл ждать фон. Не запомнить текст здесь — значит отправить
+      // в телегу пустой доклад «⏳ вкладка», хотя всё интересное уже сказано.
+      if (v && (v.status === 'ready' || v.bg)) {
         d.trReply = d.trFinal;
         d.trReplyAt = v.at || now;
       }
@@ -2674,7 +2696,9 @@ function tgOnDone(id, d) {
     d.tgDoneTimer = null;
     if (d.dead) return;
     // Вкладка успела снова заработать: этот ход уже не итог, а следующий доложит о себе сам.
-    if (d.status !== 'ready') return;
+    // «Работает в фоне» — не тот случай: там ход как раз кончился, агент лишь сказал, что
+    // ждёт фоновую задачу и вернётся сам (d.bg).
+    if (d.status !== 'ready' && !d.bg) return;
     const fresh = transcript.belongsToTurn(d.trReplyAt, d.turnStartedAt);
     if (!fresh && Date.now() - endedAt < TG_DONE_WAIT_MS) {
       d.tgDoneTimer = setTimeout(step, TG_DONE_STEP_MS);
@@ -2727,7 +2751,12 @@ async function tgNotifyDone(id, d, fresh) {
     + ` ход с ${tgStamp(d.turnStartedAt)}, текст ${tgStamp(d.trReplyAt)})`);
   // Если ход начался сообщением из телеги, ответ вписывается в ЕГО же сообщение («получил,
   // думаю…» → ответ). Иначе (зеркало итогов, когда человека нет за маком) — обычная запись.
-  await tgAckResolve(id, d, `✅ ${tgTabName(id)}${text ? '\n\n' + text : ' — готов.'}`);
+  // Часики вместо галочки, когда агент ушёл ждать фоновую задачу: доклад тот же самый, но
+  // человеку с телефона важно знать, что это ещё не конец и отвечать не нужно — агент
+  // вернётся сам, когда фон досчитает.
+  const bg = !!d.bg;
+  const head = `${bg ? '⏳' : '✅'} ${tgTabName(id)}${bg ? ' — жду фоновую задачу' : ''}`;
+  await tgAckResolve(id, d, `${head}${text ? '\n\n' + text : bg ? '.' : ' — готов.'}`);
 }
 
 async function tgNotifyWaiting(id, d) {

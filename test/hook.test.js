@@ -106,7 +106,7 @@ test('the hook fallback phrases are exactly ask-phrases.js defaults', () => {
   const code = `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then((m) => console.log(JSON.stringify(m.FALLBACK)))`;
   const out = execFileSync(process.execPath, ['-e', code], { encoding: 'utf8' });
   const fb = JSON.parse(out);
-  assert.deepStrictEqual({ mark: fb.mark, none: fb.none }, DEFAULT_SOURCES);
+  assert.deepStrictEqual({ mark: fb.mark, none: fb.none, wait: fb.wait }, DEFAULT_SOURCES);
   // The plain marker is a THIRD copy of the default phrase (app, hook regexes, hook
   // text) — it's the one the deny reason names back to the agent, so pin it too.
   assert.strictEqual(fb.marker, DEFAULT_ASK_PHRASES[0]);
@@ -185,6 +185,27 @@ test('the call phrase is found in an OBJECT last_assistant_message', () => {
   const m = H.loadMatcher(() => null);   // shipped default
   assert.strictEqual(H.callsUser(m, { type: 'text', text: 'Сейчас от тебя: путь' }), true);
   assert.strictEqual(H.tokenFor({ hook_event_name: 'Stop', last_assistant_message: { type: 'text', text: 'Сейчас от тебя: путь' } }, m), 'ask');
+});
+
+// --- Stop бывает трёх видов, а не двух ----------------------------------------
+// «Всё сделал», «спросил и остановился» и «запустил фон и жду его» — одно и то же
+// событие. Различает их только текст, которым агент закрыл ход.
+
+test('Stop с «ничего, жду …» — это bgw: работает, но человека не зовёт', () => {
+  const m = H.loadMatcher(() => null);   // shipped default
+  const stop = (text) => H.tokenFor({ hook_event_name: 'Stop', last_assistant_message: text }, m);
+  assert.strictEqual(stop('Сейчас от тебя: ничего, жду замер стенда'), 'bgw');
+  assert.strictEqual(stop('Сейчас от тебя: ничего, ждём сборку'), 'bgw');
+  assert.strictEqual(stop('Сейчас от тебя: ничего, жди результата'), 'idle', 'жди — это «я закончил»');
+  assert.strictEqual(stop('Сейчас от тебя: путь к схеме'), 'ask');
+  assert.strictEqual(stop('Готово.'), 'idle');
+});
+
+test('closingKind судит по ПОСЛЕДНЕЙ фразе сообщения', () => {
+  const m = H.loadMatcher(() => null);
+  // Длинный отчёт со своим «ничего» в середине не должен отменять зов в конце.
+  assert.strictEqual(H.closingKind(m, 'Сейчас от тебя: ничего\n\nСейчас от тебя: путь'), 'ask');
+  assert.strictEqual(H.closingKind(m, 'Сейчас от тебя: ничего, жду фон\n\nСейчас от тебя: ничего'), null);
 });
 
 // --- refusing the interactive picker while driven from Telegram ----------------

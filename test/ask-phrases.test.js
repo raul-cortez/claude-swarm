@@ -79,9 +79,52 @@ test('normalize: caps the count and the length of one phrase', () => {
 test('phraseSources are JSON-safe strings the hook can recompile', () => {
   const src = A.phraseSources(['Жду ответа']);
   assert.strictEqual(typeof src.mark, 'string');
-  const round = { mark: new RegExp(src.mark, 'i'), none: new RegExp(src.none, 'i') };
+  const round = {
+    mark: new RegExp(src.mark, 'i'),
+    none: new RegExp(src.none, 'i'),
+    wait: new RegExp(src.wait, 'i'),
+  };
   assert.strictEqual(A.asksWith(round, 'Жду ответа сейчас'), true);
   assert.strictEqual(A.asksWith(round, 'Жду ответа: ничего, жди'), false);
+  assert.strictEqual(A.waitsWith(round, 'Жду ответа: ничего, жду сборку'), true);
+});
+
+// --- «ничего, жду замер стенда»: от человека ничего, но работа идёт ---------------
+// Третий исход конца хода. Он существует, потому что до него вкладка с живой фоновой
+// задачей была неотличима от свободной — зелёной, «дай ей работу».
+
+const kind = (text, list) => A.callKind(A.buildAskMatcher(list), text);
+
+test('«ничего, жду …» — работа идёт, но человека не зовут', () => {
+  assert.strictEqual(kind('Сейчас от тебя: ничего, жду замер стенда'), 'wait');
+  assert.strictEqual(kind('Сейчас от тебя: ничего, ждём сборку'), 'wait');
+  assert.strictEqual(kind('Сейчас от тебя: жду ответа фонового агента'), 'wait');
+  assert.strictEqual(kind('**Сейчас от тебя:** ничего — жду typecheck'), 'wait');
+});
+
+test('повелительное «жди результата» осталось «готов», а не фоном', () => {
+  // Одна буква разницы, и она содержательная: ждёт человек — значит агент закончил.
+  assert.strictEqual(kind('Сейчас от тебя: ничего, жди результата'), null);
+  assert.strictEqual(kind('Сейчас от тебя: ничего'), null);
+});
+
+test('«жду» после настоящей просьбы — это зов, а не фон', () => {
+  // Между фразой и «жду» стоит сама просьба, значит человеку есть что делать.
+  assert.strictEqual(kind('Сейчас от тебя: решение по схеме, жду ответа'), 'ask');
+  assert.strictEqual(kind('Сейчас от тебя: путь к схеме'), 'ask');
+});
+
+test('решает ПОСЛЕДНЯЯ фраза: на экране висит и прошлый ход', () => {
+  const screen = 'Сейчас от тебя: ничего, жду сборку\n…\nСейчас от тебя: ничего';
+  assert.strictEqual(kind(screen), null);
+  const asked = 'Сейчас от тебя: ничего\n…\nСейчас от тебя: путь к схеме';
+  assert.strictEqual(kind(asked), 'ask');
+  const started = 'Сейчас от тебя: ничего\n…\nСейчас от тебя: ничего, жду замер';
+  assert.strictEqual(kind(started), 'wait');
+});
+
+test('без фразы вердикта нет', () => {
+  assert.strictEqual(kind('Просто отчёт. Жду сборку.'), null);
 });
 
 // --- askExcerpt: the text of the question, for the tooltip / notification / bridge --

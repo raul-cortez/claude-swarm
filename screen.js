@@ -2,7 +2,7 @@
 // Pure screen-scraping helpers for the status detector. Kept out of main.js so
 // they're unit-testable in plain node, like git.js / updater-core.js.
 
-const { DEFAULT_ASK_PHRASES, buildAskMatcher, asksWith } = require('./ask-phrases');
+const { DEFAULT_ASK_PHRASES, buildAskMatcher, asksWith, waitsWith } = require('./ask-phrases');
 
 // --- the snapshot window ------------------------------------------------------
 // What the detector actually looks at: the bottom rows of the emulator. The window
@@ -317,6 +317,14 @@ function asksForInput(snapshot) {
   return asksWith(askMatcher, snapshot);
 }
 
+// Агент закрыл ход, но работа продолжается без человека: «Сейчас от тебя: ничего, жду
+// замер стенда». Отвечать нечего, а вкладка при этом занята — фоновая задача досчитает и
+// сама разбудит агента. Отдельно от asksForInput, потому что и статус получается третий:
+// не «ждёт ответа» и не «готов», а «работает». См. WAIT_TAIL в ask-phrases.js.
+function waitsForWork(snapshot) {
+  return waitsWith(askMatcher, snapshot);
+}
+
 // Отпечаток ЗОВА, как он сейчас нарисован на экране: строки с настоящей просьбой, слитые в
 // один короткий хеш.
 //
@@ -586,7 +594,7 @@ function scrolledBack(snapshot) {
 
 module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
-  inferWaitingKind, asksForInput, askFingerprint, setAskPhrases, countSubagents,
+  inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack,
   contentEnd, snapshotRows, snapshotWrapped,
 };

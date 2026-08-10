@@ -106,6 +106,17 @@ test('«Сейчас от тебя: ничего, жди …» is NOT a request'
   assert.strictEqual(S.asksForInput('Сейчас от тебя: жди'), false);
 });
 
+test('«Сейчас от тебя: ничего, жду …» — не зов, но и не «готов»', () => {
+  // Ход закрыт фоновой задачей: отвечать нечего, а вкладка занята — фон разбудит агента.
+  assert.strictEqual(S.asksForInput('Сейчас от тебя: ничего, жду замер стенда'), false);
+  assert.strictEqual(S.waitsForWork('Сейчас от тебя: ничего, жду замер стенда'), true);
+  assert.strictEqual(S.waitsForWork('Сейчас от тебя: ничего, ждём сборку'), true);
+  // Повелительное «жди результата» — это «я закончил», вкладка свободна.
+  assert.strictEqual(S.waitsForWork('Сейчас от тебя: ничего, жди результата'), false);
+  assert.strictEqual(S.waitsForWork('Сейчас от тебя: путь к схеме'), false);
+  assert.strictEqual(S.waitsForWork('обычный вывод без маркера'), false);
+});
+
 test('«Сейчас от тебя: <настоящий запрос>» IS a request', () => {
   assert.strictEqual(S.asksForInput('Сейчас от тебя: путь к схеме'), true);
   assert.strictEqual(S.asksForInput('Сейчас от тебя: подтверди, ничего не удаляй'), true);

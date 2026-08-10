@@ -36,6 +36,22 @@ test('the «ничего, жди» escape hatch we document is really not a call
   assert.ok(!AP.asksWith(m, `${AR.DEFAULT_MARKER}: ничего, жди результата`));
 });
 
+test('обе строки правила про фон дают ровно «работает в фоне»', () => {
+  // Правило учит третьей концовке — «ничего, жду …», ждёт АГЕНТ. Если она разъедется с
+  // матчером, вкладка с живой фоновой задачей снова станет зелёной, и увидеть это можно
+  // будет только вживую: тесты по обе стороны останутся зелёными.
+  for (const phrases of [[], ['Твой ход'], ['Нужен ответ', 'Твой ход']]) {
+    const m = AP.buildAskMatcher(phrases);
+    const marker = AR.markerOf(phrases);
+    const sample = `Запустил замер.\n\n${marker}: ничего, жду замер стенда`;
+    assert.ok(AP.waitsWith(m, sample), 'фон с ' + JSON.stringify(phrases));
+    assert.ok(!AP.asksWith(m, sample), 'и это не зов: ' + JSON.stringify(phrases));
+    for (const rule of [AR.systemPromptRule(phrases), AR.claudeMdRule(phrases)]) {
+      assert.ok(/жду/.test(rule), 'правило называет слово: ' + JSON.stringify(phrases));
+    }
+  }
+});
+
 test('the system-prompt rule is one line and safe inside a shell "…"', () => {
   // Main normally passes it through the environment, but for a shell whose syntax it
   // doesn't know it spells the value inline on a command line it WRITES INTO AN

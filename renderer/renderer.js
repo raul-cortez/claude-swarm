@@ -1688,9 +1688,15 @@ function showSettingsModal(tab) {
     if (!sample) { askVerdictEl.textContent = ''; askVerdictEl.className = 'ask-verdict'; return; }
     const AP = window.SWARM_ASK_PHRASES;
     if (!AP) { askVerdictEl.textContent = ''; return; } // script missing: no check, but settings still work
-    const calls = AP.asksWith(AP.buildAskMatcher(draftPhrases()), sample);
-    askVerdictEl.textContent = calls ? 'позовёт → ждёт ответа' : 'не позовёт → готов';
-    askVerdictEl.className = 'ask-verdict ' + (calls ? 'is-call' : 'is-none');
+    // Три исхода, а не два: зов, «ничего, жду фон» (вкладка занята, но не зовёт) и конец
+    // работы. Средний тут особенно нужен — на глаз он от «жди результата» отличается одной
+    // буквой, и увидеть, как его понял матчер, можно только здесь.
+    const kind = AP.callKind(AP.buildAskMatcher(draftPhrases()), sample);
+    const verdict = kind === 'ask' ? ['позовёт → ждёт ответа', 'is-call']
+      : kind === 'wait' ? ['не позовёт → работает в фоне', 'is-work']
+        : ['не позовёт → готов', 'is-none'];
+    askVerdictEl.textContent = verdict[0];
+    askVerdictEl.className = 'ask-verdict ' + verdict[1];
   };
   askI.addEventListener('input', syncAskVerdict);
   askTestI.addEventListener('input', syncAskVerdict);

@@ -6,7 +6,7 @@
 // reads `d.lastDataAt`, `applyLatch` reads/mutates the latch fields on `d`, and
 // both take the current screen `snap` as a string.
 
-const { inferWaitingKind, asksForInput, askFingerprint } = require('./screen');
+const { inferWaitingKind, asksForInput, waitsForWork, askFingerprint } = require('./screen');
 
 // --- что человек сделал на клавиатуре -----------------------------------------
 // Байты из рендерера — это НЕ только печать. Там же приходят стрелки, отчёты мыши и прочие
@@ -127,6 +127,28 @@ function mkWaiting(snap) {
   return { status: 'waiting', detail: 'ждёт ответа', kind: inferWaitingKind(snap) };
 }
 
+// --- ход кончился, а работа нет ------------------------------------------------
+// Третье состояние конца хода, и до него вкладка была зелёной. Агент запустил фоновую
+// задачу (замер, сборка, фоновый сабагент), закрыл ход и сказал об этом словами: «Сейчас
+// от тебя: ничего, жду замер стенда». Все три канала честно читают такой ход как
+// законченный — Stop пришёл, в стенограмме последнее слово за агентом, спиннера на экране
+// нет, — и вкладка красилась «готов», то есть «свободна, дай ей задачу». Задачу давать
+// рано: фон досчитает и разбудит агента сам.
+//
+// Отличить это от настоящего «готов» может только сам агент: снаружи «я запустил и жду» и
+// «я всё сделал» выглядят одинаково. Поэтому признак — его собственная фраза (waitsForWork,
+// см. WAIT_TAIL в ask-phrases.js), а не подсчёт живых процессов: агент один знает,
+// собирается ли он возвращаться. Заодно это решает вечный `npm run dev` — под него агент
+// пишет «ничего», потому что ждать ему нечего.
+//
+// Статус — «работает»: от человека ничего не нужно, вкладка занята. `bg` несёт это дальше
+// (мосту и подписи), потому что «работает в фоне» и «работает» — разные новости.
+const BG_DETAIL = 'работает в фоне';
+
+function mkBackground() {
+  return { status: 'running', detail: BG_DETAIL, bg: true };
+}
+
 // The raw per-tick read from the screen (no latch). `snap` is the bottom rows of
 // the emulator; `d.lastDataAt` is when bytes last flowed.
 function decide(d, now, snap) {
@@ -157,6 +179,12 @@ function decide(d, now, snap) {
   if (asksNow(d, snap)) {
     return mkWaiting(snap);
   }
+  // Не зовёт, но и не закончил: «ничего, жду замер стенда». Читаем ПОСЛЕДНЮЮ фразу на
+  // экране (tailFrom в ask-phrases.js), поэтому строка прошлого хода сюда не попадает —
+  // как только агент допишет «ничего», вкладка станет зелёной.
+  if (waitsForWork(snap)) {
+    return mkBackground();
+  }
 
   return { status: 'ready', detail: 'готов' };
 }
@@ -173,13 +201,15 @@ function decide(d, now, snap) {
 // So a hook's `perm`/`ask` and a live prompt box on screen both outrank it.
 function applyTranscript(d, v) {
   d.trState = v
-    ? { status: v.status, kind: v.kind || null, at: v.at || 0, text: v.text || '' }
+    ? { status: v.status, kind: v.kind || null, at: v.at || 0, text: v.text || '', bg: !!v.bg }
     : null;
 }
 
 function fromTranscript(tr) {
   const kind = tr.status === 'waiting' ? (tr.kind || 'question') : null;
-  return { status: tr.status, detail: detailFor(tr.status), kind, from: 'transcript' };
+  const out = { status: tr.status, detail: detailFor(tr.status, tr.bg), kind, from: 'transcript' };
+  if (tr.bg) out.bg = true;
+  return out;
 }
 
 // The per-tick read for a session with a bound transcript and no hooks: the file
@@ -281,6 +311,9 @@ const HOOK_TOKEN = {
   idle: { status: 'ready' },                // Stop — the turn ended
   perm: { status: 'waiting', kind: 'permission' }, // PermissionRequest
   ask:  { status: 'waiting', kind: 'question' },    // AskUserQuestion tool
+  // Stop, но ход закончился словами «ничего, жду замер стенда»: от человека ничего, а
+  // работа идёт. Отдельный токен, а не busy, чтобы подпись и мост знали, что это фон.
+  bgw:  { status: 'running', bg: true },
 };
 
 // Record a hook signal on `d`. Once ANY signal has arrived, hooksActive flips on
@@ -290,12 +323,13 @@ function applyHook(d, token, now) {
   const m = HOOK_TOKEN[token];
   if (!m) return false;
   d.hooksActive = true;
-  d.hookState = { status: m.status, kind: m.kind || null, at: now };
+  d.hookState = { status: m.status, kind: m.kind || null, bg: !!m.bg, at: now };
   return true;
 }
 
-function detailFor(status) {
-  return status === 'running' ? 'работает' : status === 'waiting' ? 'ждёт ответа' : 'готов';
+function detailFor(status, bg) {
+  if (status === 'running') return bg ? BG_DETAIL : 'работает';
+  return status === 'waiting' ? 'ждёт ответа' : 'готов';
 }
 
 // Hooks are authoritative about the dialogs only they can see. Between hooks and the
@@ -335,7 +369,16 @@ function arbitrate(d, now, snap) {
   if (!tr && hs.status === 'ready' && asksNow(d, snap)) {
     return { status: 'waiting', detail: 'ждёт ответа', kind: 'question' };
   }
-  return { status: hs.status, detail: detailFor(hs.status), kind: hs.status === 'waiting' ? hs.kind : null };
+  // Та же дырка, что и у зова прозой, только с другим ответом: ход закончился словами
+  // «ничего, жду замер». Хук про это знает сам (токен bgw), но у вкладки, поднятой до
+  // обновления скрипта, приходит обычный idle — и экран остаётся единственным, кто видит
+  // фразу. Апгрейд только из «готов», как и всё остальное, что экран тут может сказать.
+  if (!tr && hs.status === 'ready' && waitsForWork(snap)) {
+    return mkBackground();
+  }
+  const out = { status: hs.status, detail: detailFor(hs.status, hs.bg), kind: hs.status === 'waiting' ? hs.kind : null };
+  if (hs.bg && hs.status === 'running') out.bg = true;
+  return out;
 }
 
 // The single entry point main's tick calls. Three channels, in order of how much they
@@ -349,7 +392,7 @@ function tickStatus(d, now, snap) {
 }
 
 module.exports = {
-  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS,
+  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS, BG_DETAIL,
   RE_WAIT, RE_WAIT_NOW, RE_RUNNING,
   decide, hasWaitChrome, hasPromptBox, asksNow, applyLatch, keyboardEvent,
   applyHook, applyTranscript, fromTranscript, decideFromTranscript, arbitrate, tickStatus,

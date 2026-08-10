@@ -451,6 +451,37 @@ test('READY_DEBOUNCE_MS — не ноль, иначе и ждать текст �
   assert.ok(T.READY_DEBOUNCE_MS > 0);
 });
 
+// --- ход кончился, а работа нет ------------------------------------------------
+// Стенограмма видит тихий текст агента и в этом случае, и когда всё сделано: записи
+// одинаковые. Разделяет их слово самого агента, поэтому classify спрашивает `asks`.
+
+const kinded = (text, kind) => T.classify(T.parseEntries(text), NOW, () => kind);
+
+test('фраза «жду» превращает конец хода в «работает в фоне»', () => {
+  const v = kinded(assistant([{ type: 'text', text: 'Сейчас от тебя: ничего, жду замер' }], 5000), 'wait');
+  assert.strictEqual(v.status, 'running');
+  assert.strictEqual(v.bg, true);
+  assert.strictEqual(v.why, 'text + wait phrase');
+  assert.ok(v.text.includes('жду замер'), 'текст хода нужен мосту');
+});
+
+test('зов остаётся зовом, а молчание — «готов»', () => {
+  const ask = kinded(assistant([{ type: 'text', text: 'Сейчас от тебя: путь' }], 5000), 'ask');
+  assert.strictEqual(ask.status, 'waiting');
+  assert.strictEqual(ask.kind, 'question');
+  assert.ok(!ask.bg);
+  const done = kinded(assistant([{ type: 'text', text: 'Готово.' }], 5000), null);
+  assert.strictEqual(done.status, 'ready');
+});
+
+test('старый вызов с булевым `asks` продолжает работать', () => {
+  // main.js когда-то передавал сюда предикат «зовёт ли»; ломать его на ровном месте
+  // значило бы получить «готов» вместо «ждёт» в сборке, где обновилась половина файлов.
+  const v = kinded(assistant([{ type: 'text', text: 'Сейчас от тебя: путь' }], 5000), true);
+  assert.strictEqual(v.status, 'waiting');
+  assert.strictEqual(v.kind, 'question');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }

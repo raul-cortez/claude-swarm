@@ -458,6 +458,62 @@ test('текст после последовательности всё-таки
   assert.deepStrictEqual(D.keyboardEvent('\x1b[M !!нет\r'), { typed: true, submit: true });
 });
 
+// --- «ничего, жду замер стенда»: занята, но не зовёт ----------------------------
+// Третий исход конца хода. До него вкладка с живой фоновой задачей была зелёной, то есть
+// выглядела свободной — а давать ей работу рано: фон досчитает и разбудит агента сам.
+
+const BG = 'Сейчас от тебя: ничего, жду замер стенда';
+const DONE_WAIT = 'Сейчас от тебя: ничего, жди результата';
+
+test('экран: фраза «жду …» = работает в фоне, а не «готов»', () => {
+  const raw = D.decide(mkD(), NOW, BG);
+  assert.strictEqual(raw.status, 'running');
+  assert.strictEqual(raw.bg, true);
+  assert.strictEqual(raw.detail, D.BG_DETAIL);
+});
+
+test('экран: повелительное «жди результата» — по-прежнему «готов»', () => {
+  assert.strictEqual(D.decide(mkD(), NOW, DONE_WAIT).status, 'ready');
+});
+
+test('экран: живой запрос сильнее фразы про фон', () => {
+  // Разрешение висит на экране под отчётом — отвечать всё-таки надо человеку.
+  assert.strictEqual(D.decide(mkD(), NOW, BG + '\n' + PERMISSION).status, 'waiting');
+});
+
+test('стенограмма: bg доезжает до статуса вкладки', () => {
+  const d = mkD();
+  D.applyTranscript(d, { status: 'running', kind: null, at: NOW, text: BG, bg: true });
+  const eff = D.tickStatus(d, NOW, BG);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.bg, true);
+  assert.strictEqual(eff.detail, D.BG_DETAIL);
+});
+
+test('хук: токен bgw — это «работает», с пометкой фона', () => {
+  const d = mkD();
+  assert.strictEqual(D.applyHook(d, 'bgw', NOW), true);
+  const eff = D.tickStatus(d, NOW, BG);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.bg, true);
+});
+
+test('хук «готов» + фраза про фон на экране: экран поднимает до «работает»', () => {
+  // Вкладка, поднятая до обновления скрипта хука, шлёт обычный idle. Экран — единственный,
+  // кто видит фразу, и апгрейд из «готов» ему разрешён (как и для зова прозой).
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  const eff = D.tickStatus(d, NOW, BG);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.bg, true);
+});
+
+test('хук «готов» + «жди результата» на экране остаётся «готов»', () => {
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW, DONE_WAIT).status, 'ready');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }

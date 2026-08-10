@@ -22,6 +22,7 @@ import { realpathSync } from 'node:fs';
 const FALLBACK = {
   mark: '(?:Сейчас от тебя)',
   none: '(?:Сейчас от тебя)[\\s:.\\u2014*_`~-]*(?:ничего|жд[иёе]|ждать|ждите|подожди(?:те)?|дождись|дождитесь|не\\s+(?:нужно|требуется|надо))',
+  wait: '(?:Сейчас от тебя)[\\s:.,\\u2014*_`~-]*(?:ничего[\\s:.,\\u2014*_`~-]*)?(?:жду|ждём|ждем|дождусь|дожидаюсь|ожидаю)(?![а-яёА-ЯЁa-zA-Z])',
   marker: 'Сейчас от тебя',   // phrases[0], for the deny reason below
 };
 
@@ -30,14 +31,24 @@ function loadMatcher(readJson) {
   try { src = readJson(); } catch (_) { /* missing / unreadable → defaults */ }
   const mark = (src && typeof src.mark === 'string' && src.mark) || FALLBACK.mark;
   const none = (src && typeof src.none === 'string' && src.none) || FALLBACK.none;
+  // Третий хвост появился позже двух других, и файл рядом со скриптом мог быть записан
+  // прошлой версией приложения. Своя заглушка на каждый источник, а не общий откат:
+  // потерять из-за отсутствующего `wait` пользовательские фразы в `mark` — значит
+  // перестать узнавать зов вообще.
+  const wait = (src && typeof src.wait === 'string' && src.wait) || FALLBACK.wait;
   // The plain first phrase, carried in the same file: we don't just MATCH the marker
   // here, we sometimes have to name it back to the agent (see denyReason).
   const first = src && Array.isArray(src.phrases) ? src.phrases[0] : null;
   const marker = (typeof first === 'string' && first.trim()) || FALLBACK.marker;
   try {
-    return { mark: new RegExp(mark, 'i'), none: new RegExp(none, 'i'), marker };
+    return { mark: new RegExp(mark, 'i'), none: new RegExp(none, 'i'), wait: new RegExp(wait, 'i'), marker };
   } catch (_) {
-    return { mark: new RegExp(FALLBACK.mark, 'i'), none: new RegExp(FALLBACK.none, 'i'), marker };
+    return {
+      mark: new RegExp(FALLBACK.mark, 'i'),
+      none: new RegExp(FALLBACK.none, 'i'),
+      wait: new RegExp(FALLBACK.wait, 'i'),
+      marker,
+    };
   }
 }
 
@@ -57,23 +68,49 @@ function messageText(m) {
   return '';
 }
 
-// Did the agent's closing message actually ask for something?
-function callsUser(matcher, text) {
+// Чем кончился ход, по словам самого агента: 'ask' — зовёт человека, 'wait' — от человека
+// ничего, но работа продолжается сама (запущена фоновая задача, она и разбудит), null —
+// закончил. Разбираем хвост от ПОСЛЕДНЕЙ фразы: сообщение бывает длинным, и «ничего» из
+// середины не должно отменять зов в конце (та же tailFrom в ask-phrases.js).
+function closingKind(matcher, text) {
   const t = messageText(text);
-  return matcher.mark.test(t) && !matcher.none.test(t);
+  if (!matcher || !matcher.mark) return null;
+  const re = new RegExp(matcher.mark.source, 'gi');
+  let idx = -1;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    idx = m.index;
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  if (idx < 0) return null;
+  const tail = t.slice(idx);
+  if (matcher.wait && matcher.wait.test(tail)) return 'wait';
+  if (matcher.none && matcher.none.test(tail)) return null;
+  return 'ask';
 }
 
-// event JSON → one of: busy | idle | perm | ask (see detector.js HOOK_TOKEN). null
+// Did the agent's closing message actually ask for something?
+function callsUser(matcher, text) {
+  return closingKind(matcher, text) === 'ask';
+}
+
+// event JSON → one of: busy | idle | perm | ask | bgw (see detector.js HOOK_TOKEN). null
 // => emit nothing (event we don't care about).
 function tokenFor(p, matcher) {
   switch (p && p.hook_event_name) {
     case 'UserPromptSubmit': return 'busy';           // you sent a prompt → working
     case 'Stop':
-      // The turn ended — but «done» and «I asked you something and stopped» are the
-      // SAME event. The payload carries the closing text, so decide from it: a call
-      // phrase makes this «ждёт», not «готов». This is the signal that used to be
-      // scraped off the screen, where a stale line kept the tab yellow for seconds.
-      return matcher && callsUser(matcher, p.last_assistant_message) ? 'ask' : 'idle';
+      // The turn ended — but «done», «I asked you something and stopped» and «I'm
+      // waiting on a background task» are the SAME event. The payload carries the
+      // closing text, so decide from it: a call phrase makes this «ждёт», a first-person
+      // «жду …» makes it «работает в фоне», and only the rest is «готов». This is the
+      // signal that used to be scraped off the screen, where a stale line kept the tab
+      // yellow for seconds.
+      switch (matcher ? closingKind(matcher, p.last_assistant_message) : null) {
+        case 'ask': return 'ask';
+        case 'wait': return 'bgw';
+        default: return 'idle';
+      }
     case 'PermissionRequest': return 'perm';          // approval prompt → разрешение
     case 'Notification':
       if (p.notification_type === 'permission_prompt') return 'perm';
@@ -227,4 +264,4 @@ function isDirectRun(moduleUrl, argvPath) {
 
 if (isDirectRun(import.meta.url, process.argv[1])) main();
 
-export { tokenFor, markerFor, loadMatcher, callsUser, messageText, deniesPicker, outputFor, denyReason, DENY_REASON, FALLBACK, isDirectRun };
+export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker, outputFor, denyReason, DENY_REASON, FALLBACK, isDirectRun };

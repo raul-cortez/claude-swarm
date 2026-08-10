@@ -678,6 +678,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .ask-verdict { font-size: 11px; white-space: nowrap; color: var(--muted); }
 .ask-verdict.is-call { color: var(--waiting); }
 .ask-verdict.is-none { color: var(--ready); }
+.ask-verdict.is-work { color: var(--run); }
 .set-hint code, .set-preview code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--text); }
 .set-preview {
   color: var(--muted);
