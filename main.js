@@ -4307,6 +4307,10 @@ function restartAsk(id, d, pct) {
   // диалог на экране, и то, что агент в оболочке вообще есть. Здесь остаётся печать.
   const file = restartAnswerFile(id, d);
   try { fs.unlinkSync(file); } catch (_) { /* прошлого ответа нет — тем лучше */ }
+  // И записку прошлого перезапуска. Свежая сессия прочитала её часы назад (до этой просьбы должно
+  // было пройти не меньше времени работы), а лежит она в чужом репозитории и светится в git status —
+  // однажды уедет в чей-нибудь `git add -A`. Архив остаётся у нас, в папке настроек.
+  if (d.cwd) { try { fs.unlinkSync(path.join(d.cwd, restartHandoffName(id, d))); } catch (_) {} }
   if (!restartType(id, restart.askText({ pct, answerFile: file }))) {
     // Печать не удалась — вкладки уже нет. Возвращаем автомат в исходное, иначе он будет ждать
     // ответа на просьбу, которой никто не видел.
@@ -4355,6 +4359,17 @@ function restartSaveHandoff(id, d, text) {
 // прочитать файл, напечатать, погасить, доложить. Раньше это же лежало пятнадцатью полями
 // состояния и шестью десятками разбросанных проверок, и пять проходов ревью нашли в них
 // 35 замечаний против нуля в чистом модуле.
+// Заготовленная строка запуска живёт ВНЕ автомата — это данные, а не решение. Значит её надо
+// стирать всюду, где автомат возвращается в исходное: иначе `hasLine` останется правдой от
+// прошлого раза, следующее разрешение проскочит ожидание свежей строки от вкладки, и вкладка
+// стартует с ВЧЕРАШНИМ промптом, вчерашним ярлыком и вчерашним id разговора.
+function restartClearPending(d) {
+  d.rsPendingLine = '';
+  d.rsPendingBase = '';
+  d.rsPendingSession = null;
+  d.rsKey = null;
+}
+
 function restartTick(id, d, now) {
   const state = d.rs || restart.initial();
   // Файл ответа читаем только когда его ждут: в остальных фазах это лишний поход на диск, а в
@@ -4393,11 +4408,11 @@ function restartTick(id, d, now) {
   // 'nothing' в фазе asked) остаётся лежать: тик мог попасть в середину записи.
   if (file && r.action !== 'nothing') { try { fs.unlinkSync(file); } catch (_) {} }
 
-  if (r.action === 'ask') restartAsk(id, d, restartPctOf(d, now));
+  if (r.action === 'ask') { restartClearPending(d); restartAsk(id, d, restartPctOf(d, now)); }
   else if (r.action === 'grant') restartGrant(id, d, r.state);
   else if (r.action === 'exit') restartExit(id, d);
   else if (r.action === 'fire') restartFire(id, d);
-  else if (r.action === 'drop') { d.rsPendingLine = ''; }
+  else if (r.action === 'drop') restartClearPending(d);
 }
 
 setInterval(() => {
@@ -4405,7 +4420,13 @@ setInterval(() => {
   for (const id of sessions.keys()) {
     const d = det.get(id);
     if (!d || d.dead) continue;
-    restartTick(id, d, now);
+    // Выключенная функция не должна ничего стоить, а она стоит: чтение снимка расхода с диска и два
+    // снятия экрана на каждую вкладку каждые полминуты. Незапущенную фазу пропускаем сразу, а
+    // начатый перезапуск (exiting) доводим — иначе снятая галочка бросит вкладку голой оболочкой.
+    if (!RESTART_ENABLED && (!d.rs || d.rs.phase === 'idle')) continue;
+    // По вкладке отдельно, как в тике статусов: осечка на одной не должна ронять приложение и
+    // лишать такта все следующие. Печать в pty умеет бросать на оболочке, которая только что умерла.
+    try { restartTick(id, d, now); } catch (e) { reportMainError(e); }
   }
 }, RESTART_TICK_MS);
 
@@ -4522,6 +4543,13 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
   const id = String(opts.id == null ? '' : opts.id);
   const d = det.get(id);
   if (!d || !sessions.has(id)) return { ok: false };
+  // Только у вкладки, которая эту строку ждёт. Ответ рендерера может опоздать — к тому времени
+  // разрешение уже устарело и автомат вернулся в исходное; принять строку тогда значит зарядить
+  // её к следующему, ни о чём не подозревающему разрешению.
+  if (!d.rs || d.rs.phase !== 'granted') {
+    restartLog(`вкладка ${id}: строка запуска пришла не ко времени (фаза ${d.rs ? d.rs.phase : '—'})`);
+    return { ok: false };
+  }
   const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode);
   const line = restart.launchLine(built.cmd, opts.prompt || '', shellFamily(pickShell()));
   if (!line) {
@@ -4564,6 +4592,7 @@ ipcMain.on('settings:restart', (_e, opts = {}) => {
     for (const [id, d] of det) {
       if (!d || !d.rs || d.rs.phase === 'exiting' || d.rs.phase === 'idle') continue;
       d.rs = restart.initial();
+      restartClearPending(d);
       try { fs.unlinkSync(restartAnswerFile(id, d)); } catch (_) {}
       restartLog(`вкладка ${id}: функцию выключили — снимаю висящий вопрос`);
     }

@@ -70,6 +70,10 @@
   // Сколько ждать строку запуска от вкладки после разрешения. Она приходит через рендерер (там
   // живёт ярлык разговора), и молчание рендерера не должно запирать фазу навсегда.
   const GRANT_WAIT_MS = 2 * 60 * 1000;
+  // И сколько ждать покоя, чтобы разрешение исполнить. Столько же, сколько живёт сам ответ: он о
+  // том состоянии вкладки, которое агент видел, когда отвечал, и через полчаса работы это уже
+  // другая вкладка с другой недоделанной работой.
+  const GRANT_CALM_MS = ANSWER_WAIT_MS;
 
   // --- автомат: одна функция на все решения -----------------------------------
   // Пять проходов ревью дали 38 замечаний, из них 35 — в main.js, и ни одного здесь. Разница не
@@ -85,9 +89,9 @@
   //   exiting — `/exit` напечатан, ждём, пока агент уйдёт из оболочки;
   //   muted   — молчим до конца этой сессии: спрашивать некому.
   //
-  // Ходы: { phase, at, askedAt, retryAt, silent, exitAt, goneSeen, unparsed, prompt }
+  // Ходы: { phase, at, askedAt, retryAt, silent, exitAt, goneSeen, prompt }
   function initial() {
-    return { phase: 'idle', at: 0, askedAt: 0, retryAt: 0, silent: 0, exitAt: 0, goneSeen: 0, unparsed: 0, prompt: '' };
+    return { phase: 'idle', at: 0, askedAt: 0, retryAt: 0, silent: 0, exitAt: 0, goneSeen: 0, prompt: '' };
   }
 
   // Ушёл ли агент из вкладки. Три источника разной надёжности, и порядок важен:
@@ -111,7 +115,7 @@
   }
 
   // Один такт. Возвращает следующее состояние и ОДНО действие для main.js:
-  //   ask · exit · fire · drop · read (файл ответа) · nothing
+  //   ask · grant · exit · fire · drop · nothing
   // Плюс note — строка в журнал вкладки, если человеку стоит знать.
   function step(state, sig) {
     const st = { ...initial(), ...(state || {}) };
@@ -141,6 +145,19 @@
     if (!s.enabled || st.phase === 'muted') return { state: st, action: 'nothing' };
 
     if (st.phase === 'granted') {
+      // Разрешение скоропортящееся, и портится оно ЦЕЛИКОМ, а не только пока мы ждём строку
+      // запуска. Здесь стоял срок лишь на её ожидание, а дальше фаза ждала покоя сколько угодно:
+      // агент мог написать ответ инструментом посреди хода и работать ещё три часа, или человек
+      // утром дал вкладке новую задачу — и мы гасили её в первый спокойный миг, стартуя свежую
+      // сессию с ночным промптом и запиской, которая давно не про эту вкладку. Всё сделанное за
+      // эти часы уходило без эстафеты вообще.
+      if (now - (st.at || 0) > GRANT_CALM_MS) {
+        return {
+          state: { ...initial(), silent: st.silent, retryAt: now + RETRY_MS },
+          action: 'drop',
+          note: 'разрешение на перезапуск устарело, пока вкладка была занята — спрошу заново',
+        };
+      }
       // Ждём строку запуска: её собирает main, получив от вкладки новый ярлык разговора (ярлык
       // хранит рендерер, и после перезапуска он обязан стать новым). Рендерер может и не ответить
       // — закрыли вкладку, чистый терминал, сбой, — и тогда без срока фаза заперла бы функцию для
@@ -183,7 +200,7 @@
 
     // idle: пора ли спрашивать.
     if (!askable(st, s, now)) return { state: st, action: 'nothing' };
-    return { state: { ...st, phase: 'asked', askedAt: now, unparsed: 0 }, action: 'ask' };
+    return { state: { ...st, phase: 'asked', askedAt: now }, action: 'ask' };
   }
 
   // Ответ на столе. Отдельно от step только для читаемости — зовётся лишь из фазы asked.
@@ -203,7 +220,7 @@
     const a = parseAnswer(raw);
     // Неразобранное НЕ выбрасываем: тик, попавший в середину записи (эстафета текстом — это
     // килобайты, и запись не мгновенна), уничтожал бы уже дописанный агентом ответ.
-    if (!a) return { state: { ...st, unparsed: String(raw || '').length }, action: 'nothing' };
+    if (!a) return { state: st, action: 'nothing' };
     if (!a.restart) {
       return {
         state: { ...initial(), retryAt: now + a.retryMs },
@@ -231,6 +248,11 @@
     // закрыли руками. Без этой проверки двадцать строк просьбы уезжали бы в ШЕЛЛ, и он послушно
     // попытался бы их выполнить. `undefined` — Windows, там про процессы мы не знаем ничего.
     if (s.shellBusy === false) return false;
+    // Windows: `ps` там нет, и «в оболочке пусто» нам никто не скажет — но мебель Клода на экране
+    // скажет. Без этого просьба уезжала в ШЕЛЛ у всякого, кто закрыл агента руками: снимок расхода
+    // ещё три четверти часа считается годным, статус читается «готов», и двадцать строк русской
+    // прозы отправлялись в cmd.exe на исполнение.
+    if (s.shellBusy === undefined && !s.modeVisible) return false;
     if (s.dialog) return false;
     if (!s.uptimeMs || s.uptimeMs < MIN_UPTIME_MS) return false;
     if (st.retryAt && now < st.retryAt) return false;
@@ -306,10 +328,15 @@
   // Срок переспроса от агента. Минуты, потому что так о времени говорят словами; всё, что
   // непохоже на число, — умолчание. Потолок в три часа: «спроси через сутки» это уже не
   // отсрочка, а отказ, и вкладка не должна замолчать на сутки из-за одной опечатки.
+  // Пол так же нужен, как потолок, и по той же причине — только с другой стороны. «Спроси через
+  // минуту» от агента, занятого длинной работой, означало бы двадцать строк просьбы в разговор
+  // каждую минуту всю ночь: мы тратили бы на просьбы ровно тот контекст, который взялись сберечь,
+  // и гнали бы его вверх, а не вниз.
+  const RETRY_MIN_MS = RETRY_MS / 2;
   function retryMsOf(v) {
     const n = Number(v);
     if (!isFinite(n) || n <= 0) return RETRY_MS;
-    return Math.min(RETRY_MAX_MS, Math.round(n * 60 * 1000));
+    return Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, Math.round(n * 60 * 1000)));
   }
 
   // Промпт свежей сессии едет ОДНИМ аргументом. Эстафета приходит оттуда, куда пишет не
@@ -353,7 +380,7 @@
 
   return {
     MIN_PCT, MAX_PCT, DEFAULT_PCT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
-    MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS,
+    MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS, GRANT_CALM_MS, RETRY_MIN_MS,
     clampPct, initial, step, goneStep, askText, parseAnswer, retryMsOf, quoteArg, launchLine,
   };
 });

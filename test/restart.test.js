@@ -192,6 +192,37 @@ test('разрешение не исполняется, пока вкладка 
   assert.strictEqual(calm.state.exitAt, NOW);
 });
 
+// Ревью, проход 6: срок стоял только на ожидание строки запуска, а дальше фаза ждала покоя сколько
+// угодно. Агент мог написать ответ инструментом посреди хода и работать ещё три часа — и мы гасили
+// вкладку в первый спокойный миг, стартуя свежую сессию с ночным промптом и запиской, которая давно
+// не про неё. Всё сделанное за эти часы уходило без эстафеты вообще.
+test('разрешение целиком портится, а не только пока ждём строку', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - R.GRANT_CALM_MS - 1, prompt: 'дальше' };
+  const r = R.step(granted, sig({ hasLine: true }));
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.phase, 'idle');
+  assert.ok(r.note.includes('устарело'));
+  // А вовремя — исполняется.
+  const fresh = { ...granted, at: NOW - 1000 };
+  assert.strictEqual(R.step(fresh, sig({ hasLine: true })).action, 'exit');
+});
+
+// Ревью, проход 6: у срока переспроса был потолок, но не было пола. «Спроси через минуту» от агента,
+// занятого длинной работой, означало двадцать строк просьбы каждую минуту всю ночь.
+test('срок переспроса зажат с двух сторон', () => {
+  assert.strictEqual(R.parseAnswer('{"restart":false,"retry":1}').retryMs, R.RETRY_MIN_MS);
+  assert.strictEqual(R.parseAnswer('{"restart":false,"retry":25}').retryMs, 25 * 60 * 1000);
+  assert.strictEqual(R.parseAnswer('{"restart":false,"retry":1440}').retryMs, 3 * HOUR);
+});
+
+// Ревью, проход 6: на Windows `ps` недоступен, shellBusy всегда undefined — и проверка «агент в
+// оболочке есть» не срабатывала вовсе. Человек закрыл Клода руками, а мы через двадцать минут
+// отправляли двадцать строк русской прозы в cmd.exe на исполнение.
+test('без ps судим по экрану: нет мебели Клода — нет и просьбы', () => {
+  assert.strictEqual(step(idle(), { shellBusy: undefined, modeVisible: false }).action, 'nothing');
+  assert.strictEqual(step(idle(), { shellBusy: undefined, modeVisible: true }).action, 'ask');
+});
+
 test('без строки запуска гасить нечем, но и ждать её не вечно', () => {
   const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
   assert.strictEqual(R.step(granted, sig()).action, 'nothing');
