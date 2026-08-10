@@ -37,58 +37,237 @@ test('незаданный порог — это умолчание, а не н�
   assert.strictEqual(R.clampPct('0'), 15);
 });
 
-test('спрашиваем, когда контекст за порогом', () => {
-  assert.strictEqual(R.shouldAsk(ready(), OPTS), true);
-  assert.strictEqual(R.shouldAsk(ready({ pct: 30 }), OPTS), true);
+// --- автомат ------------------------------------------------------------------
+// Пять проходов ревью нашли 38 замечаний, и 35 из них — в main.js, где эти же решения лежали
+// вразброс. Здесь каждый найденный сценарий стал проверкой: «ревью нашло путь X» превращается в
+// «тест покрывает путь X».
+const NOW = 10 * HOUR;
+// Вкладка, которую спрашивать МОЖНО: контекст за порогом, покой, агент на месте, отработала час.
+function sig(over) {
+  return {
+    now: NOW, enabled: true, threshold: 30, pct: 40, status: 'ready',
+    dialog: false, shellBusy: true, modeVisible: true, uptimeMs: HOUR,
+    hasLine: false, answer: null, ...over,
+  };
+}
+const idle = () => R.initial();
+const step = (state, over) => R.step(state, sig(over));
+
+test('порог пройден — спрашиваем', () => {
+  const r = step(idle());
+  assert.strictEqual(r.action, 'ask');
+  assert.strictEqual(r.state.phase, 'asked');
+  assert.strictEqual(r.state.askedAt, NOW);
 });
 
-test('не спрашиваем, пока функция выключена', () => {
-  assert.strictEqual(R.shouldAsk(ready(), { ...OPTS, enabled: false }), false);
+test('ниже порога, при выключенной функции и в немоте — молчим', () => {
+  assert.strictEqual(step(idle(), { pct: 29 }).action, 'nothing');
+  assert.strictEqual(step(idle(), { enabled: false }).action, 'nothing');
+  assert.strictEqual(step(idle(), { pct: 40, threshold: 75 }).action, 'nothing');
+  assert.strictEqual(R.step({ ...idle(), phase: 'muted' }, sig()).action, 'nothing');
 });
 
-test('не спрашиваем ниже порога', () => {
-  assert.strictEqual(R.shouldAsk(ready({ pct: 29 }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ pct: 40 }), { ...OPTS, threshold: 75 }), false);
+test('нет расхода — нет вопроса: статуслайн выключен или снимок протух', () => {
+  for (const pct of [0, null, NaN, undefined]) {
+    assert.strictEqual(step(idle(), { pct }).action, 'nothing');
+  }
 });
 
-test('нет расхода — нет вопроса: статуслайн выключен или вкладка не отрисовалась', () => {
-  assert.strictEqual(R.shouldAsk(ready({ pct: 0 }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ pct: null }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ pct: NaN }), OPTS), false);
-});
-
-// Спрашиваем только отдохнувшую вкладку. «Ждёт» значит, что человек нужен здесь и сейчас.
-// «Работает» — что просьба встанет в очередь за ходом: ответа можно не дождаться за десять
-// минут, а потом мы стёрли бы уже написанный ответ и спросили снова. И `/exit` посреди хода —
-// отдельная беда.
 test('спрашиваем только отдохнувшую вкладку', () => {
-  assert.strictEqual(R.shouldAsk(ready({ status: 'waiting' }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ status: 'running' }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ status: 'dead' }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ status: null }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ status: 'ready' }), OPTS), true);
+  for (const status of ['running', 'waiting', 'dead', null]) {
+    assert.strictEqual(step(idle(), { status }).action, 'nothing');
+  }
+  assert.strictEqual(step(idle(), { status: 'ready' }).action, 'ask');
 });
 
-// Защёлка снизу. Свежая сессия читает таск, спеку и пару файлов и на миллионном окне
-// оказывается у порога, ничего не сделав: без этой проверки вкладка крутится в перезапусках.
+// Ревью, проход 3: «готов» на пустой оболочке выглядит как «готов» у отдохнувшего агента, а снимок
+// расхода живёт ещё три четверти часа после того, как Клода закрыли руками. Двадцать строк просьбы
+// уезжали в ШЕЛЛ, и он послушно пытался их выполнить.
+test('агента в оболочке нет — не спрашиваем', () => {
+  assert.strictEqual(step(idle(), { shellBusy: false }).action, 'nothing');
+  // undefined — Windows, там про процессы неизвестно ничего; спрашиваем как обычно.
+  assert.strictEqual(step(idle(), { shellBusy: undefined }).action, 'ask');
+});
+
+// Ревью, проход 2: рамка запроса съест просьбу, и агент её не увидит.
+test('диалог на экране — просьбу не печатаем', () => {
+  assert.strictEqual(step(idle(), { dialog: true }).action, 'nothing');
+});
+
+// Защёлка снизу: свежая сессия читает таск, спеку и пару файлов и на миллионном окне оказывается у
+// порога, ничего не сделав. Без неё вкладка крутится в перезапусках.
 test('свежая сессия не перезапускается сразу', () => {
-  const justStarted = { pct: 40, status: 'ready', startedAt: OPTS.now - 60_000 };
-  assert.strictEqual(R.shouldAsk(justStarted, OPTS), false);
-  const worked = { pct: 40, status: 'ready', startedAt: OPTS.now - R.MIN_UPTIME_MS - 1 };
-  assert.strictEqual(R.shouldAsk(worked, OPTS), true);
-});
-
-test('спросили и ждём ответа — второй раз не спрашиваем', () => {
-  const asked = ready({ askedAt: OPTS.now - 60_000 });
-  assert.strictEqual(R.shouldAsk(asked, OPTS), false);
-  // Ответа так и нет: молча гасить нельзя, но спросить заново — можно.
-  const stale = ready({ askedAt: OPTS.now - R.ANSWER_WAIT_MS - 1 });
-  assert.strictEqual(R.shouldAsk(stale, OPTS), true);
+  assert.strictEqual(step(idle(), { uptimeMs: 60_000 }).action, 'nothing');
+  assert.strictEqual(step(idle(), { uptimeMs: R.MIN_UPTIME_MS + 1 }).action, 'ask');
 });
 
 test('срок «спроси через двадцать минут» уважается', () => {
-  assert.strictEqual(R.shouldAsk(ready({ retryAt: OPTS.now + 60_000 }), OPTS), false);
-  assert.strictEqual(R.shouldAsk(ready({ retryAt: OPTS.now - 1 }), OPTS), true);
+  assert.strictEqual(step({ ...idle(), retryAt: NOW + 60_000 }).action, 'nothing');
+  assert.strictEqual(step({ ...idle(), retryAt: NOW - 1 }).action, 'ask');
+});
+
+test('ждём ответа — второй раз не спрашиваем', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000 };
+  assert.strictEqual(step(asked).action, 'nothing');
+});
+
+// Ревью, проход 4: в режиме плана агент не может писать файлы вовсе, в ручном — упирается в
+// разрешение. Ответа не будет никогда, а мы спрашивали вечно, тратя контекст на просьбы.
+test('после трёх молчаний умолкаем сами', () => {
+  let st = { ...idle(), phase: 'asked', askedAt: NOW - R.ANSWER_WAIT_MS - 1 };
+  for (let i = 1; i < R.MAX_SILENT; i++) {
+    const r = R.step(st, sig());
+    assert.strictEqual(r.state.phase, 'idle');
+    assert.strictEqual(r.state.silent, i);
+    assert.ok(r.note.includes('нет'), 'человек должен узнать про молчание');
+    st = { ...r.state, phase: 'asked', askedAt: NOW - R.ANSWER_WAIT_MS - 1 };
+  }
+  const last = R.step(st, sig());
+  assert.strictEqual(last.state.phase, 'muted');
+  assert.ok(last.note.includes('режим разрешений'), 'и про вероятную причину тоже');
+});
+
+// Ревью, проход 5: счётчик считал молчания за всю жизнь, а не подряд. Три случайных промаха за
+// ночь, между которыми агент отвечал нормально, навсегда выключали функцию для вкладки.
+test('успешный ответ обнуляет счётчик молчания', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000, silent: 2 };
+  const r = R.step(asked, sig({ answer: { raw: '{"restart":false,"retry":5}', mtime: NOW } }));
+  assert.strictEqual(r.state.silent, 0);
+});
+
+test('«не сейчас» переносит вопрос на названный агентом срок', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000 };
+  const r = R.step(asked, sig({ answer: { raw: '{"restart":false,"retry":25}', mtime: NOW } }));
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.phase, 'idle');
+  assert.strictEqual(r.state.retryAt, NOW + 25 * 60 * 1000);
+});
+
+// Ревью, проход 2: тик, попавший в середину записи, уничтожал уже дописанный агентом ответ —
+// эстафета текстом это килобайты, и запись не мгновенна.
+test('недописанный ответ не выбрасываем, а ждём', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000 };
+  const r = R.step(asked, sig({ answer: { raw: '{"restart":tr', mtime: NOW } }));
+  assert.strictEqual(r.action, 'nothing');
+  assert.strictEqual(r.state.phase, 'asked');
+});
+
+// Ревью, проход 2: залежавшийся ответ написан ПОЗЖЕ вопроса, поэтому сравнение с временем вопроса
+// его пропускало. Случай живой: функцию выключили с висящим вопросом, агент дописал ответ, через
+// сутки включили — и мы стёрли бы разговор, в котором с тех пор работали целый день.
+test('ответ старше срока годности не исполняется', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 2 * HOUR };
+  const raw = '{"restart":true,"prompt":"продолжи таск 215","handoff":"#215"}';
+  const stale = R.step(asked, sig({ answer: { raw, mtime: NOW - R.ANSWER_WAIT_MS - 1 } }));
+  assert.strictEqual(stale.action, 'drop');
+  assert.ok(stale.note.includes('залежался'));
+  const fresh = R.step(asked, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(fresh.action, 'grant');
+});
+
+test('разрешение несёт промпт и указатель на эстафету', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000 };
+  const raw = '{"restart":true,"prompt":"продолжи таск 215","handoff":"#215"}';
+  const r = R.step(asked, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.phase, 'granted');
+  assert.strictEqual(r.state.prompt, 'продолжи таск 215');
+  assert.strictEqual(r.state.at, NOW);
+});
+
+// Ревью, проход 3, главное: между вопросом и ответом проходит до десяти минут, и вкладка успевает
+// снова взяться за работу — агент дописал ответ инструментом, не закончив ход, или человек утром
+// написал в неё сам. /exit уехал бы работающему агенту, а свежая сессия стартовала бы с ночным
+// промптом поверх начатого разговора.
+test('разрешение не исполняется, пока вкладка снова занята', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  for (const over of [{ status: 'running' }, { status: 'waiting' }, { dialog: true }]) {
+    const r = R.step(granted, sig({ hasLine: true, ...over }));
+    assert.strictEqual(r.action, 'nothing');
+    assert.strictEqual(r.state.phase, 'granted', 'разрешение не выбрасываем — дождёмся тишины');
+  }
+  const calm = R.step(granted, sig({ hasLine: true }));
+  assert.strictEqual(calm.action, 'exit');
+  assert.strictEqual(calm.state.phase, 'exiting');
+  assert.strictEqual(calm.state.exitAt, NOW);
+});
+
+test('без строки запуска гасить нечем, но и ждать её не вечно', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  assert.strictEqual(R.step(granted, sig()).action, 'nothing');
+  const old = { ...granted, at: NOW - R.GRANT_WAIT_MS - 1 };
+  const r = R.step(old, sig());
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.phase, 'idle');
+  assert.ok(r.state.retryAt > NOW, 'и с отсрочкой, иначе следующий тик придёт через полминуты');
+});
+
+// Ревью, проход 2: отмена и выход агента расходятся во времени. /exit уже в очереди, отменить его
+// нельзя — поэтому строка ждёт освободившейся оболочки, иначе вкладка останется голым шеллом.
+test('вышел агент — печатаем запуск', () => {
+  const exiting = { ...idle(), phase: 'exiting', exitAt: NOW - 5000 };
+  const r = R.step(exiting, sig({ shellBusy: false }));
+  assert.strictEqual(r.action, 'fire');
+  assert.strictEqual(r.state.phase, 'idle');
+});
+
+test('агент на месте — ждём, но не дольше часа и только пока он жив', () => {
+  const exiting = { ...idle(), phase: 'exiting', exitAt: NOW - 5000 };
+  assert.strictEqual(R.step(exiting, sig()).action, 'nothing');
+  const stuck = { ...idle(), phase: 'exiting', exitAt: NOW - R.PENDING_MS - 1 };
+  const r = R.step(stuck, sig());
+  assert.strictEqual(r.action, 'drop');
+  assert.ok(r.note.includes('не вышел'));
+  // А если оболочка при этом ПУСТА — печатаем, а не отменяем: иначе вкладка без агента.
+  assert.strictEqual(R.step(stuck, sig({ shellBusy: false })).action, 'fire');
+});
+
+// Ревью, проход 2 и 4: снятая галочка не должна бросать вкладку между /exit и запуском.
+test('выключенная функция не бросает начатый перезапуск', () => {
+  const exiting = { ...idle(), phase: 'exiting', exitAt: NOW - 5000 };
+  assert.strictEqual(R.step(exiting, sig({ enabled: false, shellBusy: false })).action, 'fire');
+});
+
+// --- уход агента по экрану (Windows, где `ps` недоступен) ----------------------
+// Ревью, проход 4: /exit сам открывает меню команд Клода, и оно закрывает строку режима — то есть
+// «мебели нет» в первый же миг после набора. Без выдержки мы печатали запуск живому агенту.
+test('экранный путь: выдержка после /exit', () => {
+  const st = { ...idle(), phase: 'exiting', exitAt: NOW };
+  const early = R.step(st, sig({ shellBusy: undefined, modeVisible: false, now: NOW + 1000 }));
+  assert.strictEqual(early.action, 'nothing');
+});
+
+// Ревью, проход 5: два опроса подряд по одному и тому же кадру давали «дважды видели» на одной
+// случайной перерисовке. Второе подтверждение должно быть отделено временем.
+test('экранный путь: два подтверждения врозь, а не два вызова', () => {
+  const after = NOW + R.EXIT_BLIND_MS + 1;
+  const st = { ...idle(), phase: 'exiting', exitAt: NOW };
+  const first = R.step(st, sig({ shellBusy: undefined, modeVisible: false, now: after }));
+  assert.strictEqual(first.action, 'nothing', 'первый взгляд ничего не решает');
+  const same = R.step(first.state, sig({ shellBusy: undefined, modeVisible: false, now: after }));
+  assert.strictEqual(same.action, 'nothing', 'тот же кадр вторым подтверждением не считается');
+  const later = R.step(first.state, sig({
+    shellBusy: undefined, modeVisible: false, now: after + R.GONE_GAP_MS + 1,
+  }));
+  assert.strictEqual(later.action, 'fire');
+});
+
+test('экранный путь: вернувшаяся мебель сбрасывает счёт', () => {
+  const after = NOW + R.EXIT_BLIND_MS + 1;
+  const st = { ...idle(), phase: 'exiting', exitAt: NOW, goneSeen: after };
+  const back = R.step(st, sig({ shellBusy: undefined, modeVisible: true, now: after + 2000 }));
+  assert.strictEqual(back.action, 'nothing');
+  assert.strictEqual(back.state.goneSeen, 0);
+});
+
+// Диалог на экране — «агент на месте» при любых других признаках: строки режима при нём тоже нет,
+// и принять это за уход означало бы напечатать запуск в рамку запроса.
+test('диалог на экране не считается уходом агента', () => {
+  const after = NOW + R.EXIT_BLIND_MS + 1;
+  const st = { ...idle(), phase: 'exiting', exitAt: NOW, goneSeen: NOW };
+  const r = R.step(st, sig({ shellBusy: undefined, modeVisible: false, dialog: true, now: after }));
+  assert.strictEqual(r.action, 'nothing');
+  assert.strictEqual(r.state.goneSeen, 0);
 });
 
 test('разбираем ответ в заборчике и с текстом вокруг', () => {

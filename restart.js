@@ -53,29 +53,187 @@
   // заново позже.
   const ANSWER_WAIT_MS = 10 * 60 * 1000;
 
-  // Пора ли спрашивать. Отдельной функцией, потому что здесь собраны все причины НЕ
-  // спрашивать, и каждая из них — отдельный способ навредить.
+  // Сколько раз подряд можно спросить, не получив ответа. Причина молчания бывает неустранимой:
+  // в режиме плана агент вообще не может писать файлы, в ручном — упирается в разрешение на
+  // запись. Без потолка мы вечно, раз в двадцать минут, вставляли бы в разговор двадцать строк
+  // просьбы — то есть переводили на них ровно тот контекст, который взялись сберечь.
+  const MAX_SILENT = 3;
+  // Заготовленный запуск ждёт освободившейся оболочки. Долго, потому что `/exit` из очереди
+  // никуда не денется. Но не бесконечно: человек мог утром вычистить строку ввода, и тогда выхода
+  // не будет вовсе.
+  const PENDING_MS = 60 * 60 * 1000;
+  // Экранный путь (Windows): `/exit` сам открывает меню команд Клода, и оно закрывает строку
+  // режима — «мебели нет» сразу после набора всегда. Отсюда выдержка и требование увидеть уход
+  // дважды, с промежутком.
+  const EXIT_BLIND_MS = 10_000;
+  const GONE_GAP_MS = 1000;
+  // Сколько ждать строку запуска от вкладки после разрешения. Она приходит через рендерер (там
+  // живёт ярлык разговора), и молчание рендерера не должно запирать фазу навсегда.
+  const GRANT_WAIT_MS = 2 * 60 * 1000;
+
+  // --- автомат: одна функция на все решения -----------------------------------
+  // Пять проходов ревью дали 38 замечаний, из них 35 — в main.js, и ни одного здесь. Разница не
+  // в аккуратности: там эти же решения лежали пятнадцатью полями состояния и шестью десятками
+  // разбросанных `if`, и каждый проход находил через них новый путь. Три прохода подряд правка
+  // одного пути ломала соседний.
   //
-  // tab: { pct, status, startedAt, askedAt, answeredAt, retryAt, restarts }
-  function shouldAsk(tab, opts) {
-    const o = opts || {};
-    if (!o.enabled) return false;
-    const now = o.now || Date.now();
-    const pct = Number(tab && tab.pct);
+  // Поэтому решает автомат, а main.js только исполняет. Фазы:
+  //
+  //   idle    — ждём порога;
+  //   asked   — просьба напечатана, ждём файла с ответом;
+  //   granted — агент разрешил, ждём тишины во вкладке, чтобы не гасить работающего;
+  //   exiting — `/exit` напечатан, ждём, пока агент уйдёт из оболочки;
+  //   muted   — молчим до конца этой сессии: спрашивать некому.
+  //
+  // Ходы: { phase, at, askedAt, retryAt, silent, exitAt, goneSeen, unparsed, prompt }
+  function initial() {
+    return { phase: 'idle', at: 0, askedAt: 0, retryAt: 0, silent: 0, exitAt: 0, goneSeen: 0, unparsed: 0, prompt: '' };
+  }
+
+  // Ушёл ли агент из вкладки. Три источника разной надёжности, и порядок важен:
+  //   • открытый диалог — «на месте» при любых других признаках: строки режима при нём тоже нет,
+  //     и принять это за уход означало бы напечатать запуск в рамку запроса;
+  //   • `ps` (в оболочке пусто) — точный ответ, так на маке и линуксе;
+  //   • экран — там, где `ps` нет. Догадка, поэтому с выдержкой и двумя подтверждениями врозь.
+  function goneStep(state, sig) {
+    const s = sig || {};
+    const seen = state.goneSeen || 0;
+    if (s.dialog) return { gone: false, goneSeen: 0 };
+    if (s.shellBusy === false) return { gone: true, goneSeen: seen };
+    if (s.shellBusy !== undefined) return { gone: false, goneSeen: 0 };
+    if (state.exitAt && s.now - state.exitAt < EXIT_BLIND_MS) return { gone: false, goneSeen: seen };
+    if (s.modeVisible) return { gone: false, goneSeen: 0 };
+    // Второе подтверждение — не вторым вызовом, а спустя время. Иначе два опроса подряд по одному
+    // и тому же кадру давали «дважды видели» на одной случайной перерисовке.
+    if (!seen) return { gone: false, goneSeen: s.now };
+    if (s.now - seen < GONE_GAP_MS) return { gone: false, goneSeen: seen };
+    return { gone: true, goneSeen: seen };
+  }
+
+  // Один такт. Возвращает следующее состояние и ОДНО действие для main.js:
+  //   ask · exit · fire · drop · read (файл ответа) · nothing
+  // Плюс note — строка в журнал вкладки, если человеку стоит знать.
+  function step(state, sig) {
+    const st = { ...initial(), ...(state || {}) };
+    const s = sig || {};
+    const now = s.now || Date.now();
+
+    if (st.phase === 'exiting') {
+      const g = goneStep(st, s);
+      st.goneSeen = g.goneSeen;
+      if (g.gone) return { state: { ...st, phase: 'idle', goneSeen: 0 }, action: 'fire' };
+      // Агент всё ещё на месте час спустя — `/exit` до него не дошёл (например, человек вычистил
+      // строку ввода). Ждать дальше нельзя: он закроет Клода сам через несколько часов, и тогда в
+      // его оболочку приехал бы наш запуск с ночной задачей. Отменяем именно здесь, пока агент
+      // ЖИВ: у пустой оболочки отмена оставила бы вкладку без агента вовсе.
+      if (now - (st.exitAt || 0) > PENDING_MS) {
+        return {
+          state: { ...initial(), silent: st.silent, retryAt: now + RETRY_MS },
+          action: 'drop',
+          note: 'агент так и не вышел — запуск отменён, вкладка осталась как была',
+        };
+      }
+      return { state: st, action: 'nothing' };
+    }
+
+    // Дальше — только когда функция включена. Фаза exiting выше нарочно: `/exit` уже ушёл, и
+    // снятая галочка не должна оставлять вкладку голой оболочкой.
+    if (!s.enabled || st.phase === 'muted') return { state: st, action: 'nothing' };
+
+    if (st.phase === 'granted') {
+      // Ждём строку запуска: её собирает main, получив от вкладки новый ярлык разговора (ярлык
+      // хранит рендерер, и после перезапуска он обязан стать новым). Рендерер может и не ответить
+      // — закрыли вкладку, чистый терминал, сбой, — и тогда без срока фаза заперла бы функцию для
+      // этой вкладки навсегда, причём молча.
+      if (!s.hasLine) {
+        if (now - (st.at || 0) <= GRANT_WAIT_MS) return { state: st, action: 'nothing' };
+        return {
+          state: { ...initial(), silent: st.silent, retryAt: now + RETRY_MS },
+          action: 'drop',
+          note: 'перезапуск не сложился — вкладка осталась как была, попробую позже',
+        };
+      }
+      // Строка есть — но исполняем только по спокойной вкладке, и проверять это надо ЗДЕСЬ, а не
+      // только в момент вопроса. Между ними проходит до десяти минут, и вкладка успевает снова
+      // взяться за работу: агент дописал ответ инструментом, не закончив ход, или человек утром
+      // написал в неё сам. `/exit` уехал бы работающему агенту, а свежая сессия стартовала бы с
+      // ночным промптом поверх начатого разговора.
+      if (s.status !== 'ready' || s.dialog) return { state: st, action: 'nothing' };
+      return { state: { ...st, phase: 'exiting', exitAt: now, goneSeen: 0 }, action: 'exit' };
+    }
+
+    if (st.phase === 'asked') {
+      if (s.answer) return answerStep(st, s, now);
+      if (now - (st.askedAt || 0) <= ANSWER_WAIT_MS) return { state: st, action: 'nothing' };
+      const silent = (st.silent || 0) + 1;
+      if (silent >= MAX_SILENT) {
+        return {
+          state: { ...initial(), phase: 'muted', silent },
+          action: 'nothing',
+          note: `на просьбу о перезапуске нет ответа ${silent} раза подряд — больше не спрашиваю.`
+            + ' Похоже, агент не может записать файл: посмотрите режим разрешений вкладки',
+        };
+      }
+      return {
+        state: { ...initial(), silent, retryAt: now + RETRY_MS },
+        action: 'nothing',
+        note: 'ответа про перезапуск нет — оставляю как есть, спрошу позже',
+      };
+    }
+
+    // idle: пора ли спрашивать.
+    if (!askable(st, s, now)) return { state: st, action: 'nothing' };
+    return { state: { ...st, phase: 'asked', askedAt: now, unparsed: 0 }, action: 'ask' };
+  }
+
+  // Ответ на столе. Отдельно от step только для читаемости — зовётся лишь из фазы asked.
+  function answerStep(st, s, now) {
+    const { raw, mtime } = s.answer;
+    // Разрешение скоропортящееся, и считаем от «сейчас», а не от времени вопроса: залежавшийся
+    // ответ написан ПОЗЖЕ вопроса, так что сравнение с вопросом его как раз пропускало. Случай
+    // живой: функцию выключили с висящим вопросом, агент дописал ответ, через сутки включили — и
+    // мы стёрли бы разговор, в котором с тех пор работали целый день.
+    if (!mtime || now - mtime > ANSWER_WAIT_MS) {
+      return {
+        state: { ...initial(), silent: st.silent, retryAt: now + RETRY_MS },
+        action: 'drop',
+        note: 'ответ про перезапуск залежался — не перезапускаю, спрошу заново',
+      };
+    }
+    const a = parseAnswer(raw);
+    // Неразобранное НЕ выбрасываем: тик, попавший в середину записи (эстафета текстом — это
+    // килобайты, и запись не мгновенна), уничтожал бы уже дописанный агентом ответ.
+    if (!a) return { state: { ...st, unparsed: String(raw || '').length }, action: 'nothing' };
+    if (!a.restart) {
+      return {
+        state: { ...initial(), retryAt: now + a.retryMs },
+        action: 'drop',
+        note: `сказал «не сейчас» (${a.reason}) — переспрошу через ${Math.round(a.retryMs / 60000)} мин`,
+      };
+    }
+    // Разрешение есть. Счётчик молчания обнуляем: он про ПОДРЯД идущие неответы, иначе три
+    // случайных промаха за ночь, между которыми агент отвечал, навсегда выключали бы функцию.
+    return {
+      state: { ...initial(), phase: 'granted', at: now, prompt: a.prompt, handoff: a.handoff, text: a.text },
+      action: 'grant',
+    };
+  }
+
+  // Пора ли спрашивать. Здесь собраны все причины НЕ спрашивать, и каждая — отдельный способ
+  // навредить.
+  function askable(st, s, now) {
+    const pct = Number(s.pct);
     if (!isFinite(pct) || pct <= 0) return false;      // расхода нет — статуслайн молчит
-    if (pct < clampPct(o.threshold)) return false;
-    // Спрашиваем ТОЛЬКО отдохнувшую вкладку. Раньше здесь стояло «лишь бы не ждала», и просьба
-    // уходила агенту посреди хода — она встаёт в очередь за текущей работой, ответа десять минут
-    // может не быть, и тогда мы бросаем ждать, а через двадцать минут стираем уже написанный
-    // агентом ответ и спрашиваем снова: круг из двадцатистрочных сообщений, съедающих ровно тот
-    // контекст, который функция и берётся сберечь. Плюс `/exit` в занятый агент — отдельная
-    // беда (см. rsPendingLine в main.js). Тик частый, спокойную минуту он поймает.
-    if (tab.status !== 'ready') return false;
-    if (!tab.startedAt || now - tab.startedAt < MIN_UPTIME_MS) return false;
-    // Уже спросили и ждём ответа.
-    if (tab.askedAt && !tab.answeredAt && now - tab.askedAt < ANSWER_WAIT_MS) return false;
-    // Агент назвал свой срок («спроси через двадцать минут») — он и решает.
-    if (tab.retryAt && now < tab.retryAt) return false;
+    if (pct < clampPct(s.threshold)) return false;
+    if (s.status !== 'ready') return false;
+    // А агент-то там есть? «Готов» на пустой оболочке выглядит так же, как «готов» у отдохнувшего
+    // агента, а снимок расхода живёт своей жизнью ещё три четверти часа после того, как Клода
+    // закрыли руками. Без этой проверки двадцать строк просьбы уезжали бы в ШЕЛЛ, и он послушно
+    // попытался бы их выполнить. `undefined` — Windows, там про процессы мы не знаем ничего.
+    if (s.shellBusy === false) return false;
+    if (s.dialog) return false;
+    if (!s.uptimeMs || s.uptimeMs < MIN_UPTIME_MS) return false;
+    if (st.retryAt && now < st.retryAt) return false;
     return true;
   }
 
@@ -195,6 +353,7 @@
 
   return {
     MIN_PCT, MAX_PCT, DEFAULT_PCT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
-    clampPct, shouldAsk, askText, parseAnswer, retryMsOf, quoteArg, launchLine,
+    MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS,
+    clampPct, initial, step, goneStep, askText, parseAnswer, retryMsOf, quoteArg, launchLine,
   };
 });
