@@ -126,6 +126,69 @@ test('срок «спроси через двадцать минут» уваж�
   assert.strictEqual(step({ ...idle(), retryAt: NOW - 1 }).action, 'ask');
 });
 
+// Живой случай: агент сказал «через 30 минут», освободился через 10, дописал эстафету и объявил в
+// чат, что готов. Никто не отреагировал — отсрочка молчит по часам, а разговор мы не читаем.
+// Значит зов идёт файлом: во время отсрочки мы за ним следим (см. earlyStep).
+const deferred = () => ({ ...idle(), retryAt: NOW + 20 * 60 * 1000 });
+
+test('во время отсрочки агент может позвать перезапуск сам', () => {
+  const raw = '{"restart":true,"prompt":"продолжи таск 215","handoff":"#215"}';
+  const r = R.step(deferred(), sig({ answer: { raw, mtime: NOW - 5000 } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.phase, 'granted');
+  assert.strictEqual(r.state.at, NOW, 'срок годности разрешения считается от зова');
+  assert.strictEqual(r.state.prompt, 'продолжи таск 215');
+  assert.ok(/сам/.test(r.note || ''), 'человек должен увидеть, чей это был почин');
+});
+
+test('досрочный зов проходит тот же покой, что и обычное разрешение', () => {
+  // Разрешение не гасит агента сразу: фаза granted ещё раз проверяет вкладку, и работающую не
+  // рвёт. Иначе агент, позвавший перезапуск и взявшийся за дело, получил бы `/exit` в середине.
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step(deferred(), sig({ answer: { raw, mtime: NOW }, status: 'running' }));
+  assert.strictEqual(r.action, 'grant');
+  const next = R.step(r.state, sig({ status: 'running', hasLine: true }));
+  assert.strictEqual(next.action, 'nothing', 'работающую вкладку не гасим даже по её же зову');
+});
+
+test('досрочно можно и передумать в другую сторону — новый срок замещает прежний', () => {
+  const r = R.step(deferred(), sig({ answer: { raw: '{"restart":false,"retry":45}', mtime: NOW } }));
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.phase, 'idle');
+  assert.strictEqual(r.state.retryAt, NOW + 45 * 60 * 1000);
+});
+
+test('мусор во время отсрочки срока не касается', () => {
+  const st = deferred();
+  // Залежавшийся файл (наше удаление не прошло) и недописанный ответ — оба не зов. Отодвинуть или
+  // сдвинуть из-за них обещанный переспрос значит потерять вкладку молча.
+  for (const answer of [
+    { raw: '{"restart":true,"prompt":"давай","handoff":"#1"}', mtime: NOW - R.ANSWER_WAIT_MS - 1 },
+    { raw: '{"restart":tr', mtime: NOW },
+    { raw: 'ничего похожего на JSON', mtime: NOW },
+    { raw: '{"restart":true,"prompt":"давай","handoff":"#1"}', mtime: 0 },
+  ]) {
+    const r = R.step(st, sig({ answer }));
+    assert.strictEqual(r.action, 'nothing', answer.raw.slice(0, 20));
+    assert.strictEqual(r.state.retryAt, st.retryAt, 'срок сдвинулся: ' + answer.raw.slice(0, 20));
+    assert.strictEqual(r.state.phase, 'idle');
+  }
+});
+
+test('вкладку, которую нечем поднять, досрочный зов тоже не поднимает', () => {
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step(deferred(), sig({ answer: { raw, mtime: NOW }, hasBase: false }));
+  assert.strictEqual(r.action, 'nothing');
+});
+
+// Отсрочка кончилась сама — дальше обычный путь, и лежащий рядом файл ответа на него не влияет:
+// его сотрёт restartAsk перед тем, как спросить заново.
+test('после срока спрашиваем заново, а не читаем старый файл', () => {
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step({ ...idle(), retryAt: NOW - 1 }, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(r.action, 'ask');
+});
+
 test('ждём ответа — второй раз не спрашиваем', () => {
   const asked = { ...idle(), phase: 'asked', askedAt: NOW - 60_000 };
   assert.strictEqual(step(asked).action, 'nothing');
