@@ -4344,7 +4344,9 @@ function restartAsk(id, d, pct) {
   // делом»), и та вправе перечитать записку в любой момент — особенно после собственного сжатия
   // контекста. Стирать её на просьбе значит ломать сессию, которая на этой просьбе ещё и ответит
   // «не сейчас» и проработает часы. Убираем при закрытии вкладки и на выходе из приложения.
-  if (!restartType(id, restart.askText({ pct, answerFile: file }))) {
+  // Сабагенты в просьбе названы числом: их агент бросит не задумываясь, если не напомнить, — с
+  // его стороны они уже отпущены в фон, а гибнут вместе с ним (см. askText).
+  if (!restartType(id, restart.askText({ pct, answerFile: file, sub: d.sub || 0 }))) {
     // Печать не удалась — вкладки уже нет. Возвращаем автомат в исходное, иначе он будет ждать
     // ответа на просьбу, которой никто не видел.
     d.rs = { ...restart.initial(), retryAt: Date.now() + restart.RETRY_MS };
@@ -4445,6 +4447,9 @@ function restartTick(id, d, now) {
     // Чего именно ждёт вкладка. Зов к человеку печати не мешает, запрос разрешения — мешает, и
     // знает об этом хук, а не экран: рамку скрёб иногда и не находит (см. boxOpen).
     kind: byPid ? null : (d.status === 'waiting' ? d.waitingKind : null),
+    // Сколько сабагентов считает прямо сейчас. Вкладка с ними «готова» на вид, а закрыть её —
+    // значит убить их вместе с агентом (см. turnOver).
+    sub: byPid ? 0 : (d.sub || 0),
     shellBusy: byPid ? d.rsShellBusy : d.shellBusy,
     modeVisible: byPid ? false : !!readMode(snapshot(d)),
     uptimeMs: d.sessionStartAt ? now - d.sessionStartAt : 0,
