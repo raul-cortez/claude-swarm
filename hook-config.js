@@ -10,7 +10,8 @@ function hookSettings(command) {
   return {
     UserPromptSubmit: entry,   // → busy (working)
     Stop: entry,               // last_assistant_message calls me → ask, else idle
-    Notification: entry,       // permission_prompt → perm, idle_prompt → idle
+    Notification: entry,       // permission_prompt → perm; напоминания про неотвеченный
+                               // ввод → nag / lull (они рамку не отменяют)
     PermissionRequest: entry,  // → perm (разрешение)
     PreToolUse: entry,         // AskUserQuestion → box (рамка на экране), else busy
     PostToolUse: entry,        // → busy: a tool finished, so work resumed. Without

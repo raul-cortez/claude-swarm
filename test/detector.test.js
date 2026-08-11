@@ -298,20 +298,41 @@ test('hook: рамка и зов прозой — разные ожидания'
 // всего при ОТКРЫТОЙ рамке, и ночью до этой минуты доживает каждая. Токен у него общий с зовом
 // прозой, а про рамку он не знает ничего; затри он ею добытое знание — и мы сами себе разрешили бы
 // печать в живую коробку, да ещё понизили бы «разрешение» до «вопроса», выбив второй источник.
-test('hook: «агенту нужен ввод» не отменяет открытую рамку', () => {
+test('hook: напоминание про неотвеченный ввод не отменяет открытую рамку', () => {
+  for (const nudge of ['nag', 'lull']) {
+    const d = mkD();
+    D.applyHook(d, 'perm', NOW);
+    D.applyHook(d, nudge, NOW + 60_000);
+    const eff = D.arbitrate(d, NOW + 60_000, '');
+    assert.strictEqual(eff.box, true, `${nudge}: рамка на месте`);
+    assert.strictEqual(eff.kind, 'permission', `${nudge}: и это по-прежнему разрешение`);
+    // Подтверждение свежее самого сигнала — иначе стенограмма, старше рамки, перебила бы её.
+    assert.strictEqual(d.hookState.at, NOW + 60_000);
+  }
+  // А на вкладке без рамки напоминание значит ровно то, что написано.
+  const clean = mkD();
+  D.applyHook(clean, 'lull', NOW);
+  assert.strictEqual(D.arbitrate(clean, NOW, '').status, 'ready');
+  D.applyHook(clean, 'nag', NOW + 1);
+  assert.strictEqual(D.arbitrate(clean, NOW + 1, '').status, 'waiting');
+  assert.strictEqual(D.arbitrate(clean, NOW + 1, '').box, false);
+});
+
+// Рамка уходит не только ответом: запрос разрешения можно ОТКЛОНИТЬ, и тогда никакого PostToolUse
+// не будет — агент просто заговорит и кончит ход. Держись знание о рамке за «пока не придёт busy»,
+// такая вкладка осталась бы «с рамкой» навсегда: перезапуск её больше не трогает, а мост
+// отказывается принимать текст с телефона, предлагая закрыть диалог, которого нет.
+test('hook: отклонённое разрешение не оставляет вкладку «с рамкой» навсегда', () => {
   const d = mkD();
   D.applyHook(d, 'perm', NOW);
-  D.applyHook(d, 'ask', NOW + 60_000);
-  assert.strictEqual(D.arbitrate(d, NOW + 60_000, '').box, true, 'рамка на месте');
-  assert.strictEqual(D.arbitrate(d, NOW + 60_000, '').kind, 'permission', 'и это по-прежнему разрешение');
-  // Выйти из рамки можно только работой или концом хода — вот там признак и снимается.
-  D.applyHook(d, 'busy', NOW + 61_000);
-  assert.strictEqual(D.arbitrate(d, NOW + 61_000, '').box, false);
-  // А зов прозой на чистом месте рамкой не становится: иначе вкладки сворма, которые прощаются
-  // зовом всегда, оказались бы закрыты для печати навсегда.
-  const d2 = mkD();
-  D.applyHook(d2, 'ask', NOW);
-  assert.strictEqual(D.arbitrate(d2, NOW, '').box, false);
+  // Человек отказал, агент ответил прозой и кончил ход зовом. PostToolUse не приходил.
+  D.applyHook(d, 'ask', NOW + 5000);
+  const eff = D.arbitrate(d, NOW + 5000, '');
+  assert.strictEqual(eff.status, 'waiting', 'вкладка по-прежнему зовёт человека');
+  assert.strictEqual(eff.box, false, 'но рамки на ней нет');
+  assert.strictEqual(eff.kind, 'question', 'и это вопрос, а не разрешение');
+  // И час спустя тоже — иначе перезапуск обходил бы эту вкладку до конца её дней.
+  assert.strictEqual(D.arbitrate(d, NOW + 3600_000, '').box, false);
 });
 
 test('hook: an unknown token is ignored', () => {

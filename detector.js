@@ -341,12 +341,18 @@ const HOOK_STALE_MS = 8000;
 // Отдельно от статуса, потому что «ждёт» бывает и без рамки: агент кончил ход зовом прозой, и
 // строка ввода при этом свободна. Снаружи (перезапуск, который печатает в живую вкладку) разница
 // решающая, а по статусу и kind она неразличима — оба «ждёт: вопрос».
+// `soft` — сигнал-НАПОМИНАНИЕ: Клод повторяет, что ввода всё нет. Нового он не сообщает ничего, в
+// том числе про рамку, а приходит как раз тогда, когда она чаще всего и стоит: минуту без ответа
+// рамка переживает легко, а ночью — и час. Поэтому напоминание не отменяет того, что мы уже знаем
+// про открытую рамку (см. applyHook); на вкладке без рамки оно значит ровно то, что написано.
 const HOOK_TOKEN = {
   busy: { status: 'running' },              // UserPromptSubmit / a normal tool starts
   idle: { status: 'ready' },                // Stop — the turn ended
   perm: { status: 'waiting', kind: 'permission', box: true }, // PermissionRequest
   box:  { status: 'waiting', kind: 'question', box: true },   // AskUserQuestion tool
-  ask:  { status: 'waiting', kind: 'question' },    // Stop с зовом, Notification agent_needs_input
+  ask:  { status: 'waiting', kind: 'question' },    // Stop, а последним словом — зов к человеку
+  nag:  { status: 'waiting', kind: 'question', soft: true },   // Notification agent_needs_input
+  lull: { status: 'ready', soft: true },                       // Notification idle_prompt
   // Stop, но ход закончился словами «ничего, жду замер стенда»: от человека ничего, а
   // работа идёт. Отдельный токен, а не busy, чтобы подпись и мост знали, что это фон.
   bgw:  { status: 'running', bg: true },
@@ -355,28 +361,29 @@ const HOOK_TOKEN = {
 // Record a hook signal on `d`. Once ANY signal has arrived, hooksActive flips on
 // and this session trusts hooks over the screen (see tickStatus). Returns whether
 // the token was known.
-// `ask` про рамку не знает НИЧЕГО: им объявляется и прощание зовом, и Notification «агенту нужен
-// ввод». А второе Клод шлёт как раз тогда, когда человек с минуту не отвечает — то есть чаще
-// всего при ОТКРЫТОЙ рамке, и ночью до этой минуты доживает каждая. Приняв его за «рамки нет», мы
-// бы сами себе разрешили печать в живую коробку, и заодно понизили бы «разрешение» до «вопроса»,
-// выбив второй источник тоже.
+// Напоминание (`soft`) про рамку не знает НИЧЕГО: Клод шлёт его, когда человек долго не отвечает,
+// то есть чаще всего при ОТКРЫТОЙ рамке — минуту без ответа она переживает легко, а ночью и час.
+// Приняв его за «рамки нет», мы бы сами себе разрешили печать в живую коробку, и заодно понизили
+// бы «разрешение» до «вопроса», выбив второй источник тоже.
 //
-// Поэтому пустое знание не затирает добытое: пока вкладка ждёт, `ask` рамку не отменяет. Отменяют
-// её `busy` и `idle`, и других выходов у рамки нет — ответ на неё либо запускает инструмент, либо
-// кончает ход.
+// Поэтому пустое знание не затирает добытое: пока мы знаем про открытую рамку, напоминание её не
+// отменяет — только освежает время сигнала, потому что подтверждение всё-таки свежее.
+//
+// А вот настоящие события отменяют, и это важно ровно так же. Рамка уходит не только ответом:
+// запрос разрешения можно ОТКЛОНИТЬ, и тогда никакого PostToolUse не будет — агент просто
+// заговорит и кончит ход. Держись знание за «пока не придёт busy», такая вкладка осталась бы «с
+// рамкой» навсегда: перезапуск её больше не трогает, а мост отказывается принимать текст с
+// телефона, предлагая закрыть диалог, которого нет.
 function applyHook(d, token, now) {
   const m = HOOK_TOKEN[token];
   if (!m) return false;
   d.hooksActive = true;
   const was = d.hookState;
-  const keepBox = token === 'ask' && !!was && was.status === 'waiting' && !!was.box;
-  d.hookState = {
-    status: m.status,
-    kind: keepBox ? was.kind : (m.kind || null),
-    bg: !!m.bg,
-    box: keepBox || !!m.box,
-    at: now,
-  };
+  if (m.soft && was && was.status === 'waiting' && was.box) {
+    d.hookState = { ...was, at: now };
+    return true;
+  }
+  d.hookState = { status: m.status, kind: m.kind || null, bg: !!m.bg, box: !!m.box, at: now };
   return true;
 }
 

@@ -66,8 +66,12 @@ test('PostToolUse → busy (the approved tool finished, work resumed)', () => {
   assert.strictEqual(runHook({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }).token, 'busy');
 });
 
-test('Notification agent_needs_input → ask', () => {
-  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'agent_needs_input' }).token, 'ask');
+// Напоминания Клода про неотвеченный ввод — свои токены, и это не косметика. Приходят они, когда
+// человек долго не отвечает, то есть чаще всего при ОТКРЫТОЙ рамке, а сказать про неё им нечего.
+// Через общий токен они отменяли бы рамку ровно в тот миг, когда она есть.
+test('напоминания про неотвеченный ввод — отдельные токены', () => {
+  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'agent_needs_input' }).token, 'nag');
+  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).token, 'lull');
 });
 
 test('PermissionRequest → perm', () => {
@@ -78,9 +82,6 @@ test('Notification permission_prompt → perm', () => {
   assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'permission_prompt' }).token, 'perm');
 });
 
-test('Notification idle_prompt → idle', () => {
-  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).token, 'idle');
-});
 
 // Коробка с вариантами — не то же самое, что зов прозой, хотя вкладка в обоих случаях ждёт
 // человека. Разница видна только здесь: дальше у них один статус и один kind. А цена её —
@@ -92,10 +93,9 @@ test('PreToolUse AskUserQuestion → box (рамка, а не просто ож�
 
 // А это — обычное прощание вкладки сворма, и рамки за ним нет никакой. Токен тот же «ждёт», но
 // печатать в такую вкладку можно, иначе перезапуск не сработал бы у неё ни разу.
-test('Stop с зовом и Notification agent_needs_input — ожидание без рамки', () => {
+test('Stop с зовом — ожидание без рамки', () => {
   const p = { hook_event_name: 'Stop', session_id: 's1', last_assistant_message: 'Сейчас от тебя: путь к схеме' };
   assert.strictEqual(runHook(p).token, 'ask');
-  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'agent_needs_input' }).token, 'ask');
 });
 
 test('PreToolUse for a normal tool → busy', () => {

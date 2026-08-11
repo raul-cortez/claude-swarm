@@ -114,8 +114,14 @@ function tokenFor(p, matcher) {
     case 'PermissionRequest': return 'perm';          // approval prompt → разрешение
     case 'Notification':
       if (p.notification_type === 'permission_prompt') return 'perm';
-      if (p.notification_type === 'idle_prompt') return 'idle';
-      if (p.notification_type === 'agent_needs_input') return 'ask';
+      // Эти два — не события, а НАПОМИНАНИЯ: Клод шлёт их, когда человек долго не отвечает.
+      // Нового про вкладку они не говорят ничего, в том числе про открытую рамку, а приходят как
+      // раз тогда, когда она чаще всего и стоит: минуту без ответа рамка переживает легко, а
+      // ночью — и час. Поэтому у них свои токены, и добытое знание они не затирают (см. HOOK_TOKEN
+      // в detector.js). Общий с прощанием зовом токен `ask` здесь стоять не может: тот значит
+      // «ход кончен, рамки нет», и напоминание отменяло бы рамку ровно в тот миг, когда она есть.
+      if (p.notification_type === 'idle_prompt') return 'lull';
+      if (p.notification_type === 'agent_needs_input') return 'nag';
       return null;
     case 'PreToolUse':
       // The AskUserQuestion tool is a real question; any other tool starting just
