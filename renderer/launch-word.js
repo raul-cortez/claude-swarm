@@ -77,6 +77,12 @@
   // Пункт «открыть вкладку без команды» — он же подпись такой вкладки в меню.
   const BLANK_LABEL = 'Чистый терминал';
 
+  // Пункты меню названы ДЕЙСТВИЕМ, а не именем команды: человек, открывающий вкладку, думает
+  // «ещё одну такую же» или «эту же папку, но другой подпиской», а не `claude-my`. Само имя
+  // команды остаётся подсказкой справа — чтобы было видно, что именно запустится.
+  const NEW_TAB = 'Новая вкладка';
+  const OTHER_SUB = 'Новая вкладка с другой подпиской';
+
   // Пункты меню, которое разворачивает «+» на папке. null — меню не нужно, открывай сразу.
   //
   // Здесь, а не в рендерере, потому что цена ошибки — вопрос, заданный человеку зря, или
@@ -93,18 +99,27 @@
     const agents = (Array.isArray(list) ? list : []).filter((a) => a && a.cmd);
     if (agents.length <= 1) return null;
     const label = inherited.blank ? BLANK_LABEL : agentLabel(inherited);
-    const entries = [{ label, hint: 'как в этой папке', val: {} }];
-    for (const a of agents) {
-      if (agentLabel(a) === label) continue;
-      entries.push({ label: agentLabel(a), hint: '', val: { cmd: a.cmd, flags: a.flags || '' } });
+    const others = agents.filter((a) => agentLabel(a) !== label);
+    // Нечем разбавить: в папке крутится единственная команда из списка, остальные — её же
+    // ярлыки. Выбора нет, меню не нужно.
+    if (!others.length) return null;
+    const entries = [{ label: NEW_TAB, hint: label + ' — как в этой папке', val: {} }];
+    // Ровно две команды на весь список — «другая» одна, и называть её незачем: это тот самый
+    // случай, ради которого меню и делалось (рабочая подписка кончилась — открой личной).
+    // Больше двух — «другая» перестаёт быть однозначной, и каждая называет себя сама.
+    for (const a of others) {
+      entries.push({
+        label: others.length === 1 ? OTHER_SUB : NEW_TAB + ': ' + agentLabel(a),
+        hint: others.length === 1 ? agentLabel(a) : '',
+        val: { cmd: a.cmd, flags: a.flags || '' },
+      });
     }
-    // Один пункт — это не выбор: так бывает, когда в папке крутится единственная команда
-    // из списка, а остальные её же ярлыки. Открываем сразу.
-    return entries.length > 1 ? entries : null;
+    return entries;
   }
 
   return {
-    launchWordFrom, isAliasExpansion, agentLabel, launchMenuEntries, BLANK_LABEL,
+    launchWordFrom, isAliasExpansion, agentLabel, launchMenuEntries,
+    BLANK_LABEL, NEW_TAB, OTHER_SUB,
     AGENT_CMD_RE, AGENT_FLAGS_RE,
   };
 });

@@ -71,14 +71,25 @@ const menu = (over) => L.launchMenuEntries({
   mode: 'agent', pick: 'folder', list: TWO, inherited: { cmd: 'claude', flags: '' }, ...over,
 });
 
-test('меню предлагает наследование первым, остальные команды — следом', () => {
+test('две команды — ровно два пункта, названные действием', () => {
   const e = menu();
   assert.strictEqual(e.length, 2);
-  assert.strictEqual(e[0].label, 'claude');
-  assert.strictEqual(e[0].hint, 'как в этой папке');
+  assert.strictEqual(e[0].label, L.NEW_TAB);
+  assert.strictEqual(e[0].hint, 'claude — как в этой папке');
   assert.deepStrictEqual(e[0].val, {});               // пустые опции = сегодняшнее поведение
-  assert.strictEqual(e[1].label, 'claude-my');
+  assert.strictEqual(e[1].label, L.OTHER_SUB);
+  assert.strictEqual(e[1].hint, 'claude-my');         // какая именно — подсказкой справа
   assert.deepStrictEqual(e[1].val, { cmd: 'claude-my', flags: '' });
+});
+
+test('команд больше двух — «другая» уже не одна, и каждая называет себя', () => {
+  const e = menu({ list: [{ cmd: 'claude' }, { cmd: 'claude-my' }, { cmd: 'cld', flags: '--model sonnet' }] });
+  assert.deepStrictEqual(e.map((x) => x.label), [
+    L.NEW_TAB,
+    L.NEW_TAB + ': claude-my',
+    L.NEW_TAB + ': cld --model sonnet',
+  ]);
+  assert.deepStrictEqual(e[2].val, { cmd: 'cld', flags: '--model sonnet' });
 });
 
 test('меню не всплывает там, где спросят и без него', () => {
@@ -98,18 +109,27 @@ test('наследованная команда не двоится, флаги 
   const e = L.launchMenuEntries({
     mode: 'agent', pick: 'folder', list, inherited: { cmd: 'claude', flags: '--model opus' },
   });
-  assert.deepStrictEqual(e.map((x) => x.label), ['claude --model opus', 'claude-my']);
-  // Тот же лончер с ДРУГИМИ флагами — отдельный пункт: это другой запуск.
+  assert.strictEqual(e.length, 2);
+  assert.strictEqual(e[0].hint, 'claude --model opus — как в этой папке');
+  assert.strictEqual(e[1].hint, 'claude-my');
+  // Тот же лончер с ДРУГИМИ флагами — отдельный запуск, поэтому «другая» уже не одна.
   const e2 = L.launchMenuEntries({
     mode: 'agent', pick: 'folder', list, inherited: { cmd: 'claude', flags: '' },
   });
-  assert.deepStrictEqual(e2.map((x) => x.label), ['claude', 'claude --model opus', 'claude-my']);
+  assert.deepStrictEqual(e2.map((x) => x.label), [
+    L.NEW_TAB,
+    L.NEW_TAB + ': claude --model opus',
+    L.NEW_TAB + ': claude-my',
+  ]);
 });
 
 test('в папке с чистым терминалом наследование подписано по-человечески', () => {
   const e = menu({ inherited: { blank: true } });
-  assert.strictEqual(e[0].label, L.BLANK_LABEL);
-  assert.deepStrictEqual(e.map((x) => x.label).slice(1), ['claude', 'claude-my']);
+  assert.strictEqual(e[0].hint, L.BLANK_LABEL + ' — как в этой папке');
+  assert.deepStrictEqual(e.map((x) => x.label).slice(1), [
+    L.NEW_TAB + ': claude',
+    L.NEW_TAB + ': claude-my',
+  ]);
 });
 
 (async () => {
