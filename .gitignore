@@ -7,3 +7,6 @@ out/
 # icon build intermediates
 build/icon.iconset/
 build-info.json
+
+# записка вкладки самой себе через перезапуск — своя на каждую вкладку, в репозиторий не едет
+.swarm-handoff-*.md
