@@ -19,6 +19,107 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// --- чужая строка статуса: не «или-или», а «и то, и другое» -------------------
+// Слот statusLine у Клода один, и наш файл (--settings) идёт верхним слоем — значит
+// СВОЯ строка человека в свормовских вкладках просто не показывалась. Раньше это лечили
+// галкой «своя строка статуса Swarm»: выключил — вернул себе свою, но вместе с ней потерял
+// полоску контекста, лимиты и САМ ПЕРЕЗАПУСК ПО КОНТЕКСТУ, потому что процент заполнения
+// приходит только отсюда. То есть выбор был между своей строкой и работающим приложением.
+//
+// Развилка ложная. Слот один, но никто не мешает нам ПОЗВАТЬ чужую команду и напечатать
+// оба куска. Мы ничего не замещаем — мы дописываем то, чего в чужой строке нет.
+//
+// Порядок кусков несущий: рендерер берёт полоску контекста по ПЕРВОМУ проценту в строке
+// (renderer.js, updateCtx), поэтому наш кусок идёт первым. Пусти чужой вперёд — и любой
+// его процент (расход диска, покрытие тестами, что угодно) нарисуется на вкладке как
+// контекст, а на этом проценте стоит и решение о перезапуске.
+const FOREIGN_MS = 1000;
+
+// Где искать чужие настройки. Слои — как у самого Клода, сверху вниз: локальные настройки
+// проекта, настройки проекта, настройки пользователя. Корень конфига берём из окружения
+// (`CLAUDE_CONFIG_DIR` уводит в другой конфиг целиком — у пользователя это алиасы вроде
+// `claude-my`, и мы наследуем его переменные, раз запущены самим Клодом), иначе — из адреса
+// стенограммы, иначе — ~/.claude.
+function configRoot(data, env) {
+  const e = (env || {}).CLAUDE_CONFIG_DIR;
+  if (e) return e;
+  // <корень>/projects/<слаг>/<id>.jsonl — корень на два уровня выше папки проекта.
+  const t = data && data.transcript_path;
+  if (t) {
+    const projects = path.dirname(path.dirname(String(t)));
+    if (path.basename(projects) === 'projects') return path.dirname(projects);
+  }
+  return path.join(os.homedir(), '.claude');
+}
+
+function settingsLayers(data, env) {
+  const ws = (data && data.workspace) || {};
+  const proj = ws.project_dir || ws.current_dir || '';
+  const out = [];
+  if (proj) {
+    out.push(path.join(proj, '.claude', 'settings.local.json'));
+    out.push(path.join(proj, '.claude', 'settings.json'));
+  }
+  out.push(path.join(configRoot(data, env), 'settings.json'));
+  return out;
+}
+
+// Наша же команда, увиденная со стороны. Человек мог прописать её себе сам (или она
+// осталась от прежних версий) — позвать её отсюда значит уйти в кольцо: строка зовёт
+// строку, и так до упора по времени на каждой перерисовке.
+function isOwnCommand(cmd) {
+  return /swarm-statusline/i.test(String(cmd || ''));
+}
+
+// Первая команда строки статуса, найденная по слоям. Берём только type: 'command' —
+// остальные формы Клод рисует сам, и подменять его нам нечем.
+function foreignCommandFrom(layers) {
+  for (const raw of layers || []) {
+    const sl = raw && raw.statusLine;
+    if (!sl || sl.type !== 'command') continue;
+    const cmd = String(sl.command || '').trim();
+    if (!cmd || isOwnCommand(cmd)) continue;
+    return cmd;
+  }
+  return '';
+}
+
+// Наш кусок ВСЕГДА первый (см. про первый процент выше). Чужой пустой — строка не меняется
+// вовсе, то есть у человека без своей строки всё как было.
+//
+// Совпавший кусок не печатаем дважды. Случай не выдуманный: наша строка выросла из скрипта,
+// который люди носили с собой, и у такого человека в конфиге лежит её ранняя копия — склейка
+// честно напечатала бы одно и то же подряд. Сравниваем БЕЗ цвета: копия могла разойтись с
+// оригиналом в оттенках, оставшись тем же текстом.
+const NO_ANSI = /\x1b\[[0-9;]*m/g;
+function composeLine(ours, foreign) {
+  const f = String(foreign || '').replace(/[\r\n]+.*$/s, '').trim();
+  if (!f) return ours;
+  const bare = (s) => String(s).replace(NO_ANSI, '').trim();
+  if (bare(f) === bare(ours)) return ours;
+  return `${ours} │ ${f}`;
+}
+
+// Позвать чужую команду тем же входом, каким Клод позвал нас. Никогда не бросает и никогда
+// не висит: строка перерисовывается на каждом ходе, и чужой скрипт, задумавшийся на минуту,
+// был бы виден как подтормаживающий Клод, а не как чужой скрипт.
+function readForeign(data, input) {
+  try {
+    const files = settingsLayers(data, process.env);
+    const layers = files.map((f) => {
+      try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; }
+    });
+    const cmd = foreignCommandFrom(layers);
+    if (!cmd) return '';
+    const { spawnSync } = require('child_process');
+    const cwd = (data && data.workspace && data.workspace.current_dir) || undefined;
+    const r = spawnSync(cmd, {
+      shell: true, input, cwd, timeout: FOREIGN_MS, encoding: 'utf8', maxBuffer: 1 << 20,
+    });
+    return (r && r.stdout) || '';
+  } catch (_) { return ''; }
+}
+
 // A task a skill pinned to this tab (writes .claude/.task-<session>). Optional:
 // absent for anyone without those skills, in which case we simply render nothing.
 // The mode is marked by a glyph, not colour — the app reads the line without ANSI.
@@ -275,8 +376,11 @@ function main() {
     try {
       const data = JSON.parse(input);
       const nowSec = Math.floor(Date.now() / 1000);
-      process.stdout.write(renderLine(data, nowSec));
+      // Снимок расхода пишем ДО чужой строки: он и есть то, ради чего этот скрипт обязан
+      // отработать до конца — из него живут полоска на карточке, /usage в телеге и порог
+      // перезапуска. Чужая команда после него не может отнять у приложения ничего.
       writeUsage(usageSnapshot(data, nowSec));
+      process.stdout.write(composeLine(renderLine(data, nowSec), readForeign(data, input)));
     } catch (_) {
       // Bad/empty stdin must never make Claude show an error line — print nothing.
     }
@@ -286,4 +390,7 @@ function main() {
 // Only read stdin when actually run as the statusline; the tests require this file.
 if (require.main === module) main();
 
-module.exports = { renderLine, renderLimits, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR };
+module.exports = {
+  renderLine, renderLimits, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR,
+  configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
+};

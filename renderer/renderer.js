@@ -633,11 +633,12 @@ let launchPick = localStorage.getItem('swarm.launchPick') || 'folder';
 // остались бы выключенными навсегда, а спросить об этом уже негде.
 const resumeSessions = true;
 const hooksEnabled = true;
-// «Своя строка статуса Swarm» (Settings → Запуск). ON unless turned off: полоска контекста и
-// цифры /usage приходят только оттуда, и новый человек об этом не догадается. Но она
-// перебивает СВОЮ строку статуса пользователя, а там может быть что угодно важное — поэтому
-// это выбор, а не данность. Выключенная снимает --settings целиком, см. writeSwarmSettings.
-let statuslineEnabled = localStorage.getItem('swarm.statusline') !== '0';
+// Строка статуса Swarm — тоже без настройки, всегда включена, и это стало возможно только
+// вместе со склейкой (swarm-statusline.js, readForeign). Галка существовала ради ложной
+// развилки: слот statusLine у Клода один, значит наша строка перебивала свою строку человека,
+// и он выбирал между ней и работающим приложением — полоской контекста, цифрами /usage и
+// перезапуском по контексту, которые кормятся только отсюда. Теперь наш скрипт сам зовёт его
+// команду и печатает оба куска, так что терять нечего и выбирать не из чего.
 // «Просить агента звать вас» (Settings → Запуск): main appends the rule from
 // agent-rules.js to the launch command. ON unless turned off — a fresh install has no
 // such convention in its CLAUDE.md, so without this the «ждёт ответа» status would
@@ -1367,17 +1368,6 @@ function showSettingsModal(tab) {
           </div>
           <div class="set-row">
             <label class="set-check">
-              <input type="checkbox" id="set-statusline" />
-              <span class="set-check-tx">Своя строка статуса Swarm</span>
-            </label>
-            <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Заменяет вашу строку статуса Клода в вкладках приложения — из неё
-              берутся полоска контекста на карточке и цифры в <span class="set-mono">/usage</span>. Снимите,
-              если в вашей строке есть что-то своё: она останется как есть, но полоска и расход пропадут.
-              Только Claude Code, применяется к новым вкладкам.</span>
-          </div>
-          <div class="set-row">
-            <label class="set-check">
               <input type="checkbox" id="set-agent-rules" />
               <span class="set-check-tx">Просить агента звать вас</span>
             </label>
@@ -1875,8 +1865,6 @@ function showSettingsModal(tab) {
   const agentBlockEl = overlay.querySelector('#set-agent-block');
   const agentListEl = overlay.querySelector('#set-agent-list');
   const pickFieldEl = overlay.querySelector('#set-pick-field');
-  const slI = overlay.querySelector('#set-statusline');
-  slI.checked = statuslineEnabled;
   const rulesI = overlay.querySelector('#set-agent-rules');
   rulesI.checked = agentRules;
   // Режим для новых вкладок. Список приходит из main: подписи режимов живут в screen.js,
@@ -2722,11 +2710,6 @@ function showSettingsModal(tab) {
     saveLaunchMode();
     launchPick = overlay.querySelector('input[name="set-pick"]:checked')?.value || 'folder';
     saveLaunchPick();
-    if (slI.checked !== statuslineEnabled) {
-      statuslineEnabled = slI.checked;
-      localStorage.setItem('swarm.statusline', statuslineEnabled ? '1' : '0');
-      window.swarm.setStatuslineEnabled(statuslineEnabled); // тот же файл, тот же перезапись
-    }
     if (rulesI.checked !== agentRules) {
       agentRules = rulesI.checked;
       localStorage.setItem('swarm.agentRules', agentRules ? '1' : '0');
@@ -4343,7 +4326,6 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 // Tell main the saved hooks pref BEFORE restoring sessions, so swarm-settings.json
 // carries (or omits) the hooks block before the first claude spawn.
 window.swarm.setHooksEnabled(hooksEnabled);
-window.swarm.setStatuslineEnabled(statuslineEnabled); // тем же порядком: с нашей строкой или со своей
 window.swarm.setAskPhrases(askPhrases); // same reason: the hook file must be current
 window.swarm.setAgentRules(agentRules); // and the launch flag before the first command
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки

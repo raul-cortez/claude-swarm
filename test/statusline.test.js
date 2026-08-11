@@ -9,7 +9,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { renderLine, renderLimits, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport } = require('../swarm-statusline');
+const {
+  renderLine, renderLimits, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport,
+  configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
+} = require('../swarm-statusline');
 
 let passed = 0;
 const tests = [];
@@ -261,6 +264,91 @@ test('a session id with a path in it writes no file at all', () => {
   execFileSync(process.execPath, [staged], { input: JSON.stringify(data), encoding: 'utf8' });
   assert.strictEqual(fs.existsSync(path.join(dir, 'usage')), false, 'папка снимков не создана');
   assert.strictEqual(fs.existsSync(path.join(path.dirname(dir), 'escaped.json')), false, 'наружу не записано');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- чужая строка статуса рядом с нашей --------------------------------------
+
+test('наш кусок идёт первым — иначе чужой процент станет контекстом вкладки', () => {
+  // Рендерер берёт полоску по ПЕРВОМУ проценту в строке, и на этом же проценте стоит
+  // решение о перезапуске. Чужая строка со своим процентом не должна его перебивать.
+  const line = composeLine('Opus 5 │ repo ███ 24% 1M', 'моя строка 99% диска');
+  assert.match(line, /^Opus 5 │ repo ███ 24% 1M │ /);
+  assert.strictEqual(line.match(/(\d+)%/)[1], '24');
+});
+
+test('своей строки нет — наша не меняется вовсе', () => {
+  assert.strictEqual(composeLine('наш кусок', ''), 'наш кусок');
+  assert.strictEqual(composeLine('наш кусок', '   \n  '), 'наш кусок');
+  assert.strictEqual(composeLine('наш кусок', null), 'наш кусок');
+});
+
+test('чужой кусок, совпавший с нашим, не печатается дважды', () => {
+  // У человека в конфиге может лежать ранняя копия этой же строки — тогда склейка напечатала
+  // бы одно и то же подряд. Цвет при сравнении не в счёт: копия могла разойтись в оттенках.
+  assert.strictEqual(composeLine('Opus 5 │ repo 24%', 'Opus 5 │ repo 24%'), 'Opus 5 │ repo 24%');
+  assert.strictEqual(composeLine('\x1b[2mOpus 5\x1b[0m │ repo', 'Opus 5 │ \x1b[32mrepo\x1b[0m'),
+    '\x1b[2mOpus 5\x1b[0m │ repo');
+  // А разошедшийся хоть чем-то — печатается: судить о «почти том же» нам нечем.
+  assert.strictEqual(composeLine('Opus 5 │ repo 24%', 'Opus 5 │ repo 25%'), 'Opus 5 │ repo 24% │ Opus 5 │ repo 25%');
+});
+
+test('от чужой строки берём только первую строку', () => {
+  // Многострочный чужой вывод разъехался бы по терминалу поверх диалога Клода.
+  assert.strictEqual(composeLine('наш', 'первая\nвторая\nтретья'), 'наш │ первая');
+});
+
+test('слои чужих настроек — как у Клода: локальные, проектные, пользовательские', () => {
+  const data = { workspace: { project_dir: '/proj', current_dir: '/proj/sub' } };
+  assert.deepStrictEqual(settingsLayers(data, { CLAUDE_CONFIG_DIR: '/cfg' }), [
+    path.join('/proj', '.claude', 'settings.local.json'),
+    path.join('/proj', '.claude', 'settings.json'),
+    path.join('/cfg', 'settings.json'),
+  ]);
+});
+
+test('корень конфига: сначала окружение, потом адрес стенограммы', () => {
+  // Алиас `claude-my` уводит в другой конфиг целиком — там своя строка статуса, и взять
+  // её из рабочего конфига значит показать человеку чужую.
+  assert.strictEqual(configRoot({}, { CLAUDE_CONFIG_DIR: '/cfg' }), '/cfg');
+  const t = '/Users/me/.claude-my/projects/-Users-me-repo/abc.jsonl';
+  assert.strictEqual(configRoot({ transcript_path: t }, {}), '/Users/me/.claude-my');
+  assert.strictEqual(configRoot({}, {}), path.join(os.homedir(), '.claude'));
+});
+
+test('верхний слой выигрывает, чужие формы кроме команды пропускаем', () => {
+  const cmd = { type: 'command', command: 'my-line' };
+  assert.strictEqual(foreignCommandFrom([{ statusLine: cmd }, { statusLine: { type: 'command', command: 'lower' } }]), 'my-line');
+  assert.strictEqual(foreignCommandFrom([null, { statusLine: { type: 'static', text: 'hi' } }, { statusLine: cmd }]), 'my-line');
+  assert.strictEqual(foreignCommandFrom([{}, null]), '');
+  assert.strictEqual(foreignCommandFrom([]), '');
+});
+
+test('нашу же команду не зовём — иначе строка зовёт строку без конца', () => {
+  assert.strictEqual(isOwnCommand('sh "/x/swarm-statusline.sh"'), true);
+  assert.strictEqual(isOwnCommand('node /x/statusline.js'), false);
+  const own = { type: 'command', command: 'sh "/x/swarm-statusline.sh"' };
+  assert.strictEqual(foreignCommandFrom([{ statusLine: own }]), '');
+});
+
+test('чужая команда получает тот же вход и не может подвесить строку', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-foreign-')));
+  const proj = path.join(dir, 'proj');
+  fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  // Чужой скрипт печатает модель из ВХОДА — значит вход до него доехал целиком.
+  const script = path.join(dir, 'mine.sh');
+  fs.writeFileSync(script, '#!/bin/sh\ncat | sed -n \'s/.*"display_name":"\\([^"]*\\)".*/чужая: \\1/p\'\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(proj, '.claude', 'settings.json'),
+    JSON.stringify({ statusLine: { type: 'command', command: `sh ${script}` } }));
+  const data = { workspace: { project_dir: proj, current_dir: proj } };
+  const input = JSON.stringify({ model: { display_name: 'Opus 5' } });
+  assert.strictEqual(readForeign(data, input).trim(), 'чужая: Opus 5');
+
+  // Задумавшаяся команда обязана оборваться по таймауту, а не держать перерисовку.
+  fs.writeFileSync(script, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+  const t0 = Date.now();
+  assert.strictEqual(readForeign(data, input).trim(), '');
+  assert.ok(Date.now() - t0 < 5000, 'ждали не дольше таймаута');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

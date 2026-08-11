@@ -72,7 +72,6 @@ contextBridge.exposeInMainWorld('swarm', {
   // startup and on toggle; main adds/removes the hooks block in swarm-settings.json
   // (scoped to swarm sessions). Takes effect on sessions started after the change.
   setHooksEnabled: (on) => ipcRenderer.send('settings:hooks', on),
-  setStatuslineEnabled: (on) => ipcRenderer.send('settings:statusline', on),
 
   // The phrases that mean «the agent is calling me» (Settings → Запуск). Pushed on
   // startup and on save; main feeds both the screen detector and the Stop hook.
