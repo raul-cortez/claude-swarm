@@ -242,6 +242,22 @@ test('с сабагентами не рвём, но спросить — спр�
   assert.strictEqual(R.step(granted, sig({ hasLine: true, sub: 0 })).action, 'exit');
 });
 
+// Протухшее разрешение считается молчанием, и три подряд выключают перезапуск до утра. Но
+// разрешение, пережидавшее сабагентов, — не молчание: вкладка работала, и держали её мы сами.
+// Немота досталась бы ровно тем вкладкам, которым перезапуск нужнее всех: чем больше вкладка
+// гоняет фоновых агентов, тем быстрее пухнет её контекст.
+test('ожидание сабагентов не ведёт вкладку к немоте', () => {
+  const stale = { ...idle(), phase: 'granted', at: NOW - R.GRANT_CALM_MS - 1, prompt: 'дальше', silent: 2 };
+  const r = R.step(stale, sig({ hasLine: true, sub: 2 }));
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.phase, 'idle', 'не немота');
+  assert.strictEqual(r.state.silent, 2, 'счётчик молчания не растёт');
+  assert.ok(r.state.retryAt > NOW, 'и переспрос отложен, а не сразу');
+  // А без сабагентов третье протухание по-прежнему выключает перезапуск до конца сессии.
+  const mute = R.step(stale, sig({ hasLine: true, sub: 0 }));
+  assert.strictEqual(mute.state.phase, 'muted');
+});
+
 test('про сабагентов сказано в просьбе — и только когда они есть', () => {
   const withSub = R.askText({ pct: 31, answerFile: '/tmp/a.json', sub: 3 });
   assert.ok(withSub.includes('(3)'), 'сказано, сколько их');
