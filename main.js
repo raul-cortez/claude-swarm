@@ -4403,7 +4403,7 @@ function restartClearPending(d) {
   d.rsSignalled = false;
   d.rsKillPid = null;
   d.rsShellBusy = undefined;
-  d.rsProbeBlind = false;
+  d.rsProbeErr = false;
   d.rsProbedAt = 0;
   // И тишину в телеграме. Её снимает конец круга «спросили — ответили», но у выключенной функции
   // такта больше нет — и отметка досталась бы СЛЕДУЮЩЕМУ, настоящему итогу, который человек ждёт с
@@ -4503,12 +4503,15 @@ setInterval(() => {
     const d = det.get(id);
     if (!d || d.dead || !d.rs || d.rs.phase !== 'exiting' || !d.rsSignalled) continue;
     if (d.rsProbing) continue;              // прошлый вопрос ещё в пути — не наслаиваем
-    // Систему уже спрашивали и она не ответила — больше не дёргаем: решать будет общий такт по
-    // своим признакам. Иначе он же и работал бы здесь четыре раза в секунду, с чтением снимка
-    // расхода с диска и двумя снятиями экрана на каждый заход.
-    if (d.rsProbeBlind) continue;
+    // Осечка опроса НЕ выключает быстрый путь навсегда — она лишь замедляет его. Латч здесь
+    // пробовали и убрали: одна случайная неудача (WMI икнул, spawn под нагрузкой) оставляла
+    // вкладку на общем такте раз в полминуты, то есть ровно с той дырой, ради которой быстрый
+    // путь и заводился.
     const since = now - (d.rs.exitAt || now);
-    const due = since < RESTART_EXIT_FAST_MS ? RESTART_EXIT_TICK_MS : RESTART_EXIT_SLOW_MS;
+    const fast = since < RESTART_EXIT_FAST_MS && !d.rsProbeErr;
+    // Порог чуть меньше периода: таймер иногда срабатывает на пару миллисекунд раньше, и
+    // сравнение «прошло ли ровно 250 мс» роняло бы каждый второй заход вдвое.
+    const due = (fast ? RESTART_EXIT_TICK_MS : RESTART_EXIT_SLOW_MS) - 50;
     if (now - (d.rsProbedAt || 0) < due) continue;
     const child = sessions.get(id);
     const shellPid = child && child.pid != null ? Number(child.pid) : 0;
@@ -4523,15 +4526,19 @@ setInterval(() => {
     shellChildren(shellPid, (err, pids) => {
       d.rsProbing = false;
       if (!d.rs || d.rs.phase !== 'exiting' || !sessions.has(id)) return;
-      // Не спросили — не знаем, и больше не спрашиваем: решать будет общий такт по своим
-      // признакам (экран, обход процессов раз в пять секунд).
       if (err) {
-        d.rsShellBusy = undefined;
-        d.rsProbeBlind = true;
-        restartLog(`вкладка ${id}: потомков не спросить (${(err && err.code) || 'ошибка'}) — жду по общему такту`);
-        return;
+        // Не спросили — не знаем. Но кое-что знаем даром: закрытый нами процесс проверяется
+        // системным вызовом, без запуска программ. Жив — оболочка точно занята; ушёл — решать
+        // будет общий такт по своим признакам (экран, обход процессов раз в пять секунд).
+        d.rsShellBusy = pidAlive(d.rsKillPid) ? true : undefined;
+        if (!d.rsProbeErr) {
+          d.rsProbeErr = true;
+          restartLog(`вкладка ${id}: потомков не спросить (${(err && err.code) || 'ошибка'}) — спрашиваю реже`);
+        }
+      } else {
+        d.rsProbeErr = false;
+        d.rsShellBusy = !!pids.length;
       }
-      d.rsShellBusy = !!pids.length;
       try { restartTick(id, d, Date.now()); } catch (e) { reportMainError(e); }
     });
   }
@@ -4598,7 +4605,7 @@ function restartFire(id, d) {
   d.rsSignalled = false;      // круг закончен, см. restartClearPending
   d.rsKillPid = null;
   d.rsShellBusy = undefined;
-  d.rsProbeBlind = false;
+  d.rsProbeErr = false;
   d.rsProbedAt = 0;
   if (!live || !line) return false;
   live.write(clearPrefix(pickShell()) + line + '\r');
@@ -4696,17 +4703,22 @@ function pidAlive(pid) {
 // свободна», ошибка — «спросить не смогли», и путать эти два ответа нельзя: первый разрешает
 // печатать запуск, второй обязан нас остановить.
 //
-// Различаем их по коду возврата, и ЯВНО для каждой системы, а не «числовой код значит ответ».
-// На этом уже обожглись: винда сообщала о сбое своим числовым кодом, он проходил за «потомков
-// нет» — то есть сбой WMI выглядел как свободная оболочка, и строка запуска уехала бы в поле
-// ввода живого агента репликой в разговор.
-//   pgrep: 0 — нашёл, 1 — не нашёл (это ответ), остальное — беда;
-//   PowerShell: 0 — ответил (пусто значит пусто), любой другой код — беда.
+// Спрашиваем `ps`, а не `pgrep`. Это не вкусовщина: `pgrep -P` на маке (26.3.1, проверено на
+// живых процессах приложения) НЕ ВИДИТ как раз наши процессы — у оболочки вкладки он отвечает
+// «потомков нет», хотя `ps` показывает там работающего агента. Код на pgrep был мёртвым: он
+// всегда откатывался на печать `/exit`, и заметить это по тестам было нельзя — процессы,
+// поднятые самим тестом, pgrep находит прекрасно.
+//
+// `ps -eo pid=,ppid=,args=` — тот же вызов, которым приложение уже определяет занятость оболочки
+// (scanTabProcesses), то есть источник заведомо рабочий. Плюс он даёт КОМАНДНУЮ СТРОКУ, а не
+// «имя процесса»: Клод переписывает себе имя, и в нём бывает что угодно, вплоть до номера версии.
+//
+// Коды возврата: `ps` отвечает нулём и на пустой список, так что ошибка здесь означает ровно
+// «спросить не смогли». У PowerShell так же: 0 — ответил (пусто значит пусто), иначе беда.
 function shellChildren(shellPid, cb) {
   const isWin = os.platform() === 'win32';
   const done = (err, out) => {
-    const answered = !err || (!isWin && err.code === 1);
-    if (!answered) { cb(err, []); return; }
+    if (err) { cb(err, []); return; }
     const list = String(out || '').trim().split('\n').map((line) => {
       const m = line.trim().match(/^(\d+)\s+(.*)$/);
       return m ? { pid: Number(m[1]), name: m[2].trim() } : null;
@@ -4728,8 +4740,16 @@ function shellChildren(shellPid, cb) {
       { windowsHide: true }, done);
     return;
   }
-  // `-l` добавляет имя процесса: по нему выбирается, кого из потомков закрывать.
-  execFile('pgrep', ['-l', '-P', String(shellPid)], done);
+  execFile('ps', ['-eo', 'pid=,ppid=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
+    if (err) { cb(err, []); return; }
+    const rows = [];
+    for (const line of String(out).split('\n')) {
+      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+      if (!m || Number(m[2]) !== Number(shellPid)) continue;
+      rows.push(String(m[1]) + ' ' + m[3].trim());
+    }
+    done(null, rows.join('\n'));
+  });
 }
 
 // Закрыть агента. На маке и линуксе это вежливая просьба (SIGTERM): процесс закрывается сам и
@@ -4746,7 +4766,14 @@ function killAgent(pid, cb) {
     execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (err) => cb(err));
     return;
   }
-  try { process.kill(pid, 'SIGTERM'); cb(null); } catch (e) { cb(e); }
+  try {
+    process.kill(pid, 'SIGTERM');
+    // И будим следом. Остановленному (Ctrl+Z) процессу SIGTERM доставлен не будет: он повиснет
+    // до пробуждения, а `kill` при этом отчитается успехом. Мы бы решили, что закрыли агента, и
+    // ждали бы час освободившейся оболочки, которая не освободится никогда.
+    try { process.kill(pid, 'SIGCONT'); } catch (_) { /* уже ушёл — тем лучше */ }
+    cb(null);
+  } catch (e) { cb(e); }
 }
 
 // Погасить прежнего агента. Закрываем ПРОЦЕСС, а не просим агента выйти буквами в поле ввода.
@@ -4797,7 +4824,11 @@ function restartExit(id, d) {
     const wanted = [launcherOf(d.launchCmd), d.runCmd]
       .map((w) => path.basename(String(w || '')).toLowerCase().replace(/\.exe$/, ''))
       .filter(Boolean);
-    const named = pids.filter((e) => wanted.includes(e.name.toLowerCase().replace(/\.exe$/, '')));
+    // Имя потомка — первое слово его командной строки, как и `d.runCmd` у вкладки: сравнивать
+    // надо одинаково добытые вещи, иначе совпадений не будет никогда.
+    const nameOf = (e) => path.basename(String(e.name).trim().split(/\s+/)[0] || '')
+      .toLowerCase().replace(/\.exe$/, '');
+    const named = pids.filter((e) => wanted.includes(nameOf(e)));
     const pick = (named.length ? named : pids)[(named.length ? named : pids).length - 1];
     const pid = pick.pid;
     // Пид оболочки не трогаем ни при каких обстоятельствах: это убьёт вкладку целиком. Своим
