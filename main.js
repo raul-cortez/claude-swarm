@@ -4403,6 +4403,8 @@ function restartClearPending(d) {
   d.rsSignalled = false;
   d.rsKillPid = null;
   d.rsShellBusy = undefined;
+  d.rsProbeBlind = false;
+  d.rsProbedAt = 0;
   // И тишину в телеграме. Её снимает конец круга «спросили — ответили», но у выключенной функции
   // такта больше нет — и отметка досталась бы СЛЕДУЮЩЕМУ, настоящему итогу, который человек ждёт с
   // телефона: мост промолчал бы ровно там, где должен был доложить.
@@ -4489,15 +4491,30 @@ setInterval(() => {
 // Стоит это почти ничего: тактуются только вкладки в этой фазе (обычно ни одной), и весь такт
 // там — проверка одного pid, без чтений с диска и снятий экрана (см. byPid в restartTick).
 const RESTART_EXIT_TICK_MS = 250;
+// Быстро спрашиваем только первые секунды — там весь смысл. Дальше это уже не «вот-вот
+// освободится», а «что-то держит», и частить незачем: фаза ожидания живёт до часа, а каждый
+// вопрос — запуск отдельной программы. Четыре запуска PowerShell в секунду в течение часа
+// человек увидел бы вентилятором.
+const RESTART_EXIT_FAST_MS = 10_000;
+const RESTART_EXIT_SLOW_MS = 3000;
 setInterval(() => {
+  const now = Date.now();
   for (const id of sessions.keys()) {
     const d = det.get(id);
     if (!d || d.dead || !d.rs || d.rs.phase !== 'exiting' || !d.rsSignalled) continue;
     if (d.rsProbing) continue;              // прошлый вопрос ещё в пути — не наслаиваем
+    // Систему уже спрашивали и она не ответила — больше не дёргаем: решать будет общий такт по
+    // своим признакам. Иначе он же и работал бы здесь четыре раза в секунду, с чтением снимка
+    // расхода с диска и двумя снятиями экрана на каждый заход.
+    if (d.rsProbeBlind) continue;
+    const since = now - (d.rs.exitAt || now);
+    const due = since < RESTART_EXIT_FAST_MS ? RESTART_EXIT_TICK_MS : RESTART_EXIT_SLOW_MS;
+    if (now - (d.rsProbedAt || 0) < due) continue;
     const child = sessions.get(id);
     const shellPid = child && child.pid != null ? Number(child.pid) : 0;
     if (!shellPid) continue;
     d.rsProbing = true;
+    d.rsProbedAt = now;
     // Спрашиваем ПУСТА ЛИ ОБОЛОЧКА, а не «умер ли тот номер, который мы закрыли». Разница в том
     // единственном случае, где ошибка непоправима: если мы закрыли не агента (в оболочке висел
     // чужой фоновый job), то смерть закрытого номера сказала бы «свободно» — и строка запуска
@@ -4506,8 +4523,15 @@ setInterval(() => {
     shellChildren(shellPid, (err, pids) => {
       d.rsProbing = false;
       if (!d.rs || d.rs.phase !== 'exiting' || !sessions.has(id)) return;
-      // Не спросили — не знаем; пусть решает общий такт по своим признакам (экран, старый обход).
-      d.rsShellBusy = err ? undefined : !!pids.length;
+      // Не спросили — не знаем, и больше не спрашиваем: решать будет общий такт по своим
+      // признакам (экран, обход процессов раз в пять секунд).
+      if (err) {
+        d.rsShellBusy = undefined;
+        d.rsProbeBlind = true;
+        restartLog(`вкладка ${id}: потомков не спросить (${(err && err.code) || 'ошибка'}) — жду по общему такту`);
+        return;
+      }
+      d.rsShellBusy = !!pids.length;
       try { restartTick(id, d, Date.now()); } catch (e) { reportMainError(e); }
     });
   }
@@ -4574,6 +4598,8 @@ function restartFire(id, d) {
   d.rsSignalled = false;      // круг закончен, см. restartClearPending
   d.rsKillPid = null;
   d.rsShellBusy = undefined;
+  d.rsProbeBlind = false;
+  d.rsProbedAt = 0;
   if (!live || !line) return false;
   live.write(clearPrefix(pickShell()) + line + '\r');
   // Базой следующего перезапуска остаётся строка БЕЗ промпта: с ним внутри она потащила бы за
@@ -4666,33 +4692,44 @@ function pidAlive(pid) {
 // Винда отвечает на тот же вопрос через PowerShell: `ps`/`pgrep` там нет, но список процессов с
 // их родителями есть, и он ничем не хуже. PowerShell стоит в самой системе, ставить ничего не
 // нужно. Не ответил — зовущий останется на прежнем пути (печать `/exit`).
+// Потомки оболочки, от старшего к младшему: [{ pid, name }]. Пустой список — «оболочка
+// свободна», ошибка — «спросить не смогли», и путать эти два ответа нельзя: первый разрешает
+// печатать запуск, второй обязан нас остановить.
+//
+// Различаем их по коду возврата, и ЯВНО для каждой системы, а не «числовой код значит ответ».
+// На этом уже обожглись: винда сообщала о сбое своим числовым кодом, он проходил за «потомков
+// нет» — то есть сбой WMI выглядел как свободная оболочка, и строка запуска уехала бы в поле
+// ввода живого агента репликой в разговор.
+//   pgrep: 0 — нашёл, 1 — не нашёл (это ответ), остальное — беда;
+//   PowerShell: 0 — ответил (пусто значит пусто), любой другой код — беда.
 function shellChildren(shellPid, cb) {
-  // «Потомков нет» — это ОТВЕТ, а не сбой: `pgrep` говорит это кодом возврата 1, и путать его с
-  // «не смог спросить» нельзя. В первом случае оболочка свободна, во втором мы про неё не знаем
-  // ничего и обязаны отступить на прежний путь. Сбой запуска команды Node помечает строковым
-  // кодом (ENOENT), обычный ненулевой выход — числовым.
+  const isWin = os.platform() === 'win32';
   const done = (err, out) => {
-    const pids = String(out || '').trim().split(/\s+/).map(Number).filter(Boolean);
-    const cantAsk = err && typeof err.code !== 'number';
-    cb(cantAsk ? err : null, pids);
+    const answered = !err || (!isWin && err.code === 1);
+    if (!answered) { cb(err, []); return; }
+    const list = String(out || '').trim().split('\n').map((line) => {
+      const m = line.trim().match(/^(\d+)\s+(.*)$/);
+      return m ? { pid: Number(m[1]), name: m[2].trim() } : null;
+    }).filter((e) => e && e.pid);
+    cb(null, list);
   };
-  if (os.platform() === 'win32') {
+  if (isWin) {
     // Родителя винда помнит ЧИСЛОМ и не забывает, когда родитель умер, а номера переиспользует
     // куда охотнее юникса. Поэтому «потомок» без второй проверки — это в том числе чужой
     // процесс, чей давно почивший родитель когда-то носил наш номер. Отсекаем по времени: наш
-    // потомок не мог родиться раньше самой оболочки. Ошибку не проглатываем (-ErrorAction Stop
-    // плюс свой код возврата), иначе «не смогли спросить» выглядело бы как «потомков нет».
+    // потомок не мог родиться раньше самой оболочки.
     const q = '$ErrorActionPreference = "Stop"; try {'
       + ` $s = Get-CimInstance Win32_Process -Filter "ProcessId=${Number(shellPid)}";`
       + ` Get-CimInstance Win32_Process -Filter "ParentProcessId=${Number(shellPid)}"`
       + ' | Where-Object { $_.CreationDate -ge $s.CreationDate }'
-      + ' | Sort-Object CreationDate | Select-Object -ExpandProperty ProcessId'
+      + ' | Sort-Object CreationDate | ForEach-Object { "$($_.ProcessId) $($_.Name)" }'
       + ' } catch { exit 3 }';
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', q],
       { windowsHide: true }, done);
     return;
   }
-  execFile('pgrep', ['-P', String(shellPid)], done);
+  // `-l` добавляет имя процесса: по нему выбирается, кого из потомков закрывать.
+  execFile('pgrep', ['-l', '-P', String(shellPid)], done);
 }
 
 // Закрыть агента. На маке и линуксе это вежливая просьба (SIGTERM): процесс закрывается сам и
@@ -4748,12 +4785,21 @@ function restartExit(id, d) {
     // Потомков нет: агент ушёл сам, пока мы собирались. Закрывать некого и печатать нечего —
     // такт увидит свободную оболочку и напечатает в неё запуск.
     if (!pids.length) { restartLog(`вкладка ${id}: оболочка уже свободна — закрывать некого`); return; }
-    // САМЫЙ СВЕЖИЙ потомок, а не первый попавшийся. В оболочке вкладки может висеть и чужое: job,
-    // отправленный человеком в фон, или неприбранный зомби. Номера растут, так что последний —
-    // это почти всегда тот агент, которого мы и просили закрыть; на винде тот же порядок даёт
-    // сортировка по времени рождения. Ошибиться всё равно можно, и именно поэтому запуск
-    // печатается не по смерти ЭТОГО номера, а только когда оболочка опустела совсем.
-    const pid = pids[pids.length - 1];
+    // Кого именно закрывать. В оболочке вкладки может висеть и чужое: job, отправленный человеком
+    // в фон, приостановленный Ctrl+Z процесс, неприбранный зомби. Поэтому сначала ищем потомка ПО
+    // ИМЕНИ — тому, которым вкладку запускали, — и только если такого нет, берём самого свежего.
+    // Одного «самого свежего» мало: человек, приостановивший агента и запустивший что-то другое,
+    // получил бы закрытым как раз своё.
+    //
+    // Имя может и не совпасть (алиас `claude-my` виден в процессах как `claude`), поэтому это
+    // предпочтение, а не условие. Ошибиться всё равно можно, и именно поэтому запуск печатается
+    // не по смерти ЭТОГО номера, а только когда оболочка опустела совсем.
+    const wanted = [launcherOf(d.launchCmd), d.runCmd]
+      .map((w) => path.basename(String(w || '')).toLowerCase().replace(/\.exe$/, ''))
+      .filter(Boolean);
+    const named = pids.filter((e) => wanted.includes(e.name.toLowerCase().replace(/\.exe$/, '')));
+    const pick = (named.length ? named : pids)[(named.length ? named : pids).length - 1];
+    const pid = pick.pid;
     // Пид оболочки не трогаем ни при каких обстоятельствах: это убьёт вкладку целиком. Своим
     // потомком процесс быть не может, так что проверка лишняя — но цена ошибки здесь такая, что
     // пусть лучше будет лишняя.
