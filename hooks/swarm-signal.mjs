@@ -94,7 +94,7 @@ function callsUser(matcher, text) {
   return closingKind(matcher, text) === 'ask';
 }
 
-// event JSON → one of: busy | idle | perm | ask | bgw (see detector.js HOOK_TOKEN). null
+// event JSON → one of: busy | idle | perm | ask | box | bgw (see detector.js HOOK_TOKEN). null
 // => emit nothing (event we don't care about).
 function tokenFor(p, matcher) {
   switch (p && p.hook_event_name) {
@@ -120,7 +120,12 @@ function tokenFor(p, matcher) {
     case 'PreToolUse':
       // The AskUserQuestion tool is a real question; any other tool starting just
       // reasserts «working».
-      return p.tool_name === 'AskUserQuestion' ? 'ask' : 'busy';
+      //
+      // 'box', а не 'ask': вкладка ждёт человека одинаково, а вот РАМКА на экране есть только
+      // здесь. Зов прозой (Stop с фразой) печати не мешает — в строку ввода можно набирать что
+      // угодно, — а в открытую коробку Enter уходит выбором варианта. Разделять их приходится
+      // здесь, потому что дальше это уже не отличить ничем: статус у них один.
+      return p.tool_name === 'AskUserQuestion' ? 'box' : 'busy';
     // A tool finished => work is flowing again. Without this the app stays «ждёт»
     // after you approve a permission, until the NEXT tool starts or the turn ends.
     case 'PostToolUse': return 'busy';

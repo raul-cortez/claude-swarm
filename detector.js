@@ -123,8 +123,11 @@ function asksNow(d, snap) {
   return askFingerprint(snap) !== d.askAnswered;
 }
 
-function mkWaiting(snap) {
-  return { status: 'waiting', detail: 'ждёт ответа', kind: inferWaitingKind(snap) };
+// `box` — есть ли на экране РАМКА, а не только «вкладка ждёт человека». Зовущий прозой агент
+// оставляет строку ввода свободной, открытая рамка съедает Enter выбором варианта, и различает
+// их только вызывающий: сюда приходят оба случая (см. decide).
+function mkWaiting(snap, box) {
+  return { status: 'waiting', detail: 'ждёт ответа', kind: inferWaitingKind(snap), box: !!box };
 }
 
 // --- ход кончился, а работа нет ------------------------------------------------
@@ -158,14 +161,14 @@ function decide(d, now, snap) {
   // only flips to "ждёт ответа" once the stream finally falls silent for ACTIVE_MS
   // (a long, ragged lag). Uses the strong prompt-chrome markers, safe mid-stream.
   if (RE_WAIT_NOW.test(snap)) {
-    return mkWaiting(snap);
+    return mkWaiting(snap, true);
   }
   // Active output => working. Only peek for the looser prompt once it goes quiet.
   if (now - d.lastDataAt < ACTIVE_MS) {
     return { status: 'running', detail: 'работает' };
   }
   if (RE_WAIT.test(snap)) {
-    return mkWaiting(snap);
+    return mkWaiting(snap, true);
   }
   // Quiet, but the spinner (with its live timer) is still on screen => the agent
   // is thinking / running a tool, not idle. Keep it "работает" instead of the
@@ -176,8 +179,9 @@ function decide(d, now, snap) {
   // Quiet, no spinner, no prompt box — but the agent signed off asking for input.
   // asksNow excludes «Сейчас от тебя: ничего, жди …» (not a real request) and the call
   // you already answered (its line just stays on screen).
+  // Рамки нет — есть строка на экране. Печатать в такую вкладку можно.
   if (asksNow(d, snap)) {
-    return mkWaiting(snap);
+    return mkWaiting(snap, false);
   }
   // Не зовёт, но и не закончил: «ничего, жду замер стенда». Читаем ПОСЛЕДНЮЮ фразу на
   // экране (tailFrom в ask-phrases.js), поэтому строка прошлого хода сюда не попадает —
@@ -205,6 +209,9 @@ function applyTranscript(d, v) {
     : null;
 }
 
+// Рамки здесь нет и быть не может: файл видит СОБЫТИЯ, а рамка — состояние экрана. Вкладку,
+// которая ждёт по стенограмме, распознаём как зов прозой, и это верно — открытую рамку в этом
+// же тике добавит либо хук, либо скрёб (см. decideFromTranscript).
 function fromTranscript(tr) {
   const kind = tr.status === 'waiting' ? (tr.kind || 'question') : null;
   const out = { status: tr.status, detail: detailFor(tr.status, tr.bg), kind, from: 'transcript' };
@@ -216,7 +223,7 @@ function fromTranscript(tr) {
 // decides, except for the one thing it can't see — a live prompt box. That box is
 // also the only place «разрешение» can come from when hooks are off.
 function decideFromTranscript(tr, snap) {
-  if (hasPromptBox(snap)) return mkWaiting(snap);
+  if (hasPromptBox(snap)) return mkWaiting(snap, true);
   return fromTranscript(tr);
 }
 
@@ -252,14 +259,18 @@ function applyLatch(d, now, snap, raw) {
       // never soften, so the label doesn't flip-flop.
       d.chromeGoneSince = 0;
       if (raw.status === 'waiting' && raw.kind === 'permission') d.waitKind = 'permission';
-      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind };
+      // Рамка НА ЭКРАНЕ — этого достаточно, что бы ни говорил источник вердикта: печатать
+      // в неё нельзя. Как и kind, признак только заостряется: зов, поверх которого нарисовали
+      // рамку, — это уже рамка.
+      d.waitBox = true;
+      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: true };
     }
     // No box. The agent visibly resumed => release, even though a «Сейчас от тебя»
     // line may still sit in the rows below (it's scrollback text, not live UI, and
     // it lingers for seconds after you answer — it used to pin the tab to «ждёт»
     // while the spinner was already turning). Evidence: the spinner, or fresh output
     // right after you pressed Enter.
-    const release = () => { d.waitLatched = false; d.waitKind = null; d.chromeGoneSince = 0; };
+    const release = () => { d.waitLatched = false; d.waitKind = null; d.waitBox = false; d.chromeGoneSince = 0; };
     // The transcript saying «работает» is the strongest release there is: a new
     // tool_use / tool_result was WRITTEN after the question, so work really resumed.
     // No debounce needed — this isn't a repaint, it's an event.
@@ -275,7 +286,10 @@ function applyLatch(d, now, snap, raw) {
     // until the agent's spinner finally showed up.
     if (raw.from !== 'transcript' && asksNow(d, snap)) {
       d.chromeGoneSince = 0;
-      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind };
+      // Рамки на экране уже нет — держит нас строка зова, а в неё печатать можно. Это
+      // единственное место, где признак рамки СНИМАЕТСЯ, не снимая самого ожидания.
+      d.waitBox = false;
+      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: false };
     }
     // Chrome gone but no spinner: a repaint blip, or a trivial prompt just answered
     // and the turn ended. Debounce — release only after it's been gone a while, so a
@@ -286,12 +300,14 @@ function applyLatch(d, now, snap, raw) {
       release();
       return raw;
     }
-    return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind };
+    // Мебель пропала на один тик — по ней и судим: держим последнее, что знали, включая рамку.
+    // Считать её тут исчезнувшей значило бы разрешать печать на каждом мигании перерисовки.
+    return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: !!d.waitBox };
   }
   if (raw.status === 'waiting') {
     // A NEW prompt: forget the previous Enter, or its hint window would let a
     // one-tick repaint of this fresh prompt release the latch with no debounce.
-    d.waitLatched = true; d.waitKind = raw.kind; d.chromeGoneSince = 0; d.answeredAt = 0;
+    d.waitLatched = true; d.waitKind = raw.kind; d.waitBox = !!raw.box; d.chromeGoneSince = 0; d.answeredAt = 0;
   }
   return raw;
 }
@@ -306,11 +322,16 @@ function applyLatch(d, now, snap, raw) {
 // чтобы человек не успел решить, что вкладка врёт. См. arbitrate.
 const HOOK_STALE_MS = 8000;
 
+// `box` — рамка на экране, в которую уходит Enter: запрос разрешения и коробка с вариантами.
+// Отдельно от статуса, потому что «ждёт» бывает и без рамки: агент кончил ход зовом прозой, и
+// строка ввода при этом свободна. Снаружи (перезапуск, который печатает в живую вкладку) разница
+// решающая, а по статусу и kind она неразличима — оба «ждёт: вопрос».
 const HOOK_TOKEN = {
   busy: { status: 'running' },              // UserPromptSubmit / a normal tool starts
   idle: { status: 'ready' },                // Stop — the turn ended
-  perm: { status: 'waiting', kind: 'permission' }, // PermissionRequest
-  ask:  { status: 'waiting', kind: 'question' },    // AskUserQuestion tool
+  perm: { status: 'waiting', kind: 'permission', box: true }, // PermissionRequest
+  box:  { status: 'waiting', kind: 'question', box: true },   // AskUserQuestion tool
+  ask:  { status: 'waiting', kind: 'question' },    // Stop с зовом, Notification agent_needs_input
   // Stop, но ход закончился словами «ничего, жду замер стенда»: от человека ничего, а
   // работа идёт. Отдельный токен, а не busy, чтобы подпись и мост знали, что это фон.
   bgw:  { status: 'running', bg: true },
@@ -323,7 +344,7 @@ function applyHook(d, token, now) {
   const m = HOOK_TOKEN[token];
   if (!m) return false;
   d.hooksActive = true;
-  d.hookState = { status: m.status, kind: m.kind || null, bg: !!m.bg, at: now };
+  d.hookState = { status: m.status, kind: m.kind || null, bg: !!m.bg, box: !!m.box, at: now };
   return true;
 }
 
@@ -343,7 +364,7 @@ function arbitrate(d, now, snap) {
   const tr = d.trState;
   const trNewer = !!tr && tr.at > (hs.at || 0);
   if (hs.status === 'waiting' && !trNewer) {
-    return { status: 'waiting', detail: 'ждёт ответа', kind: hs.kind || null };
+    return { status: 'waiting', detail: 'ждёт ответа', kind: hs.kind || null, box: !!hs.box };
   }
   if (trNewer) return fromTranscript(tr);
   // Канал хуков ослеп, а агент работает. «Готов» держится на последнем услышанном сигнале
@@ -366,8 +387,9 @@ function arbitrate(d, now, snap) {
       && !d.scrolledBack && RE_RUNNING.test(snap)) {
     return { status: 'running', detail: 'работает' };
   }
+  // Зов прозой: строка на экране, рамки нет — печатать в такую вкладку можно.
   if (!tr && hs.status === 'ready' && asksNow(d, snap)) {
-    return { status: 'waiting', detail: 'ждёт ответа', kind: 'question' };
+    return { status: 'waiting', detail: 'ждёт ответа', kind: 'question', box: false };
   }
   // Та же дырка, что и у зова прозой, только с другим ответом: ход закончился словами
   // «ничего, жду замер». Хук про это знает сам (токен bgw), но у вкладки, поднятой до
@@ -376,7 +398,8 @@ function arbitrate(d, now, snap) {
   if (!tr && hs.status === 'ready' && waitsForWork(snap)) {
     return mkBackground();
   }
-  const out = { status: hs.status, detail: detailFor(hs.status, hs.bg), kind: hs.status === 'waiting' ? hs.kind : null };
+  const out = { status: hs.status, detail: detailFor(hs.status, hs.bg), kind: hs.status === 'waiting' ? hs.kind : null,
+    box: hs.status === 'waiting' && !!hs.box };
   if (hs.bg && hs.status === 'running') out.bg = true;
   return out;
 }

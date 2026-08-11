@@ -248,6 +248,28 @@ test('hook: applyHook flips hooksActive and records status/kind', () => {
   assert.strictEqual(d.hookState.kind, 'permission');
 });
 
+// «Ждёт» бывает двух совсем разных сортов, и статус у них один. Рамка (запрос разрешения,
+// коробка с вариантами) съедает Enter выбором варианта; зов прозой оставляет строку ввода
+// свободной. Различает их только сам Клод — отдельным событием, — а нужно это тому, кто печатает
+// в живую вкладку сам: перезапуску. Спутай их в любую сторону, и получится либо ответ за
+// человека, либо вкладки сворма, не перезапускаемые никогда: они прощаются зовом всегда.
+test('hook: рамка и зов прозой — разные ожидания', () => {
+  for (const token of ['perm', 'box']) {
+    const d = mkD();
+    D.applyHook(d, token, NOW);
+    assert.strictEqual(d.hookState.box, true, `${token} — рамка`);
+    assert.strictEqual(D.arbitrate(d, NOW, '').box, true, `${token} доезжает до вердикта`);
+  }
+  const d = mkD();
+  D.applyHook(d, 'ask', NOW);
+  assert.strictEqual(d.hookState.status, 'waiting', 'зов — тоже ожидание');
+  assert.strictEqual(d.hookState.box, false, 'но рамки за ним нет');
+  assert.strictEqual(D.arbitrate(d, NOW, '').box, false);
+  // И признак снимается вместе с ожиданием, а не живёт своей жизнью.
+  D.applyHook(d, 'busy', NOW + 1);
+  assert.strictEqual(D.arbitrate(d, NOW + 1, '').box, false);
+});
+
 test('hook: an unknown token is ignored', () => {
   const d = mkD();
   assert.strictEqual(D.applyHook(d, 'bogus', NOW), false);

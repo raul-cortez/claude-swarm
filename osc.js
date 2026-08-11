@@ -8,7 +8,7 @@
 //   ESC ] 777 ; notify ; swarm ; <token> ; <sessionId> ; <transcriptPath> BEL
 // It's a valid OSC 777 «notify» (title = "swarm") so Claude Code's terminalSequence
 // allowlist passes it; xterm doesn't implement 777 and just consumes it, so nothing
-// shows. token ∈ busy | idle | perm | ask | bgw — the hook normalises Claude's events to
+// shows. token ∈ busy | idle | perm | ask | box | bgw — the hook normalises Claude's events to
 // these; their meaning (→ status/kind) lives in detector.js. sessionId is optional
 // and only a cross-check: routing is by pty, since each agent has its own.
 //

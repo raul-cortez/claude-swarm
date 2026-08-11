@@ -82,8 +82,20 @@ test('Notification idle_prompt → idle', () => {
   assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).token, 'idle');
 });
 
-test('PreToolUse AskUserQuestion → ask', () => {
-  assert.strictEqual(runHook({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 'q' }).token, 'ask');
+// Коробка с вариантами — не то же самое, что зов прозой, хотя вкладка в обоих случаях ждёт
+// человека. Разница видна только здесь: дальше у них один статус и один kind. А цена её —
+// перезапуск, который печатает в живую вкладку: в строку ввода можно, в открытую коробку Enter
+// уходит выбором варианта, то есть ответом за человека.
+test('PreToolUse AskUserQuestion → box (рамка, а не просто ожидание)', () => {
+  assert.strictEqual(runHook({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 'q' }).token, 'box');
+});
+
+// А это — обычное прощание вкладки сворма, и рамки за ним нет никакой. Токен тот же «ждёт», но
+// печатать в такую вкладку можно, иначе перезапуск не сработал бы у неё ни разу.
+test('Stop с зовом и Notification agent_needs_input — ожидание без рамки', () => {
+  const p = { hook_event_name: 'Stop', session_id: 's1', last_assistant_message: 'Сейчас от тебя: путь к схеме' };
+  assert.strictEqual(runHook(p).token, 'ask');
+  assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'agent_needs_input' }).token, 'ask');
 });
 
 test('PreToolUse for a normal tool → busy', () => {
@@ -251,7 +263,9 @@ test('a denied picker reports «работает», not «ждёт»', () => {
   const denied = H.outputFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' }, m, ['s1']);
   assert.match(denied.terminalSequence, /;busy;/);
   const allowed = H.outputFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's2' }, m, ['s1']);
-  assert.match(allowed.terminalSequence, /;ask;/);   // не запретили — коробка и есть вопрос
+  // Не запретили — коробка откроется, и это ожидание С РАМКОЙ: печатать в такую вкладку нельзя
+  // ничем, включая перезапуск. Запретили — рамки не будет вовсе, поэтому там и «работает».
+  assert.match(allowed.terminalSequence, /;box;/);
 });
 
 test('the deny reason names the marker, in the user\'s own wording', () => {
