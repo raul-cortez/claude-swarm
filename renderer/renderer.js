@@ -866,9 +866,8 @@ function openLaunchMenu(anchor, cwd, toggle) {
     for (const e of entries) {
       const b = document.createElement('button');
       b.className = 'cmd-item';
-      b.innerHTML = '<span class="cmd-name"></span><span class="cmd-hint"></span>';
+      b.innerHTML = '<span class="cmd-name"></span>';
       b.querySelector('.cmd-name').textContent = e.label;
-      b.querySelector('.cmd-hint').textContent = e.hint;
       b.addEventListener('click', () => close(e.val));
       launchMenu.appendChild(b);
     }
@@ -904,9 +903,9 @@ function openLaunchMenu(anchor, cwd, toggle) {
 async function createSessionFrom(anchor, cwd, toggle) {
   let pick = await openLaunchMenu(anchor, cwd || '', toggle);
   if (!pick) return;
-  // «Другой подпиской», а их несколько — спрашиваем тем же окном выбора, каким встречаем первую
-  // вкладку новой папки. Под кнопкой список команд не разворачиваем: при десяти вбитых подписках
-  // это была бы простыня на месте выбора из двух.
+  // «С выбором режима» — то же окно выбора, каким встречаем первую вкладку новой папки. Под
+  // кнопкой список команд не разворачиваем никогда: при десяти вбитых подписках это была бы
+  // простыня на месте выбора из двух.
   if (pick.pick) {
     pick = await pickAgent();
     if (!pick) return;                 // передумал в окне выбора — вкладки не будет

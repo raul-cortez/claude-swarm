@@ -71,15 +71,15 @@ const menu = (over) => L.launchMenuEntries({
   mode: 'agent', pick: 'folder', list: TWO, inherited: { cmd: 'claude', flags: '' }, ...over,
 });
 
-test('две команды — ровно два пункта, названные действием', () => {
+test('две команды — ровно два пункта, названные действием и без подсказок', () => {
   const e = menu();
   assert.strictEqual(e.length, 2);
   assert.strictEqual(e[0].label, L.NEW_TAB);
-  assert.strictEqual(e[0].hint, 'claude — как в этой папке');
   assert.deepStrictEqual(e[0].val, {});               // пустые опции = сегодняшнее поведение
   assert.strictEqual(e[1].label, L.OTHER_SUB);
-  assert.strictEqual(e[1].hint, 'claude-my');         // какая именно — подсказкой справа
-  assert.deepStrictEqual(e[1].val, { cmd: 'claude-my', flags: '' });
+  assert.deepStrictEqual(e[1].val, { pick: true });   // рендерер откроет окно выбора
+  // Имён команд под кнопкой нет ни у одного пункта — только действие.
+  assert.ok(e.every((x) => x.hint === undefined));
 });
 
 test('подписок хоть десять — пунктов всё равно два, список уходит в окно выбора', () => {
@@ -103,27 +103,20 @@ test('меню не всплывает там, где спросят и без �
   assert.strictEqual(menu({ list: [] }), null);
 });
 
-test('наследованная команда не двоится, флаги входят в ярлык', () => {
+test('чем бы папка ни была занята, пункты одни и те же', () => {
+  // Ни флаги наследованной команды, ни чистый терминал в папке меню не меняют: выбор режима
+  // целиком уехал в окно, а под кнопкой всегда одна и та же пара.
   const list = [{ cmd: 'claude', flags: '--model opus' }, { cmd: 'claude-my', flags: '' }];
-  const e = L.launchMenuEntries({
-    mode: 'agent', pick: 'folder', list, inherited: { cmd: 'claude', flags: '--model opus' },
-  });
-  assert.strictEqual(e.length, 2);
-  assert.strictEqual(e[0].hint, 'claude --model opus — как в этой папке');
-  assert.strictEqual(e[1].hint, 'claude-my');
-  // Тот же лончер с ДРУГИМИ флагами — отдельный запуск, поэтому «другая» уже не одна.
-  const e2 = L.launchMenuEntries({
-    mode: 'agent', pick: 'folder', list, inherited: { cmd: 'claude', flags: '' },
-  });
-  assert.deepStrictEqual(e2.map((x) => x.label), [L.NEW_TAB, L.OTHER_SUB]);
-  assert.deepStrictEqual(e2[1].val, { pick: true });
-});
-
-test('в папке с чистым терминалом наследование подписано по-человечески', () => {
-  const e = menu({ inherited: { blank: true } });
-  assert.strictEqual(e[0].hint, L.BLANK_LABEL + ' — как в этой папке');
-  assert.strictEqual(e[1].label, L.OTHER_SUB);
-  assert.deepStrictEqual(e[1].val, { pick: true });   // обе команды «другие» — окно выбора
+  for (const inherited of [
+    { cmd: 'claude', flags: '--model opus' },
+    { cmd: 'claude', flags: '' },
+    { blank: true },
+  ]) {
+    const e = L.launchMenuEntries({ mode: 'agent', pick: 'folder', list, inherited });
+    assert.deepStrictEqual(e.map((x) => x.label), [L.NEW_TAB, L.OTHER_SUB]);
+    assert.deepStrictEqual(e[0].val, {});
+    assert.deepStrictEqual(e[1].val, { pick: true });
+  }
 });
 
 (async () => {
