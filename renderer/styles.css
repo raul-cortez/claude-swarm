@@ -602,24 +602,51 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 }
 .set-tab:hover { color: var(--text); }
 .set-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* Отступы в панели заданы ОДНИМ местом — gap контейнера, а не полями каждого элемента.
+   Пока каждая строчка отбивалась своим margin, панели разъезжались: одна и та же по смыслу
+   пара «галка + галка» стояла в «Запуске» на 14 пикселях, а во «Вкладках» на 7, и починить
+   это можно было только вручную и заново после каждой правки.
+   Два уровня и всё:
+     .set-panel — расстояние между настройками;
+     .set-field — расстояние между меткой и её управлением. */
+.set-panel { display: flex; flex-direction: column; gap: 14px; }
 .set-panel.hidden { display: none; }
-.set-check {
+.set-intro { margin: 0 0 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.set-intro b { color: var(--text); }
+/* Одна настройка: управление слева, вопросик прижат к правому краю панели. */
+.set-row { display: flex; align-items: flex-start; gap: 8px; }
+.set-row > .set-check, .set-row > .set-radio { flex: 1 1 auto; min-width: 0; }
+.set-check, .set-radio {
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  padding: 7px 0;
+  padding: 0;
   cursor: pointer;
   color: var(--text);
   font-size: 13px;
   line-height: 1.4;
 }
-.set-check input { margin-top: 1px; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
-.set-check-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
-.set-sub { margin-left: 6px; padding-left: 16px; border-left: 1px solid var(--border); }
+.set-check-tx { flex: 1 1 auto; min-width: 0; }
+.set-check input, .set-radio input {
+  margin: 1px 0 0; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer;
+}
+.set-sub {
+  display: flex; flex-direction: column; gap: 14px;
+  margin-left: 6px; padding-left: 16px; border-left: 1px solid var(--border);
+}
 .set-sub.disabled { opacity: 0.4; pointer-events: none; }
 .set-mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.set-field { display: block; margin-bottom: 16px; }
-.set-label { display: block; color: var(--text); font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.set-field { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+/* Обёртки, которые панель показывает и прячет целиком, — такие же колонки с тем же шагом,
+   иначе их содержимое стояло бы вплотную, а соседи — нет. */
+#set-agent-block, #set-tg-extra { display: flex; flex-direction: column; gap: 14px; }
+#set-tg-prompt-box, #set-voice-manual-box { display: flex; flex-direction: column; gap: 8px; }
+/* И общий запрет на показ спрятанного: `display` из правил выше перебивает атрибут hidden,
+   а на нём держится половина панели «Телеграм» — шаги мастера, поля и блок диагностики. */
+.modal.settings [hidden] { display: none !important; }
+/* Метка настройки и её вопросик — одной строкой, вопросик у правого края. */
+.set-head { display: flex; align-items: center; gap: 8px; }
+.set-label { display: block; color: var(--text); font-size: 12px; font-weight: 600; margin: 0; }
 .set-input {
   width: 100%;
   box-sizing: border-box;
@@ -641,9 +668,6 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .set-input.set-prose {
   font-family: inherit; font-size: 12px; line-height: 1.45;
 }
-/* Разделитель между смысловыми блоками одной панели: без него подписи «слипаются» и
-   панель читается как одна простыня. */
-.set-label-gap { margin-top: 18px; }
 /* Кнопки в строке умеют переноситься: на узком окне и на Windows (там шрифт шире) три
    кнопки в ряд не влезали и уезжали за край. */
 .tg-row-wrap { flex-wrap: wrap; row-gap: 7px; }
@@ -653,9 +677,46 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
   color: var(--muted); font-size: 11px; white-space: nowrap;
 }
 .set-inline .set-select { width: auto; min-width: 0; flex: 0 1 auto; font-size: 12px; }
-.set-hint { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 5px; }
-/* A hint that sits ABOVE its field (the «why» line before the phrase box). */
-.set-hint-top { margin-top: 0; margin-bottom: 7px; }
+/* .set-hint — ТЕКСТ ПОДСКАЗКИ, а не элемент панели: он лежит в разметке спрятанным и
+   всплывает в .set-tip по клику на вопросик. Видимые пояснения и живые статусы — это
+   .set-note, и разделение здесь жёсткое: пока обе роли носили один класс, любая правка
+   стилей подсказок дёргала и надписи, которые обязаны быть на виду. */
+.set-hint { display: none; }
+.set-note { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.set-note b { color: var(--text); }
+/* Вопросик. Размер — с прицелом на попадание мышью, а не на красоту: 18px это меньше
+   рекомендуемых 24, но строка настройки высотой 20, и кружок крупнее ломал бы её ритм. */
+.set-q {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  margin-left: auto;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.set-q:hover { border-color: var(--accent); color: var(--accent); }
+/* Всплывающая подсказка: тот же вид, что у меню команд и веток — в приложении одна манера
+   всплывающих окон. Ширина уже: это проза, а не список, и длинная строка в ней не читается. */
+.set-tip {
+  position: fixed;
+  z-index: 70;
+  max-width: 320px;
+  padding: 9px 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.set-tip.hidden { display: none; }
+.set-tip b { color: var(--text); }
 /* Ползунок с числом рядом (порог самоперезапуска). Число ведущее, а не подпись: настройка
    читается против полоски контекста на вкладке, где стоит ровно это же число. Отсюда его
    размер и моноширинность — чтобы при перетаскивании оно не дёргало ползунок шириной. */
@@ -673,13 +734,13 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .set-range-num.off { color: var(--muted); font-weight: 400; }
 /* «Will this phrase call me?» — a sample line plus the verdict, in the status colors
    the tab itself would take, so the answer reads the same way the dashboard does. */
-.ask-test { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.ask-test { display: flex; align-items: center; gap: 8px; }
 .ask-test .set-input { flex: 1; min-width: 0; }
 .ask-verdict { font-size: 11px; white-space: nowrap; color: var(--muted); }
 .ask-verdict.is-call { color: var(--waiting); }
 .ask-verdict.is-none { color: var(--ready); }
 .ask-verdict.is-work { color: var(--run); }
-.set-hint code, .set-preview code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--text); }
+.set-tip code, .set-note code, .set-preview code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--text); }
 .set-preview {
   color: var(--muted);
   font-size: 12px;
@@ -692,7 +753,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .set-field.hidden, #set-agent-block.hidden { display: none; }
 
 /* Launch panel — editable list of agents (cmd + flags + delete). */
-.agent-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.agent-list { display: flex; flex-direction: column; gap: 8px; }
 .agent-row { display: grid; grid-template-columns: 1fr 1.75rem; gap: 8px; align-items: center; }
 .agent-row .set-input { margin: 0; }
 .agent-del {
@@ -701,7 +762,6 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
   border-radius: 6px; height: 34px; font-size: 16px; line-height: 1;
 }
 .agent-del:hover { border-color: var(--danger); color: var(--danger); }
-.agent-add { margin-top: 2px; }
 
 /* Radio rows in the launch panel — reuse .set-check spacing. */
 .set-radio { display: flex; align-items: flex-start; gap: 9px; padding: 6px 0; cursor: pointer; color: var(--text); font-size: 13px; line-height: 1.4; }
@@ -719,7 +779,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .pick-item.pick-blank:hover, .pick-item.pick-blank:focus { border-color: var(--accent); color: var(--accent); }
 
 /* Keybinds panel — label + chord capture button + reset. */
-.kb-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.kb-list { display: flex; flex-direction: column; gap: 8px; }
 .kb-row {
   display: grid;
   grid-template-columns: 1fr minmax(7.5rem, auto) 1.75rem;
@@ -1165,8 +1225,9 @@ body.presence-phone .presence-pill.is-on {
   border-radius: 6px; padding: 7px 12px; font-size: 12px;
 }
 .set-check-btn:hover { border-color: var(--accent); color: var(--accent); }
-/* Кнопка-действие внутри поля настроек: не в ряду с вводом, а отдельной строкой. */
-.set-field-btn { display: block; margin-top: 8px; }
+/* Кнопка-действие внутри поля: сама по себе, а не в ряду с вводом. Ширину не тянет —
+   поле теперь flex-колонка, и без этого кнопка растянулась бы во всю панель. */
+.set-field > .set-check-btn { align-self: flex-start; }
 .set-check-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .upd-go-btn { margin-top: 10px; border-color: var(--accent); color: var(--accent); }
 
@@ -1224,9 +1285,6 @@ body.presence-phone .presence-pill.is-on {
 .tg-check.is-bad  .tg-check-mark { color: var(--danger); }
 .tg-check.is-warn .tg-check-mark { color: var(--waiting); }
 
-/* Visible break in the "Вид" panel: its intro promises terminal styling, but the
-   pult toggle is about window structure. */
-.set-sep { height: 1px; margin: 4px 0 2px; background: var(--border); }
 
 /* --- pult: queue strip over the stage ------------------------------------- */
 #pult-strip {

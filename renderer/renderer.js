@@ -621,10 +621,18 @@ let launchList = loadLaunchList();
 let launch = launchList[0];
 let launchMode = localStorage.getItem('swarm.launchMode') || 'agent';
 let launchPick = localStorage.getItem('swarm.launchPick') || 'folder';
-let resumeSessions = localStorage.getItem('swarm.resumeSessions') === '1';
-// Opt-in «precise status via Claude hooks» (Settings → Запуск). Off by default;
-// main gets it on startup + on save and (de)activates the hooks in swarm-settings.
-let hooksEnabled = localStorage.getItem('swarm.hooks') === '1';
+// Восстановление разговоров и хуки Клода — БЕЗ настройки, всегда включены. Обе были галками, и
+// обе по умолчанию выключенными, то есть из коробки человек жил на худшем варианте, не зная об
+// этом. Выключать их незачем:
+//   • хуки прописываются только в наш собственный файл настроек, который вкладка получает
+//     флагом --settings; глобальный ~/.claude/settings.json не трогается никогда. Без них
+//     разрешение и вопрос отличаются угадыванием по экрану;
+//   • вкладка, вернувшаяся после перезапуска приложения без своего разговора, — это потерянная
+//     работа, а не чистый лист: разговор всё равно лежит на диске.
+// Старые ключи в localStorage не читаем сознательно: у того, кто их когда-то выключил, они
+// остались бы выключенными навсегда, а спросить об этом уже негде.
+const resumeSessions = true;
+const hooksEnabled = true;
 // «Своя строка статуса Swarm» (Settings → Запуск). ON unless turned off: полоска контекста и
 // цифры /usage приходят только оттуда, и новый человек об этом не догадается. Но она
 // перебивает СВОЮ строку статуса пользователя, а там может быть что угодно важное — поэтому
@@ -720,10 +728,6 @@ function saveLaunchPick() {
 
 function saveLaunchMode() {
   localStorage.setItem('swarm.launchMode', launchMode);
-}
-
-function saveResumeSessions() {
-  localStorage.setItem('swarm.resumeSessions', resumeSessions ? '1' : '0');
 }
 
 // Ярлык команды и решение «разворачивать ли меню на +» живут в launch-word.js: свой модуль,
@@ -1315,221 +1319,279 @@ function showSettingsModal(tab) {
 
       <div class="set-body">
       <div class="set-panel" data-panel="launch">
-        <div class="modal-msg">Что запускать в <b>новых</b> вкладках. Уже открытые сессии не трогаем.</div>
+        <p class="set-intro">Что запускать в <b>новых</b> вкладках. Уже открытые сессии не трогаем.</p>
         <div class="set-field">
-          <label class="set-radio">
-            <input type="radio" name="set-mode" value="agent" />
-            <span class="set-check-tx">Запускать агента автоматически</span>
-          </label>
-          <label class="set-radio">
-            <input type="radio" name="set-mode" value="blank" />
-            <span class="set-check-tx">Всегда открывать чистый терминал
-              <span class="set-check-sub">без команды — вводите её сами</span></span>
-          </label>
+          <div class="set-row">
+            <label class="set-radio">
+              <input type="radio" name="set-mode" value="agent" />
+              <span class="set-check-tx">Запускать агента автоматически</span>
+            </label>
+          </div>
+          <div class="set-row">
+            <label class="set-radio">
+              <input type="radio" name="set-mode" value="blank" />
+              <span class="set-check-tx">Всегда открывать чистый терминал</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Вкладка открывается пустой оболочкой, без команды — вводите её сами.</span>
+          </div>
         </div>
         <div id="set-agent-block">
           <div class="set-field">
-            <span class="set-label">Команды</span>
+            <div class="set-head">
+              <span class="set-label">Команды</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Команда вместе с флагами: <code>claude</code>,
+                <code>cld --model sonnet</code>, <code>claude-glm --dangerously-skip-permissions</code>…
+                При нескольких спросим при открытии вкладки — в списке будет и «Чистый терминал».</span>
+            </div>
             <div class="agent-list" id="set-agent-list"></div>
             <button type="button" class="set-check-btn agent-add" id="set-agent-add">+ Добавить команду</button>
-            <span class="set-hint">Команда вместе с флагами: <code>claude</code>, <code>cld --model sonnet</code>,
-              <code>claude-glm --dangerously-skip-permissions</code>… При нескольких — спросим при открытии
-              вкладки (в списке будет и «Чистый терминал»).</span>
           </div>
           <div class="set-field" id="set-pick-field">
-            <span class="set-label">Если команд несколько</span>
-            <label class="set-radio">
-              <input type="radio" name="set-pick" value="always" />
-              <span class="set-check-tx">Спрашивать каждый раз при открытии вкладки</span>
-            </label>
-            <label class="set-radio">
-              <input type="radio" name="set-pick" value="folder" />
-              <span class="set-check-tx">Как в первой вкладке папки
-                <span class="set-check-sub">спросим только на первой вкладке папки, дальше — тот же выбор;
-                  открыть другой командой можно через «+» на папке</span></span>
-            </label>
+            <div class="set-head"><span class="set-label">Если команд несколько</span></div>
+            <div class="set-row">
+              <label class="set-radio">
+                <input type="radio" name="set-pick" value="always" />
+                <span class="set-check-tx">Спрашивать каждый раз при открытии вкладки</span>
+              </label>
+            </div>
+            <div class="set-row">
+              <label class="set-radio">
+                <input type="radio" name="set-pick" value="folder" />
+                <span class="set-check-tx">Как в первой вкладке папки</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Спросим только на первой вкладке папки, дальше — тот же выбор.
+                Открыть папку другой командой можно через «+» на ней.</span>
+            </div>
           </div>
-          <label class="set-check">
-            <input type="checkbox" id="set-resume" />
-            <span class="set-check-tx">Восстанавливать диалоги после перезапуска
-              <span class="set-check-sub">каждая вкладка вернётся в свой диалог; сейчас только Claude Code</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-hooks" />
-            <span class="set-check-tx">Точный статус через хуки Claude
-              <span class="set-check-sub">различает разрешение и вопрос точно, без угадывания по экрану; только Claude Code, применяется к новым вкладкам</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-statusline" />
-            <span class="set-check-tx">Своя строка статуса Swarm
-              <span class="set-check-sub">заменяет вашу строку статуса Клода в вкладках приложения — из неё берутся
-                полоска контекста на карточке и цифры в <span class="set-mono">/usage</span>. Снимите, если в вашей
-                строке есть что-то своё: она останется как есть, но полоска и расход пропадут. Только Claude Code,
-                применяется к новым вкладкам</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-agent-rules" />
-            <span class="set-check-tx">Просить агента звать вас
-              <span class="set-check-sub">на запуске просим спрашивать через выбор вариантов, а вопрос в тексте
-                заканчивать фразой ниже — иначе вкладка не отличит «ждёт ответа» от «готов»; только Claude Code,
-                применяется к новым вкладкам</span></span>
-          </label>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-statusline" />
+              <span class="set-check-tx">Своя строка статуса Swarm</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Заменяет вашу строку статуса Клода в вкладках приложения — из неё
+              берутся полоска контекста на карточке и цифры в <span class="set-mono">/usage</span>. Снимите,
+              если в вашей строке есть что-то своё: она останется как есть, но полоска и расход пропадут.
+              Только Claude Code, применяется к новым вкладкам.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-agent-rules" />
+              <span class="set-check-tx">Просить агента звать вас</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>На запуске просим спрашивать через выбор вариантов, а вопрос в тексте
+              заканчивать фразой из списка ниже — иначе вкладка не отличит «ждёт ответа» от «готов».
+              Только Claude Code, применяется к новым вкладкам.</span>
+          </div>
           <div class="set-field">
-            <span class="set-label">Вкладки стартуют в режиме</span>
-            <span class="set-hint set-hint-top">Режим разрешений, с которым открывается вкладка — и новая, и
-              восстановленная после перезапуска. Дальше он переключается как обычно: Shift+Tab за компьютером
-              или кнопкой из телеги. С телефона это единственный способ задать его заранее — Shift+Tab там не
-              нажать. Свой <span class="set-mono">--permission-mode</span> во флагах агента побеждает.</span>
+            <div class="set-head">
+              <span class="set-label">Вкладки стартуют в режиме</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Режим разрешений, с которым открывается вкладка — и новая, и
+                восстановленная после перезапуска. Дальше он переключается как обычно: Shift+Tab за компьютером
+                или кнопкой из телеги. С телефона это единственный способ задать его заранее — Shift+Tab там не
+                нажать. Свой <span class="set-mono">--permission-mode</span> во флагах агента побеждает.</span>
+            </div>
             <select class="set-input set-select" id="set-perm-mode"></select>
-            <span class="set-hint" id="set-perm-mode-note"></span>
+            <span class="set-note" id="set-perm-mode-note"></span>
           </div>
-          <label class="set-check">
-            <input type="checkbox" id="set-restart" />
-            <span class="set-check-tx">Перезапускать агента, когда контекст заполнится
-              <span class="set-check-sub">агент тупеет задолго до конца окна, а сам себя почистить не может. Спросим
-                его, можно ли сейчас: он зафиксирует эстафету — записку себе будущему — и мы стартуем свежую сессию
-                в этой же вкладке, с её задачей. Решает он: пока стоит на середине работы, отвечает «не сейчас».
-                Нужна наша строка статуса — из неё берётся заполнение контекста</span></span>
-          </label>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-restart" />
+              <span class="set-check-tx">Перезапускать агента, когда контекст заполнится</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Агент тупеет задолго до конца окна, а сам себя почистить не может.
+              Спросим его, можно ли сейчас: он зафиксирует эстафету — записку себе будущему — и мы стартуем
+              свежую сессию в этой же вкладке, с её задачей. Решает он: пока стоит на середине работы, отвечает
+              «не сейчас». Нужна наша строка статуса — из неё берётся заполнение контекста.</span>
+          </div>
           <div class="set-sub">
             <div class="set-field">
-              <span class="set-label">Спрашивать при заполнении</span>
-              <span class="set-hint set-hint-top">То же число, что на полоске контекста вкладки. Считается от точки
-                автосжатия: на 100% Клод сжимает разговор сам, так что позже нас уже поздно.</span>
+              <div class="set-head">
+                <span class="set-label">Спрашивать при заполнении</span>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>То же число, что на полоске контекста вкладки. Считается от точки
+                  автосжатия: на 100% Клод сжимает разговор сам, так что позже нас уже поздно. Левее — чаще
+                  перезапуски, агент свежее. Правее — реже, одна сессия живёт дольше.</span>
+              </div>
               <div class="set-range">
                 <input type="range" class="set-range-input" id="set-restart-pct" />
                 <span class="set-range-num" id="set-restart-pct-num"></span>
               </div>
-              <span class="set-hint">Левее — чаще перезапуски, агент свежее. Правее — реже, одна сессия живёт
-                дольше.</span>
             </div>
           </div>
           <div class="set-field">
-            <span class="set-label">Фразы, которыми агент зовёт вас</span>
-            <span class="set-hint set-hint-top">Клод заканчивает ход одинаково и когда сделал дело, и когда задал
-              вопрос. Отличить их можно только по тому, как агент заканчивает сообщение — поэтому вкладка
-              становится <span class="set-mono">ждёт ответа</span> по фразе. Работает и с хуками, и без.</span>
+            <div class="set-head">
+              <span class="set-label">Фразы, которыми агент зовёт вас</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Клод заканчивает ход одинаково и когда сделал дело, и когда задал
+                вопрос. Отличить их можно только по тому, как агент заканчивает сообщение — поэтому вкладка
+                становится <span class="set-mono">ждёт ответа</span> по фразе.
+                <br>По одной в строке. Просить агента об этом не нужно — галочка выше делает это сама, той же
+                фразой. Ищем в любом месте сообщения, регистр не важен; «…: ничего, жди» вопросом не считаем.
+                До 12 фраз, до 60 символов каждая. Пусто — вернётся фраза по умолчанию.</span>
+            </div>
             <textarea class="set-input" id="set-ask-phrases" rows="3" spellcheck="false"
                       autocapitalize="off" autocorrect="off"
                       placeholder="Сейчас от тебя"></textarea>
-            <span class="set-hint">По одной в строке. Просить агента об этом не нужно — галочка выше делает это
-              сама, той же фразой. Ищем в любом месте сообщения, регистр не важен; «…: ничего, жди» вопросом
-              не считаем. До 12 фраз, до 60 символов каждая. Пусто — вернётся фраза по умолчанию.</span>
-            <button type="button" class="set-check-btn set-field-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
-            <span class="set-hint" id="set-copy-rule-note">Если работаете с агентом и вне сворма — вставьте это
-              правило в свой <code>CLAUDE.md</code>: там оно действует всегда, а не только в наших вкладках.</span>
             <div class="ask-test">
               <input class="set-input" type="text" id="set-ask-test" spellcheck="false"
                      autocapitalize="off" autocorrect="off"
                      placeholder="Проверить: вставьте конец сообщения агента" />
               <span class="ask-verdict" id="set-ask-verdict"></span>
             </div>
+            <button type="button" class="set-check-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
+            <span class="set-note" id="set-copy-rule-note">Если работаете с агентом и вне сворма — вставьте это
+              правило в свой <code>CLAUDE.md</code>: там оно действует всегда, а не только в наших вкладках.</span>
           </div>
         </div>
       </div>
 
       <div class="set-panel" data-panel="notify">
-        <div class="modal-msg">Пинг, когда фоновая вкладка закончила или ждёт ответа.</div>
-        <label class="set-check">
-          <input type="checkbox" id="set-notify-on" />
-          <span class="set-check-tx"><b>Уведомления включены</b></span>
-        </label>
+        <p class="set-intro">Пинг, когда фоновая вкладка закончила или ждёт ответа.</p>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-notify-on" />
+            <span class="set-check-tx"><b>Уведомления включены</b></span>
+          </label>
+        </div>
         <div class="set-sub" id="set-notify-sub">
-          <label class="set-check">
-            <input type="checkbox" id="set-notify-ready" />
-            <span class="set-check-tx">Когда агент закончил — <span class="set-mono">готов</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-notify-waiting" />
-            <span class="set-check-tx">Когда агент ждёт ответа — <span class="set-mono">ждёт ответа</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-notify-active" />
-            <span class="set-check-tx">Пинговать и активную вкладку в фокусе
-              <span class="set-check-sub">обычно её не трогаем — вы и так на неё смотрите</span></span>
-          </label>
-          <label class="set-check">
-            <input type="checkbox" id="set-notify-sound" />
-            <span class="set-check-tx">Звук</span>
-          </label>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-notify-ready" />
+              <span class="set-check-tx">Когда агент закончил — <span class="set-mono">готов</span></span>
+            </label>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-notify-waiting" />
+              <span class="set-check-tx">Когда агент ждёт ответа — <span class="set-mono">ждёт ответа</span></span>
+            </label>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-notify-active" />
+              <span class="set-check-tx">Пинговать и активную вкладку в фокусе</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Обычно её не трогаем — вы и так на неё смотрите.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-notify-sound" />
+              <span class="set-check-tx">Звук</span>
+            </label>
+          </div>
         </div>
       </div>
 
       <div class="set-panel" data-panel="appearance">
-        <div class="modal-msg">Оформление терминала. Применяется ко <b>всем</b> вкладкам сразу.</div>
+        <p class="set-intro">Оформление терминала. Применяется ко <b>всем</b> вкладкам сразу.</p>
         <div class="set-field">
-          <span class="set-label">Тема</span>
+          <div class="set-head"><span class="set-label">Тема</span></div>
           <div class="theme-grid" id="set-theme-grid"></div>
         </div>
         <div class="set-field">
-          <span class="set-label">Размер шрифта</span>
+          <div class="set-head"><span class="set-label">Размер шрифта</span></div>
           <div class="set-stepper">
             <button type="button" class="step-btn" id="set-font-dec" aria-label="меньше">−</button>
             <span class="step-val" id="set-font-val"></span>
             <button type="button" class="step-btn" id="set-font-inc" aria-label="больше">+</button>
           </div>
         </div>
-        <label class="set-field">
-          <span class="set-label">Шрифт</span>
-          <select class="set-input" id="set-font-family"></select>
-        </label>
-        <label class="set-field">
-          <span class="set-label">Курсор</span>
-          <select class="set-input" id="set-cursor-style"></select>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-cursor-blink" />
-          <span class="set-check-tx">Мигание курсора</span>
-        </label>
         <div class="set-field">
-          <span class="set-label">Предпросмотр</span>
+          <div class="set-head"><span class="set-label">Шрифт</span></div>
+          <select class="set-input" id="set-font-family"></select>
+        </div>
+        <div class="set-field">
+          <div class="set-head"><span class="set-label">Курсор</span></div>
+          <select class="set-input" id="set-cursor-style"></select>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-cursor-blink" />
+            <span class="set-check-tx">Мигание курсора</span>
+          </label>
+        </div>
+        <div class="set-field">
+          <div class="set-head"><span class="set-label">Предпросмотр</span></div>
           <div class="term-preview" id="set-term-preview"></div>
         </div>
-        <div class="set-sep"></div>
-        <label class="set-check">
-          <input type="checkbox" id="set-pult" />
-          <span class="set-check-tx">Показывать пульт
-            <span class="set-check-sub">вкладка ⌘0 с очередью агентов, которые ждут ответа</span></span>
-        </label>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-pult" />
+            <span class="set-check-tx">Показывать пульт</span>
+          </label>
+          <button type="button" class="set-q" aria-label="подсказка">?</button>
+          <span class="set-hint" hidden>Вкладка ⌘0 с очередью агентов, которые ждут ответа.</span>
+        </div>
       </div>
 
       <div class="set-panel" data-panel="tabs">
-        <div class="modal-msg">Как выглядят карточки сессий. Заголовок показывается всегда.</div>
-        <label class="set-field">
-          <span class="set-label">Раскладка</span>
-          <select class="set-input" id="set-layout"></select>
-          <span class="set-hint">Где живут вкладки — списком слева или карточками сверху (⌘L).</span>
-        </label>
-        <label class="set-field">
-          <span class="set-label">Плотность</span>
-          <select class="set-input" id="set-tab-density"></select>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-dot" />
-          <span class="set-check-tx">Точка статуса</span>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-ctx" />
-          <span class="set-check-tx">Метр контекста<span class="set-check-sub">тонкая полоска заполнения контекста Claude по нижнему краю карточки</span></span>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-sub" />
-          <span class="set-check-tx">Подпись статуса<span class="set-check-sub">готов / работает / завис?</span></span>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-fill" />
-          <span class="set-check-tx">Заливка карточки по статусу</span>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-agents" />
-          <span class="set-check-tx">Значок сабагентов<span class="set-check-sub">иконка + число работающих сабагентов (число если их больше 1)</span></span>
-        </label>
-        <label class="set-check">
-          <input type="checkbox" id="set-tab-agent-orange" />
-          <span class="set-check-tx">Оранжевый, пока работает сабагент<span class="set-check-sub">держать статус «работает», пока в фоне крутятся сабагенты</span></span>
-        </label>
+        <p class="set-intro">Как выглядят карточки сессий. Заголовок показывается всегда.</p>
         <div class="set-field">
-          <span class="set-label">Размер заголовка</span>
+          <div class="set-head">
+            <span class="set-label">Раскладка</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Где живут вкладки — списком слева или карточками сверху (⌘L).</span>
+          </div>
+          <select class="set-input" id="set-layout"></select>
+        </div>
+        <div class="set-field">
+          <div class="set-head"><span class="set-label">Плотность</span></div>
+          <select class="set-input" id="set-tab-density"></select>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-dot" />
+            <span class="set-check-tx">Точка статуса</span>
+          </label>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-ctx" />
+            <span class="set-check-tx">Метр контекста</span>
+          </label>
+          <button type="button" class="set-q" aria-label="подсказка">?</button>
+          <span class="set-hint" hidden>Тонкая полоска заполнения контекста Claude по нижнему краю карточки.</span>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-sub" />
+            <span class="set-check-tx">Подпись статуса</span>
+          </label>
+          <button type="button" class="set-q" aria-label="подсказка">?</button>
+          <span class="set-hint" hidden>Словами под заголовком: готов / работает / завис?</span>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-fill" />
+            <span class="set-check-tx">Заливка карточки по статусу</span>
+          </label>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-agents" />
+            <span class="set-check-tx">Значок сабагентов</span>
+          </label>
+          <button type="button" class="set-q" aria-label="подсказка">?</button>
+          <span class="set-hint" hidden>Иконка и число работающих сабагентов — число показываем, если их больше одного.</span>
+        </div>
+        <div class="set-row">
+          <label class="set-check">
+            <input type="checkbox" id="set-tab-agent-orange" />
+            <span class="set-check-tx">Оранжевый, пока работает сабагент</span>
+          </label>
+          <button type="button" class="set-q" aria-label="подсказка">?</button>
+          <span class="set-hint" hidden>Держать статус «работает», пока в фоне крутятся сабагенты.</span>
+        </div>
+        <div class="set-field">
+          <div class="set-head"><span class="set-label">Размер заголовка</span></div>
           <div class="set-stepper">
             <button type="button" class="step-btn" id="set-tab-label-dec" aria-label="меньше">−</button>
             <span class="step-val" id="set-tab-label-val"></span>
@@ -1537,7 +1599,7 @@ function showSettingsModal(tab) {
           </div>
         </div>
         <div class="set-field">
-          <span class="set-label">Размер подписи</span>
+          <div class="set-head"><span class="set-label">Размер подписи</span></div>
           <div class="set-stepper">
             <button type="button" class="step-btn" id="set-tab-sub-dec" aria-label="меньше">−</button>
             <span class="step-val" id="set-tab-sub-val"></span>
@@ -1545,26 +1607,36 @@ function showSettingsModal(tab) {
           </div>
         </div>
         <div class="set-field">
-          <span class="set-label">Цвета статусов</span>
+          <div class="set-head">
+            <span class="set-label">Цвета статусов</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Эти же цвета красят статус-бар и кнопки — палитра в приложении одна.</span>
+          </div>
           <div class="color-row" id="set-tab-colors"></div>
           <button type="button" class="set-check-btn" id="set-tab-colors-reset">Сбросить цвета</button>
-          <span class="set-hint">Эти же цвета красят статус-бар и кнопки — палитра в приложении одна.</span>
         </div>
         <div class="set-field">
-          <span class="set-label">Предпросмотр</span>
+          <div class="set-head"><span class="set-label">Предпросмотр</span></div>
           <div class="tab-preview" id="set-tab-preview"></div>
         </div>
       </div>
 
       <div class="set-panel" data-panel="keys">
-        <div class="modal-msg">Модификатор «Слово» / «До края» + ←→ / Backspace / Delete. Перенос строки — отдельный хоткей.</div>
-        <div class="kb-list" id="set-kb-list"></div>
-        <span class="set-hint">Стрелки перемещают, Backspace/Delete удаляют в выбранной единице (слово или до края строки).</span>
+        <p class="set-intro">Модификатор «Слово» / «До края» + ←→ / Backspace / Delete. Перенос строки — отдельный хоткей.</p>
+        <div class="set-field">
+          <div class="set-head">
+            <span class="set-label">Сочетания</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Стрелки перемещают, Backspace/Delete удаляют — в выбранной единице:
+              слово или до края строки.</span>
+          </div>
+          <div class="kb-list" id="set-kb-list"></div>
+        </div>
       </div>
 
       <div class="set-panel" data-panel="telegram">
-        <div class="modal-msg">Свой бот, чтобы отвечать агентам с телефона. Токен хранится
-          зашифрованным на этом компьютере и наружу не уходит.</div>
+        <p class="set-intro">Свой бот, чтобы отвечать агентам с телефона. Токен хранится
+          зашифрованным на этом компьютере и наружу не уходит.</p>
 
         <div class="tg-step">
           <div class="tg-step-head">
@@ -1573,7 +1645,7 @@ function showSettingsModal(tab) {
             <span class="tg-step-mark" id="set-tg-mark1"></span>
           </div>
           <div class="tg-step-body">
-            <span class="set-hint set-hint-top">Откройте <a class="tg-link" id="set-tg-bf" href="#">@BotFather</a>,
+            <span class="set-note">Откройте <a class="tg-link" id="set-tg-bf" href="#">@BotFather</a>,
               отправьте ему <span class="set-mono">/newbot</span> и придумайте имя. В ответ он
               пришлёт строку вида <span class="set-mono">1234567890:AA…</span> — вставьте её сюда.
               Бот — это аккаунт в Телеграме, а не программа на сервере: размещать и платить нечего.</span>
@@ -1593,7 +1665,7 @@ function showSettingsModal(tab) {
             <span class="tg-step-mark" id="set-tg-mark2"></span>
           </div>
           <div class="tg-step-body">
-            <span class="set-hint set-hint-top" id="set-tg-step2-why">В Телеграме: создайте группу
+            <span class="set-note" id="set-tg-step2-why">В Телеграме: создайте группу
               (можно одному), зайдите в её настройки и включите <b>«Темы»</b>. Каждая вкладка
               получит там свою тему — иначе на телефоне агентов не различить.
               <br>Потом нажмите «Привязать группу»: появится QR и код. QR добавляет бота в
@@ -1604,7 +1676,7 @@ function showSettingsModal(tab) {
               <div class="tg-pair-side">
                 <div class="tg-code" id="set-tg-code"></div>
                 <a class="tg-link" id="set-tg-link" href="#" target="_blank" rel="noreferrer">добавить бота в группу</a>
-                <div class="set-hint" id="set-tg-ttl"></div>
+                <div class="set-note" id="set-tg-ttl"></div>
               </div>
             </div>
             <ul class="tg-checks" id="set-tg-checks" hidden></ul>
@@ -1627,7 +1699,7 @@ function showSettingsModal(tab) {
             <div class="tg-row tg-row-wrap">
               <button type="button" class="set-check-btn" id="set-tg-reconnect" hidden>Подключить заново</button>
             </div>
-            <span class="set-hint set-hint-top">Пишете в тему — попадаете в её агента; его вопросы и
+            <span class="set-note">Пишете в тему — попадаете в её агента; его вопросы и
               итоги приходят туда же. Закрыли вкладку — её тема исчезает из группы, и наоборот:
               переименовали тему в телеге — вкладка переименуется на компьютере.
               <br>Запрос разрешения приходит <b>кнопками с вариантами самого Клода</b>: нажали —
@@ -1644,79 +1716,105 @@ function showSettingsModal(tab) {
           </div>
         </div>
 
-        <div class="set-field" id="set-tg-extra" hidden>
-          <span class="set-label">Насколько подробно отвечать в телегу</span>
-          <span class="set-hint set-hint-top">Это просьба агенту, а не обрезка его ответа: мост
-            подставляет её к первому сообщению из телеги, дальше идёт короткая метка
-            <span class="set-mono">[тлг]</span>.</span>
-          <label class="set-radio">
-            <input type="radio" name="tg-detail" id="set-tg-detail-short" />
-            <span class="set-check-tx">Кратко
-              <span class="set-check-sub">по-телефонному: без длинных блоков кода и путей, суть в паре фраз</span></span>
-          </label>
-          <label class="set-radio">
-            <input type="radio" name="tg-detail" id="set-tg-detail-full" />
-            <span class="set-check-tx">Полностью
-              <span class="set-check-sub">как за компьютером; длинный ответ придёт несколькими сообщениями</span></span>
-          </label>
-          <div class="tg-row tg-row-wrap">
-            <button type="button" class="set-check-btn" id="set-tg-prompt-toggle">Своя формулировка</button>
-          </div>
-          <div id="set-tg-prompt-box" hidden>
-            <span class="set-hint set-hint-top">Заменяет обе заготовки. Пусто — вернётся та, что
-              выбрана выше.</span>
-            <textarea class="set-input set-prose" id="set-tg-prompt" rows="2" spellcheck="false"></textarea>
-          </div>
-
-          <span class="set-label set-label-gap">Голосовые сообщения</span>
-          <span class="set-hint set-hint-top">Можно надиктовать задачу голосом. Распознаётся
-            <b>на этом компьютере</b> — запись никуда не отправляется. Для этого нужна модель
-            распознавания: её нет в приложении, поэтому кнопка скачает её один раз. Не нужны
-            голосовые — просто не нажимайте, ничего не скачается.</span>
-          <div class="tg-row tg-row-wrap">
-            <label class="set-inline">Качество
-              <select class="set-input set-select" id="set-voice-model"></select>
-            </label>
-            <button type="button" class="set-check-btn" id="set-voice-install">Включить голосовые</button>
-            <button type="button" class="set-check-btn" id="set-voice-cancel" hidden>Отменить</button>
-            <button type="button" class="set-check-btn danger" id="set-voice-remove" hidden>Удалить</button>
-          </div>
-          <div class="upd-progress" id="set-voice-progress" hidden><div class="upd-bar" id="set-voice-bar"></div></div>
-          <div class="tg-state" id="set-voice-note"></div>
-          <div class="tg-row tg-row-wrap">
-            <button type="button" class="set-check-btn" id="set-voice-manual">Уже есть whisper.cpp</button>
-          </div>
-          <div id="set-voice-manual-box" hidden>
-            <span class="set-hint set-hint-top" id="set-tg-voice-hint"></span>
-            <div class="tg-row">
-              <input class="set-input" type="text" id="set-tg-wbin" spellcheck="false"
-                     placeholder="путь к whisper-cli (пусто — искать в PATH)" />
+        <div id="set-tg-extra" hidden>
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Насколько подробно отвечать в телегу</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Это просьба агенту, а не обрезка его ответа: мост
+                подставляет её к первому сообщению из телеги, дальше идёт короткая метка
+                <span class="set-mono">[тлг]</span>.</span>
             </div>
-            <div class="tg-row">
-              <input class="set-input" type="text" id="set-tg-wmodel" spellcheck="false"
-                     placeholder="путь к модели ggml-*.bin" />
+            <div class="set-row">
+              <label class="set-radio">
+                <input type="radio" name="tg-detail" id="set-tg-detail-short" />
+                <span class="set-check-tx">Кратко</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>По-телефонному: без длинных блоков кода и путей, суть в паре фраз.</span>
+            </div>
+            <div class="set-row">
+              <label class="set-radio">
+                <input type="radio" name="tg-detail" id="set-tg-detail-full" />
+                <span class="set-check-tx">Полностью</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Как за компьютером; длинный ответ придёт несколькими сообщениями.</span>
+            </div>
+            <div class="tg-row tg-row-wrap">
+              <button type="button" class="set-check-btn" id="set-tg-prompt-toggle">Своя формулировка</button>
+            </div>
+            <div id="set-tg-prompt-box" hidden>
+              <span class="set-note">Заменяет обе заготовки. Пусто — вернётся та, что выбрана выше.</span>
+              <textarea class="set-input set-prose" id="set-tg-prompt" rows="2" spellcheck="false"></textarea>
             </div>
           </div>
 
-          <span class="set-label set-label-gap">Когда писать в телегу</span>
-          <span class="set-hint set-hint-top">Сам мост пишет, пока вы «за телефоном» — это
-            иконка в правом нижнем углу или команда боту <span class="set-mono">/phone</span>.
-            За компом он молчит: вкладки перед вами. Ответы на ваши сообщения и команды
-            приходят всегда, где бы вы ни были.</span>
-          <label class="set-check">
-            <input type="checkbox" id="set-tg-awake" />
-            <span class="set-check-tx">Не давать компьютеру засыпать, пока вас нет
-              <span class="set-check-sub">со спящей машиной отвечать некому: агенты живут здесь, а не на сервере. Держит бодрым только в положении «за телефоном» — пока вы рядом, сон вам не мешает</span></span>
-          </label>
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Голосовые сообщения</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Можно надиктовать задачу голосом. Распознаётся
+                <b>на этом компьютере</b> — запись никуда не отправляется. Для этого нужна модель
+                распознавания: её нет в приложении, поэтому кнопка скачает её один раз. Не нужны
+                голосовые — просто не нажимайте, ничего не скачается.</span>
+            </div>
+            <div class="tg-row tg-row-wrap">
+              <label class="set-inline">Качество
+                <select class="set-input set-select" id="set-voice-model"></select>
+              </label>
+              <button type="button" class="set-check-btn" id="set-voice-install">Включить голосовые</button>
+              <button type="button" class="set-check-btn" id="set-voice-cancel" hidden>Отменить</button>
+              <button type="button" class="set-check-btn danger" id="set-voice-remove" hidden>Удалить</button>
+            </div>
+            <div class="upd-progress" id="set-voice-progress" hidden><div class="upd-bar" id="set-voice-bar"></div></div>
+            <div class="tg-state" id="set-voice-note"></div>
+            <div class="tg-row tg-row-wrap">
+              <button type="button" class="set-check-btn" id="set-voice-manual">Уже есть whisper.cpp</button>
+            </div>
+            <div id="set-voice-manual-box" hidden>
+              <span class="set-note" id="set-tg-voice-hint"></span>
+              <div class="tg-row">
+                <input class="set-input" type="text" id="set-tg-wbin" spellcheck="false"
+                       placeholder="путь к whisper-cli (пусто — искать в PATH)" />
+              </div>
+              <div class="tg-row">
+                <input class="set-input" type="text" id="set-tg-wmodel" spellcheck="false"
+                       placeholder="путь к модели ggml-*.bin" />
+              </div>
+            </div>
+          </div>
 
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Когда писать в телегу</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Сам мост пишет, пока вы «за телефоном» — это
+                иконка в правом нижнем углу или команда боту <span class="set-mono">/phone</span>.
+                За компом он молчит: вкладки перед вами. Ответы на ваши сообщения и команды
+                приходят всегда, где бы вы ни были.</span>
+            </div>
+            <div class="set-row">
+              <label class="set-check">
+                <input type="checkbox" id="set-tg-awake" />
+                <span class="set-check-tx">Не давать компьютеру засыпать, пока вас нет</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Со спящей машиной отвечать некому: агенты живут здесь, а не на
+                сервере. Держит бодрым только в положении «за телефоном» — пока вы рядом, сон вам не мешает.</span>
+            </div>
+          </div>
         </div>
 
         <div class="set-field" id="set-tg-trouble" hidden>
-          <span class="set-label">Если что-то не так</span>
-          <span class="set-hint set-hint-top">Мост пишет журнал: кто что прислал, куда ушло и
-            почему. Пригодится, чтобы разобраться или отправить разработчику.
-            <br>«Отвязать группу» оставляет бота подключённым — можно привязать другую.
-            «Удалить токен» стирает бота с этого компьютера целиком.</span>
+          <div class="set-head">
+            <span class="set-label">Если что-то не так</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Мост пишет журнал: кто что прислал, куда ушло и
+              почему. Пригодится, чтобы разобраться или отправить разработчику.
+              <br>«Отвязать группу» оставляет бота подключённым — можно привязать другую.
+              «Удалить токен» стирает бота с этого компьютера целиком.</span>
+          </div>
           <div class="tg-row tg-row-wrap">
             <button type="button" class="set-check-btn" id="set-tg-log">Показать журнал моста</button>
             <button type="button" class="set-check-btn" id="set-tg-unpair" hidden>Отвязать группу</button>
@@ -1726,10 +1824,14 @@ function showSettingsModal(tab) {
       </div>
 
       <div class="set-panel" data-panel="updates">
-        <div class="modal-msg">Версия: <b class="upd-cur">…</b> · in-place ok ✓</div>
-        <button class="set-check-btn upd-check">Проверить обновления</button>
-        <button class="set-check-btn upd-go-btn" hidden type="button"></button>
-        <div class="set-hint upd-status"></div>
+        <p class="set-intro">Версия: <b class="upd-cur">…</b> · in-place ok ✓</p>
+        <div class="set-field">
+          <div class="tg-row tg-row-wrap">
+            <button class="set-check-btn upd-check">Проверить обновления</button>
+            <button class="set-check-btn upd-go-btn" hidden type="button"></button>
+          </div>
+          <div class="set-note upd-status"></div>
+        </div>
       </div>
       </div>
 
@@ -1741,13 +1843,39 @@ function showSettingsModal(tab) {
   document.body.appendChild(overlay);
 
   // Launch panel wiring: mode (agent/blank) + an editable list of commands.
+  // Подсказки по пунктам не висят под ними простынёй, а лежат рядом спрятанными: их
+  // показывает вопросик. Панель тогда читается списком настроек, а не текстом — а объяснение
+  // никуда не делось и открывается там, где на него смотрят.
+  //
+  // Текст берём из соседнего спрятанного `.set-hint`, а не из атрибута: в подсказках есть
+  // разметка (code, перенос, моно), и в атрибуте она превратилась бы в экранированную кашу.
+  const tipEl = document.createElement('div');
+  tipEl.className = 'set-tip hidden';
+  overlay.appendChild(tipEl);
+  let tipFor = null;                       // вопросик, чья подсказка открыта сейчас
+  const closeTip = () => { tipEl.classList.add('hidden'); tipFor = null; };
+  // Подсказка висит НАД панелью и координатами прибита к вопросику, так что прокрутка увезла
+  // бы её от хозяина: закрываем.
+  overlay.querySelector('.set-body').addEventListener('scroll', () => { if (tipFor) closeTip(); });
+  overlay.addEventListener('click', (e) => {
+    if (e.target.closest('.set-tip')) return;   // читают/выделяют текст — не мешаем
+    const q = e.target.closest('.set-q');
+    if (!q) { if (tipFor) closeTip(); return; }
+    // Вопросик стоит внутри строки с меткой: без этого клик по нему щёлкал бы галочкой.
+    e.preventDefault();
+    e.stopPropagation();
+    if (tipFor === q) { closeTip(); return; }   // повторный клик закрывает
+    const hint = q.nextElementSibling;
+    if (!hint || !hint.classList.contains('set-hint')) return;
+    tipEl.innerHTML = hint.innerHTML;
+    tipEl.classList.remove('hidden');
+    placeMenuUnder(tipEl, q);
+    tipFor = q;
+  });
+
   const agentBlockEl = overlay.querySelector('#set-agent-block');
   const agentListEl = overlay.querySelector('#set-agent-list');
   const pickFieldEl = overlay.querySelector('#set-pick-field');
-  const resumeI = overlay.querySelector('#set-resume');
-  resumeI.checked = resumeSessions;
-  const hooksI = overlay.querySelector('#set-hooks');
-  hooksI.checked = hooksEnabled;
   const slI = overlay.querySelector('#set-statusline');
   slI.checked = statuslineEnabled;
   const rulesI = overlay.querySelector('#set-agent-rules');
@@ -2595,13 +2723,6 @@ function showSettingsModal(tab) {
     saveLaunchMode();
     launchPick = overlay.querySelector('input[name="set-pick"]:checked')?.value || 'folder';
     saveLaunchPick();
-    resumeSessions = resumeI.checked;
-    saveResumeSessions();
-    if (hooksI.checked !== hooksEnabled) {
-      hooksEnabled = hooksI.checked;
-      localStorage.setItem('swarm.hooks', hooksEnabled ? '1' : '0');
-      window.swarm.setHooksEnabled(hooksEnabled); // main rewrites swarm-settings.json
-    }
     if (slI.checked !== statuslineEnabled) {
       statuslineEnabled = slI.checked;
       localStorage.setItem('swarm.statusline', statuslineEnabled ? '1' : '0');
@@ -2659,6 +2780,9 @@ function showSettingsModal(tab) {
   };
   const onKey = (ev) => {
     if (kbCapturing) return; // capture handler owns Escape / keys
+    // Открытая подсказка забирает первый Escape себе: иначе он закрывал бы всю панель, и
+    // человек, заглянувший в объяснение, терял бы несохранённые правки.
+    if (ev.key === 'Escape' && tipFor) { ev.preventDefault(); closeTip(); return; }
     if (ev.key === 'Escape') { ev.preventDefault(); close(); }
     else if (ev.key === 'Enter') { ev.preventDefault(); save(); }
   };
