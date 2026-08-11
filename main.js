@@ -101,6 +101,31 @@ let allowClose = false;
 const sessions = new Map();
 let nextId = 1;
 
+// Единственная дорога в pty вкладки. Прямой `p.write(…)` мимо неё запрещён, и это не про
+// аккуратность: один синхронный write на несколько килобайт вешает ВСЁ приложение целиком,
+// намертво и со 100% CPU — мы упираемся в очередь псевдотерминала, которую сами же и должны
+// вычитать, но не можем, потому что стоим внутри своего write. Почему так и почему лечится
+// только порциями — в pty-write.js; разбор живого случая — BUG-pty-deadlock-2026-08-11.md.
+//
+// Заодно очередь держит ПОРЯДОК печатей: Enter, который телеграм отправляет отдельно от текста,
+// клавиша из-под руки, Escape по кнопке из чата — всё это иначе встряло бы между порциями, то
+// есть в середину чужого слова.
+const ptyWrite = require('./pty-write');
+const ptyOut = ptyWrite.makeWriter({
+  write: (id, chunk) => {
+    const p = sessions.get(id);
+    if (!p) return false;                 // вкладку закрыли, пока хвост ждал такта
+    p.write(chunk);
+    return true;
+  },
+});
+
+// Напечатать вкладке текст, как будто его набрали на клавиатуре. false — печатать было некуда
+// или нечего; вызывающие на это смотрят, чтобы не считать напечатанным то, чего нет.
+function ptyType(id, data) {
+  return ptyOut.push(String(id), data);
+}
+
 // The command each new tab runs once its shell is ready. Change to '' if you
 // want a plain shell (and type `claude` yourself), or to something like
 // 'claude --resume' later.
@@ -347,6 +372,19 @@ function safeSend(channel, payload) {
   }
 }
 
+// Время во всех наших метках — МЕСТНОЕ, а не UTC, и это не косметика. Писали мы UTC, а `ls`,
+// `stat` и часы на стене показывают местное: при разборе инцидента расхождение в часовой пояс
+// уводит в сторону — «это вообще та же минута?» — и половина сверки уходит на арифметику (см.
+// BUG-pty-deadlock-2026-08-11.md, где семь часов разницы сбивали с толку). Внутри приложения было
+// хуже: рендерер клеймит свои строки местным временем (nowClock в renderer.js), и в одном списке
+// ошибки главного процесса стояли на семь часов раньше событий, которые их вызвали.
+function logStamp(ms, withMs) {
+  const t = ms == null ? new Date() : new Date(ms);
+  const p = (n, w) => String(n).padStart(w || 2, '0');
+  const hms = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+  return withMs ? `${hms}.${p(t.getMilliseconds(), 3)}` : hms;
+}
+
 // --- error reporting: surface main-process failures in the in-app log viewer ----
 // A crash in main (pty spawn, git, an IPC handler) otherwise only prints to the
 // terminal we were launched from, which regular users never see. Forward it to the
@@ -354,7 +392,7 @@ function safeSend(channel, payload) {
 // and keep running rather than letting an uncaught error tear the process down.
 function reportMainError(err) {
   const msg = (err && err.stack) || (err && err.message) || String(err);
-  safeSend('app:error', { ts: new Date().toISOString().slice(11, 19), source: 'main', level: 'error', msg });
+  safeSend('app:error', { ts: logStamp(), source: 'main', level: 'error', msg });
 }
 process.on('uncaughtException', reportMainError);
 process.on('unhandledRejection', (reason) => reportMainError(reason));
@@ -773,7 +811,7 @@ function trLog(line) {
     try {
       if (fs.statSync(file).size > TR_LOG_MAX) fs.renameSync(file, file + '.1');
     } catch (_) { /* файла ещё нет */ }
-    fs.appendFileSync(file, new Date().toISOString().slice(11, 23) + ' ' + line + '\n');
+    fs.appendFileSync(file, logStamp(null, true) + ' ' + line + '\n');
   } catch (_) { /* diagnostics must never break the app */ }
 }
 
@@ -1340,7 +1378,7 @@ function logTo(name, line) {
     try {
       if (fs.statSync(file).size > TG_LOG_MAX) fs.renameSync(file, file + '.1');
     } catch (_) { /* файла ещё нет — обычное дело */ }
-    fs.appendFileSync(file, new Date().toISOString().slice(11, 23) + ' ' + line + '\n');
+    fs.appendFileSync(file, logStamp(null, true) + ' ' + line + '\n');
   } catch (_) { /* diagnostics must never break the bridge */ }
 }
 
@@ -1348,13 +1386,13 @@ function tgLog(line) {
   logTo('telegram.log', line);
 }
 
-// Момент времени в том же виде, что и метка строки журнала (UTC, чч:мм:сс). Нужен, чтобы
+// Момент времени в том же виде, что и метка строки журнала (местное, чч:мм:сс). Нужен, чтобы
 // решение «текст этого хода или прошлого» можно было проверить по журналу, а не выводить из
 // кода: без этих двух отметок «прислал старый ответ» и «прислал новый» в журнале выглядели
 // одинаково, и разбор упирался в догадки.
 function tgStamp(ms) {
   const t = Number(ms) || 0;
-  return t ? new Date(t).toISOString().slice(11, 19) : 'никогда';
+  return t ? logStamp(t) : 'никогда';
 }
 
 // What we tell an agent when its input arrives from a phone. Two ready-made wordings
@@ -2294,7 +2332,7 @@ function tgAnswer(id, text) {
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  p.write(body);
+  ptyType(id, body);
   // Запоминаем ДОСЛОВНО напечатанное: по этому тексту стенограмма находит файл вкладки,
   // когда в папке несколько живых разговоров и догадки не срабатывают.
   //
@@ -2304,11 +2342,10 @@ function tgAnswer(id, text) {
   const dd = det.get(id);
   const typed = String(text).replace(/\r\n?/g, '\n');
   if (dd && typed.trim().length >= transcript.INJECTED_MIN) dd.tgLastSent = typed.slice(0, 200);
-  setTimeout(() => {
-    // Вкладка могла умереть за эти миллисекунды — тогда Enter уже некому.
-    const live = sessions.get(id);
-    if (live) { try { live.write(enter); } catch (_) {} }
-  }, TG_ENTER_DELAY_MS);
+  // Вкладка могла умереть за эти миллисекунды — тогда Enter уже некому, и ptyType это сам
+  // увидит. А если текст был длинным и ещё уезжает порциями, Enter встанет за ним в очередь:
+  // отдельным чтением stdin он от этого быть не перестаёт (см. telegram.inputWrites).
+  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
   const d = det.get(id);
   if (d) {
     markAnswered(d, Date.now());
@@ -2936,7 +2973,7 @@ async function tgSwitchMode(id, d, want) {
   for (let i = 0; i < TG_MODE_MAX_STEPS; i++) {
     const p = sessions.get(id);
     if (!p) break;
-    p.write(telegram.BACK_TAB);
+    ptyType(id, telegram.BACK_TAB);
     await new Promise((r) => setTimeout(r, TG_MODE_SETTLE_MS));
     landed = readMode(snapshot(d)) || landed;
     if (landed === want) break;
@@ -3055,7 +3092,7 @@ async function tgOnAction(qa, u, ack, routed) {
     }
     const pending = d.tgPending || '';
     d.tgPending = '';
-    p.write(telegram.ESC);
+    ptyType(tab, telegram.ESC);
     markAnswered(d, Date.now());
     tgLog(`  кнопка «закрыть диалог»: вкладка ${tab}${pending ? ' + отложенный текст' : ''}`);
     if (!pending) { await ack('Закрыл диалог. Теперь можно писать словами.'); return; }
@@ -4399,11 +4436,8 @@ function restartType(id, text) {
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  p.write(body);
-  setTimeout(() => {
-    const live = sessions.get(id);
-    if (live) { try { live.write(enter); } catch (_) {} }
-  }, TG_ENTER_DELAY_MS);
+  ptyType(id, body);
+  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
   return true;
 }
 
@@ -4679,15 +4713,29 @@ setInterval(() => {
 // Разрешение получено. Эстафету, которую агенту некуда было положить, дописываем сами и путь к
 // ней добавляем к промпту: агент писал его до того, как файл появился.
 //
+// Туда же уходит и САМ ПРОМПТ, если он вырос до эстафеты. Промпт мы печатаем в оболочку, и
+// килобайты в псевдотерминале однажды повесили приложение целиком (см. ptyType,
+// BUG-pty-deadlock-2026-08-11.md). Порции этот тупик разомкнули, но длинному промпту в терминале
+// всё равно нечего делать: свежая сессия прочитает его из файла тем же чтением, которым читает
+// записку, а вкладка откроется на агенте, а не на пол-экрана нашего эха.
+//
 // Ярлык разговора заводит рендерер — он его хранит и по нему восстанавливает вкладку, а после
 // перезапуска ярлык обязан стать НОВЫМ: со старым вкладка после релонча сворма вернулась бы в тот
 // самый разбухший разговор, из которого мы ушли.
 function restartGrant(id, d, state) {
-  let prompt = state.prompt || '';
-  if (!state.handoff && state.text) {
-    const saved = restartSaveHandoff(id, d, state.text);
+  let prompt = String(state.prompt || '');
+  let carry = state.handoff ? '' : String(state.text || '');
+  if (!restart.promptFits(prompt)) {
+    restartLog(`вкладка ${id}: промпт длиной ${prompt.length} — уношу его в записку`);
+    // Промпт идёт ПЕРЕД эстафетой: это то, что агент считал главным, и читающий должен увидеть
+    // его первым. Пустая эстафета — обычный случай: длинный промпт ею и был.
+    carry = carry ? `${prompt}\n\n${carry}` : prompt;
+    prompt = restart.PROMPT_CARRIED;
+  }
+  if (carry) {
+    const saved = restartSaveHandoff(id, d, carry);
     if (!saved) { d.rs = { ...restart.initial(), retryAt: Date.now() + restart.RETRY_MS }; return; }
-    prompt = `${prompt}. Эстафета лежит в ${saved} — прочитай её первым делом.`;
+    prompt = restart.handoffPrompt(prompt, saved);
   }
   restartLog(`вкладка ${id}: разрешил перезапуск, эстафета ${state.handoff || 'текстом'}`);
   safeSend('app:restartAgent', { id, prompt });
@@ -4766,7 +4814,11 @@ function restartFire(id, d) {
   // закрывает — молчаливо, если объявлять было нечего.
   tgOnRestartExit(id, d);
   if (!live || !line) return false;
-  live.write(clearPrefix(pickShell()) + line + '\r');
+  // Порциями, а не одним куском: именно здесь приложение и вставало намертво — строка запуска
+  // с эстафетой внутри выросла до килобайтов, и оболочка со своим эхом заперла нас в write.
+  // Потолок на саму эстафету стоит раньше, в restartGrant (restart.promptFits), но полагаться
+  // только на него нельзя: базу строки пишет человек, и её длину мы не выбираем.
+  ptyType(id, clearPrefix(pickShell()) + line + '\r');
   // Базой следующего перезапуска остаётся строка БЕЗ промпта: с ним внутри она потащила бы за
   // собой прошлую задачу. Метки разговора и режим в ней есть, но это не беда: restartLaunchLine
   // снимает их и накладывает заново, иначе режим, схваченный при первом перезапуске, застыл бы
@@ -5085,6 +5137,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // секунды, но если вкладку закрыли между записью и чтением — остались бы висеть в `git status`.
     restartSweepCwd(id, det.get(id));
     sessions.delete(id);
+    ptyOut.drop(id);                    // хвост печати мёртвой вкладке досылать некуда
     safeSend('session:exit', { id, code: exitCode });
   });
 
@@ -5103,9 +5156,8 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   d0.sessionStartAt = Date.now();
   if (cmd) {
     setTimeout(() => {
-      const p = sessions.get(id);
-      if (!p) return;
-      p.write(clearPrefix(shell) + cmd + '\r');
+      // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
+      if (!ptyType(id, clearPrefix(shell) + cmd + '\r')) return;
       // С этой секунды в шелле крутится НАШ запуск (см. scanTabProcesses): чем он развернулся,
       // вкладке знать незачем — она помнит команду, которую выбрал человек.
       d0.launchAt = Date.now();
@@ -5229,8 +5281,10 @@ ipcMain.handle('session:canResumeName', (_e, cwd, name) => {
 
 // --- IPC: keystrokes from the xterm in the renderer --------------------------
 ipcMain.on('session:input', (_event, { id, data }) => {
-  const p = sessions.get(id);
-  if (p) p.write(data);
+  // Нажатие клавиши уезжает синхронно, как раньше, а вставка из буфера — порциями: ваш
+  // многострочный текст в терминале это такой же килобайт в pty, как и строка перезапуска,
+  // и вешал он приложение точно так же. См. ptyType.
+  ptyType(id, data);
   // Your keystrokes echo back + redraw the input box — that's you typing, not the
   // agent working. Grace it so it isn't counted as activity.
   const d = det.get(id);

@@ -549,6 +549,39 @@ test('пустой промпт — просто команда, без пуст
   assert.strictEqual(R.launchLine('', 'что-то', 'posix'), '');
 });
 
+// Промпт печатается в оболочку вкладки, и на килобайтах это вешало приложение целиком
+// (BUG-pty-deadlock-2026-08-11.md). Длинный промпт — это эстафета, приехавшая не тем полем:
+// её место в файле, а в терминале — указатель.
+test('короткий промпт печатаем, длинный уносим в записку', () => {
+  assert.ok(R.promptFits('продолжи таск 215'));
+  assert.ok(R.promptFits(''));
+  assert.ok(R.promptFits('я'.repeat(R.PROMPT_MAX)), 'ровно потолок ещё влезает');
+  assert.ok(!R.promptFits('я'.repeat(R.PROMPT_MAX + 1)));
+  // Тот самый случай: пересказ состояния работы на несколько килобайт.
+  assert.ok(!R.promptFits('ворктри ../fastio-506, критерии приёмки, что дальше. '.repeat(40)));
+});
+
+test('указатель на записку приклеивается к промпту одной точкой', () => {
+  assert.strictEqual(
+    R.handoffPrompt('продолжи таск 215', '/p/.swarm-handoff-tab-2.md'),
+    'продолжи таск 215. Эстафета лежит в /p/.swarm-handoff-tab-2.md — прочитай её первым делом.');
+  // Агент кончает промпт точкой — второй быть не должно.
+  assert.ok(R.handoffPrompt('продолжай.', '/p/h.md').startsWith('продолжай. Эстафета'));
+  assert.ok(R.handoffPrompt('продолжай!  ', '/p/h.md').startsWith('продолжай. Эстафета'));
+  // Промпта не осталось вовсе — фраза не должна начинаться с точки.
+  assert.strictEqual(R.handoffPrompt('', '/p/h.md'),
+    'Эстафета лежит в /p/h.md — прочитай её первым делом.');
+  assert.strictEqual(R.handoffPrompt('...', '/p/h.md'),
+    'Эстафета лежит в /p/h.md — прочитай её первым делом.');
+});
+
+test('промпт для унесённой эстафеты сам себя не описывает как задачу', () => {
+  // Задачи в нём нет и быть не может: она в записке, и указатель допишет handoffPrompt.
+  assert.ok(R.promptFits(R.PROMPT_CARRIED));
+  assert.ok(R.PROMPT_CARRIED.trim().length > 0);
+  assert.ok(!/эстафет/i.test(R.PROMPT_CARRIED), 'про записку говорит handoffPrompt, а не он');
+});
+
 test('в просьбе есть и путь ответа, и процент, и все поля', () => {
   const t = R.askText({ pct: 31, answerFile: '/tmp/swarm/answer.json' });
   assert.ok(t.includes('/tmp/swarm/answer.json'));
