@@ -645,6 +645,10 @@ setInterval(() => {
         d.sub = sub;
         d.waitingKind = kind;
         safeSend('session:status', { id, status: next.status, detail: next.detail, statusline, question, sub, waitingKind: kind, sure });
+        // Вкладка сменила состояние — а перезапуск как раз этого и ждал: ответ агента ложится на
+        // диск в конце хода, и гасить прежнего агента можно с того же мига. Без этого толчка круг
+        // упирался в такт раз в полминуты и стоял на глазах у человека (см. restartKick).
+        restartKick(id, d);
         // Telegram: an agent starting to wait is the whole point of the bridge. Sent on
         // a delay (see tgOnWaiting) and cancelled if you answer at the keyboard first.
         if (next.status === 'waiting') tgOnWaiting(id);
@@ -4435,7 +4439,13 @@ function restartTick(id, d, now) {
     threshold: RESTART_PCT,
     pct: byPid ? 0 : restartPctOf(d, now),
     status: d.status,
+    // «Работает в фоне» — это статус «работает» с отметкой. Для перезапуска разница
+    // принципиальная: ход отдан, агент ничего не делает (см. turnOver).
+    bg: byPid ? false : !!d.bg,
     dialog: byPid ? false : !!parsePrompt(promptSnapshot(d)),
+    // Чего именно ждёт вкладка. Зов к человеку печати не мешает, запрос разрешения — мешает, и
+    // знает об этом хук, а не экран: рамку скрёб иногда и не находит (см. boxOpen).
+    kind: byPid ? null : (d.status === 'waiting' ? d.waitingKind : null),
     shellBusy: byPid ? d.rsShellBusy : d.shellBusy,
     modeVisible: byPid ? false : !!readMode(snapshot(d)),
     uptimeMs: d.sessionStartAt ? now - d.sessionStartAt : 0,
@@ -4463,6 +4473,23 @@ function restartTick(id, d, now) {
   else if (r.action === 'exit') restartExit(id, d);
   else if (r.action === 'fire') restartFire(id, d);
   else if (r.action === 'drop') restartClearPending(d);
+}
+
+// Такт раз в полминуты — это про «пора ли спрашивать»: там полминуты не видны никому. А два шага
+// круга видны человеку целиком, и оба ждали удара часов зря.
+//
+// По журналу живого перезапуска: ответ агента лежал на диске готовый, но замечен через 30 секунд;
+// ещё через 60 — вкладка погашена. Полторы минуты, в которые ничего не происходило, — вкладка
+// стояла, будто повисла. Поэтому там, где приложение и так узнаёт новость (вкладка кончила ход;
+// строка запуска собрана), автомат тактуется НЕМЕДЛЕННО. Решения все те же — здесь только повод
+// спросить его раньше, чем через полминуты.
+function restartKick(id, d) {
+  if (!d || d.dead || !d.rs) return;
+  if (d.rs.phase !== 'asked' && d.rs.phase !== 'granted') return;
+  const now = Date.now();
+  if (now - (d.rsKickAt || 0) < 200) return;   // от дребезга статуса
+  d.rsKickAt = now;
+  try { restartTick(id, d, now); } catch (e) { reportMainError(e); }
 }
 
 setInterval(() => {
@@ -4707,6 +4734,9 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
   d.rsPendingSession = built.sessionId || null;
   d.rsKey = String(opts.sessionKey || '') || null;
   restartLog(`вкладка ${id}: строка запуска готова, ярлык ${d.rsKey || '—'}`);
+  // Гасить прежнего агента теперь есть чем — и ждать общего такта незачем: строка приходит через
+  // миллисекунды после разрешения, а такт добавлял к ним до полминуты пустого стояния.
+  restartKick(id, d);
   return { ok: true };
 });
 

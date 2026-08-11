@@ -87,11 +87,16 @@ test('нет расхода — нет вопроса: статуслайн вы
   }
 });
 
-test('спрашиваем только отдохнувшую вкладку', () => {
-  for (const status of ['running', 'waiting', 'dead', null]) {
+test('спрашиваем вкладку, которая отдала ход, — а работающую не трогаем', () => {
+  for (const status of ['running', 'dead', null]) {
     assert.strictEqual(step(idle(), { status }).action, 'nothing');
   }
   assert.strictEqual(step(idle(), { status: 'ready' }).action, 'ask');
+  // «Ждёт» — это тоже конец хода: агент попрощался зовом к человеку. В сворме так кончается
+  // почти каждый ход, и пока сюда пускали только «готов», такие вкладки не спрашивались вовсе.
+  assert.strictEqual(step(idle(), { status: 'waiting' }).action, 'ask');
+  // «Работает в фоне» — ход отдан, вкладку разбудит фоновая задача.
+  assert.strictEqual(step(idle(), { status: 'running', bg: true }).action, 'ask');
 });
 
 // Ревью, проход 3: «готов» на пустой оболочке выглядит как «готов» у отдохнувшего агента, а снимок
@@ -196,7 +201,7 @@ test('разрешение несёт промпт и указатель на э
 // промптом поверх начатого разговора.
 test('разрешение не исполняется, пока вкладка снова занята', () => {
   const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
-  for (const over of [{ status: 'running' }, { status: 'waiting' }, { dialog: true }]) {
+  for (const over of [{ status: 'running' }, { dialog: true }]) {
     const r = R.step(granted, sig({ hasLine: true, ...over }));
     assert.strictEqual(r.action, 'nothing');
     assert.strictEqual(r.state.phase, 'granted', 'разрешение не выбрасываем — дождёмся тишины');
@@ -205,6 +210,33 @@ test('разрешение не исполняется, пока вкладка 
   assert.strictEqual(calm.action, 'exit');
   assert.strictEqual(calm.state.phase, 'exiting');
   assert.strictEqual(calm.state.exitAt, NOW);
+});
+
+// Живой круг: агент разрешил перезапуск, дописал эстафету и попрощался зовом — и этим зовом сам
+// себя запирал. Перезапуск стоял с разрешением в руках, пока человек не ответит: вживую восемь
+// минут, а ночью отвечать некому вовсе, и разрешение сгорало по сроку (трижды подряд — до немоты).
+test('вкладка, закончившая ход зовом, гасится, а не ждёт человека', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  for (const over of [{ status: 'waiting' }, { status: 'running', bg: true }]) {
+    const r = R.step(granted, sig({ hasLine: true, ...over }));
+    assert.strictEqual(r.action, 'exit');
+    assert.strictEqual(r.state.phase, 'exiting');
+  }
+  // Но открытая рамка держит по-прежнему: в неё нельзя печатать, что бы ни говорил статус.
+  const boxed = R.step(granted, sig({ hasLine: true, status: 'waiting', dialog: true }));
+  assert.strictEqual(boxed.action, 'nothing');
+});
+
+// Пока «ждёт» блокировало всё подряд, рамка запроса была прикрыта дважды. Теперь зов сквозь эту
+// проверку проходит — и запрос РАЗРЕШЕНИЯ остался бы на одном скрёбе экрана. Промахнись он, и наши
+// двадцать строк с Enter уехали бы в рамку, то есть выбрали бы в ней ответ за человека.
+test('запрос разрешения держит и без найденной на экране рамки', () => {
+  const perm = { status: 'waiting', kind: 'permission', dialog: false };
+  assert.strictEqual(step(idle(), perm).action, 'nothing');
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  assert.strictEqual(R.step(granted, sig({ hasLine: true, ...perm })).action, 'nothing');
+  // А зов — не рамка: он проходит.
+  assert.strictEqual(step(idle(), { status: 'waiting', kind: 'question' }).action, 'ask');
 });
 
 // Ревью, проход 6: срок стоял только на ожидание строки запуска, а дальше фаза ждала покоя сколько
