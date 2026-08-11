@@ -261,16 +261,32 @@ function applyLatch(d, now, snap, raw) {
       if (raw.status === 'waiting' && raw.kind === 'permission') d.waitKind = 'permission';
       // Рамка НА ЭКРАНЕ — этого достаточно, что бы ни говорил источник вердикта: печатать
       // в неё нельзя. Как и kind, признак только заостряется: зов, поверх которого нарисовали
-      // рамку, — это уже рамка.
+      // рамку, — это уже рамка. Увидели — верим сразу, без выдержки (см. boxGone ниже).
       d.waitBox = true;
+      d.boxGoneSince = 0;
       return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: true };
+    }
+    // Рамки на экране НЕТ — но это ровно тот тик, на котором скрёб мог и промахнуться: рамку
+    // уносит за край, ломает чужая отрисовка, а мигание перерисовки даёт пустой кадр. Ниже
+    // (зов прозой) вкладка объявляется свободной для печати, и одного такого кадра хватало,
+    // чтобы разрешить двадцать строк просьбы и Enter в живую коробку.
+    //
+    // Поэтому исчезновению верим с той же выдержкой, что и уходу мебели вообще, а появлению —
+    // сразу. Заострять признак навсегда было нельзя: тогда вкладка, у которой рамку закрыли, а
+    // ход кончился зовом, оставалась бы «с рамкой» до самого конца ожидания — то есть до
+    // бесконечности, ведь зов её и держит.
+    if (d.waitBox) {
+      if (!d.boxGoneSince) d.boxGoneSince = now;
+      if (now - d.boxGoneSince >= LATCH_RELEASE_MS) { d.waitBox = false; d.boxGoneSince = 0; }
     }
     // No box. The agent visibly resumed => release, even though a «Сейчас от тебя»
     // line may still sit in the rows below (it's scrollback text, not live UI, and
     // it lingers for seconds after you answer — it used to pin the tab to «ждёт»
     // while the spinner was already turning). Evidence: the spinner, or fresh output
     // right after you pressed Enter.
-    const release = () => { d.waitLatched = false; d.waitKind = null; d.waitBox = false; d.chromeGoneSince = 0; };
+    const release = () => {
+      d.waitLatched = false; d.waitKind = null; d.waitBox = false; d.boxGoneSince = 0; d.chromeGoneSince = 0;
+    };
     // The transcript saying «работает» is the strongest release there is: a new
     // tool_use / tool_result was WRITTEN after the question, so work really resumed.
     // No debounce needed — this isn't a repaint, it's an event.
@@ -286,10 +302,9 @@ function applyLatch(d, now, snap, raw) {
     // until the agent's spinner finally showed up.
     if (raw.from !== 'transcript' && asksNow(d, snap)) {
       d.chromeGoneSince = 0;
-      // Рамки на экране уже нет — держит нас строка зова, а в неё печатать можно. Это
-      // единственное место, где признак рамки СНИМАЕТСЯ, не снимая самого ожидания.
-      d.waitBox = false;
-      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: false };
+      // Держит нас строка зова, а в неё печатать можно — но только если рамка ушла по-настоящему,
+      // а не пропала на один кадр. Решено это выше, выдержкой.
+      return { status: 'waiting', detail: 'ждёт ответа', kind: d.waitKind, box: !!d.waitBox };
     }
     // Chrome gone but no spinner: a repaint blip, or a trivial prompt just answered
     // and the turn ended. Debounce — release only after it's been gone a while, so a
@@ -340,11 +355,28 @@ const HOOK_TOKEN = {
 // Record a hook signal on `d`. Once ANY signal has arrived, hooksActive flips on
 // and this session trusts hooks over the screen (see tickStatus). Returns whether
 // the token was known.
+// `ask` про рамку не знает НИЧЕГО: им объявляется и прощание зовом, и Notification «агенту нужен
+// ввод». А второе Клод шлёт как раз тогда, когда человек с минуту не отвечает — то есть чаще
+// всего при ОТКРЫТОЙ рамке, и ночью до этой минуты доживает каждая. Приняв его за «рамки нет», мы
+// бы сами себе разрешили печать в живую коробку, и заодно понизили бы «разрешение» до «вопроса»,
+// выбив второй источник тоже.
+//
+// Поэтому пустое знание не затирает добытое: пока вкладка ждёт, `ask` рамку не отменяет. Отменяют
+// её `busy` и `idle`, и других выходов у рамки нет — ответ на неё либо запускает инструмент, либо
+// кончает ход.
 function applyHook(d, token, now) {
   const m = HOOK_TOKEN[token];
   if (!m) return false;
   d.hooksActive = true;
-  d.hookState = { status: m.status, kind: m.kind || null, bg: !!m.bg, box: !!m.box, at: now };
+  const was = d.hookState;
+  const keepBox = token === 'ask' && !!was && was.status === 'waiting' && !!was.box;
+  d.hookState = {
+    status: m.status,
+    kind: keepBox ? was.kind : (m.kind || null),
+    bg: !!m.bg,
+    box: keepBox || !!m.box,
+    at: now,
+  };
   return true;
 }
 

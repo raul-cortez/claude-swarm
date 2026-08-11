@@ -94,6 +94,30 @@ test('latch: a repaint blip then chrome back resets the debounce', () => {
   assert.strictEqual(d.chromeGoneSince, 0, 'chrome back → debounce cleared');
 });
 
+// Признак рамки решает, можно ли печатать в живую вкладку (перезапуск это делает сам), и цена
+// ошибки — двадцать строк просьбы с Enter в открытую коробку, то есть выбор в ней за человека.
+// Ветка ниже — «держит строка зова, печатать можно» — срабатывает ровно на том кадре, где скрёб
+// рамку не нашёл, а это и есть его обычный промах: рамку уносит за край, ломает чужая отрисовка.
+test('latch: пропавшая на кадр рамка не открывает печать в неё', () => {
+  const d = mkD();
+  // Коробка с вариантами открыта, а над ней висит строка прошлого зова — обычный экран.
+  const box = QUESTION + '\n' + ASK;
+  assert.strictEqual(D.applyLatch(d, NOW, box, D.decide(d, NOW, box)).box, true);
+  // Кадр без рамки. Ожидание остаётся, но объявить вкладку свободной для печати нельзя.
+  const blip = D.applyLatch(d, NOW + 300, ASK, D.decide(d, NOW + 300, ASK));
+  assert.strictEqual(blip.status, 'waiting');
+  assert.strictEqual(blip.box, true, 'один кадр без рамки — это не «рамки нет»');
+  // Рамка вернулась — верим сразу и выдержку обнуляем.
+  assert.strictEqual(D.applyLatch(d, NOW + 600, box, D.decide(d, NOW + 600, box)).box, true);
+  // А когда её нет по-настоящему, признак снимается, не снимая ожидания: держит зов, и в строку
+  // ввода печатать можно. Иначе вкладка, у которой рамку закрыли, осталась бы «с рамкой» навсегда.
+  const t = NOW + 700;
+  D.applyLatch(d, t, ASK, D.decide(d, t, ASK));
+  const late = D.applyLatch(d, t + D.LATCH_RELEASE_MS, ASK, D.decide(d, t + D.LATCH_RELEASE_MS, ASK));
+  assert.strictEqual(late.status, 'waiting', 'зов держит ожидание');
+  assert.strictEqual(late.box, false);
+});
+
 test('latch: releases the instant the spinner returns (agent resumed)', () => {
   const d = mkD({ waitLatched: true, waitKind: 'question' });
   const eff = D.applyLatch(d, NOW, SPINNER, D.decide(d, NOW, SPINNER));
@@ -268,6 +292,26 @@ test('hook: рамка и зов прозой — разные ожидания'
   // И признак снимается вместе с ожиданием, а не живёт своей жизнью.
   D.applyHook(d, 'busy', NOW + 1);
   assert.strictEqual(D.arbitrate(d, NOW + 1, '').box, false);
+});
+
+// Notification «агенту нужен ввод» Клод шлёт, когда человек с минуту не отвечает, — то есть чаще
+// всего при ОТКРЫТОЙ рамке, и ночью до этой минуты доживает каждая. Токен у него общий с зовом
+// прозой, а про рамку он не знает ничего; затри он ею добытое знание — и мы сами себе разрешили бы
+// печать в живую коробку, да ещё понизили бы «разрешение» до «вопроса», выбив второй источник.
+test('hook: «агенту нужен ввод» не отменяет открытую рамку', () => {
+  const d = mkD();
+  D.applyHook(d, 'perm', NOW);
+  D.applyHook(d, 'ask', NOW + 60_000);
+  assert.strictEqual(D.arbitrate(d, NOW + 60_000, '').box, true, 'рамка на месте');
+  assert.strictEqual(D.arbitrate(d, NOW + 60_000, '').kind, 'permission', 'и это по-прежнему разрешение');
+  // Выйти из рамки можно только работой или концом хода — вот там признак и снимается.
+  D.applyHook(d, 'busy', NOW + 61_000);
+  assert.strictEqual(D.arbitrate(d, NOW + 61_000, '').box, false);
+  // А зов прозой на чистом месте рамкой не становится: иначе вкладки сворма, которые прощаются
+  // зовом всегда, оказались бы закрыты для печати навсегда.
+  const d2 = mkD();
+  D.applyHook(d2, 'ask', NOW);
+  assert.strictEqual(D.arbitrate(d2, NOW, '').box, false);
 });
 
 test('hook: an unknown token is ignored', () => {

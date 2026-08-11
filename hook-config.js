@@ -12,7 +12,7 @@ function hookSettings(command) {
     Stop: entry,               // last_assistant_message calls me → ask, else idle
     Notification: entry,       // permission_prompt → perm, idle_prompt → idle
     PermissionRequest: entry,  // → perm (разрешение)
-    PreToolUse: entry,         // AskUserQuestion → ask, else busy
+    PreToolUse: entry,         // AskUserQuestion → box (рамка на экране), else busy
     PostToolUse: entry,        // → busy: a tool finished, so work resumed. Without
                                // it an approved permission stays «ждёт» until the
                                // next tool starts.
