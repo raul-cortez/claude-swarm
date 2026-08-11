@@ -369,7 +369,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, setAskPhrases, askFingerprint, parsePrompt, scrolledBack } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, setAskPhrases, askFingerprint, parsePrompt, scrolledBack } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent } = require('./detector');
@@ -527,21 +527,10 @@ function replySnapshot(d) {
   return snapshotWrapped(d.term.buffer.active, REPLY_ROWS);
 }
 
-// The user's Claude statusline (model │ dir [bar] % │ task) renders on the very
-// bottom row. Grab the lowest visible line that looks like it (has the │
-// separators or the progress-bar blocks) so the app can show it in a footer.
+// Строка статуса вкладки. Сам поиск живёт в screen.js рядом с прочим чтением экрана — и,
+// главное, под тестом: с переносами в нём стало что ломать (см. statuslineOf).
 function extractStatusline(d) {
-  const buf = d.term.buffer.active;
-  const end = contentEnd(buf);   // same anchor as snapshot(): blank tail rows lie
-  const start = Math.max(0, end - SNAP_ROWS);
-  for (let y = end - 1; y >= start; y--) {
-    const line = buf.getLine(y);
-    if (!line) continue;
-    const t = line.translateToString(true).trim();
-    if (t.includes('│') || /[█░]/.test(t)) return t;
-  }
-
-  return '';
+  return statuslineOf(d.term.buffer.active, SNAP_ROWS);
 }
 
 function feedDetector(id, chunk) {

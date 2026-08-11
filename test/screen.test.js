@@ -202,6 +202,55 @@ test('snapshotRows takes the last rows WITH content, not the last rows of the bu
   assert.strictEqual(S.snapshotRows(fakeBuf(rows), 16), 'вопрос\nхвост');
 });
 
+// --- строка статуса, в том числе перенесённая ---------------------------------
+// Ряды с пометкой переноса: fakeBuf выше её не знает, а здесь она — весь смысл.
+function wrapBuf(rows) {
+  return {
+    length: rows.length,
+    getLine: (y) => (rows[y] == null ? null : {
+      isWrapped: !!rows[y].wrapped,
+      translateToString: () => rows[y].text,
+    }),
+  };
+}
+
+test('statuslineOf берёт нижний ряд, похожий на строку статуса', () => {
+  const buf = wrapBuf([{ text: 'какой-то вывод' }, { text: 'Opus 5 │ repo ██░ 24% 1M' }, { text: '' }]);
+  assert.strictEqual(S.statuslineOf(buf, 16), 'Opus 5 │ repo ██░ 24% 1M');
+  assert.strictEqual(S.statuslineOf(wrapBuf([{ text: 'ничего похожего' }]), 16), '');
+});
+
+test('перенесённая строка возвращается ЦЕЛИКОМ, а не одним хвостом', () => {
+  // Своя строка человека печатается следом за нашей, и вдвоём они переносятся. Снизу
+  // первым попадается хвост — вернуть его значило бы отдать вкладке чужой процент как
+  // контекст, а на этом проценте стоит и перезапуск.
+  const buf = wrapBuf([
+    { text: 'какой-то вывод' },
+    { text: 'Opus 5 │ repo ██░ 24% 1M │ 5ч 37% │ ' },
+    { text: 'моя строка 99% диска', wrapped: true },
+  ]);
+  const line = S.statuslineOf(buf, 16);
+  assert.strictEqual(line, 'Opus 5 │ repo ██░ 24% 1M │ 5ч 37% │ моя строка 99% диска');
+  assert.strictEqual(line.match(/(\d+)%/)[1], '24', 'первым остаётся НАШ процент');
+
+  // Тот же перенос, но разделитель уехал в ХВОСТ: снизу первым попадается он, и голову
+  // надо добрать вверх — иначе вкладка получит чужую строку вместо нашей.
+  const tailFirst = wrapBuf([
+    { text: 'какой-то вывод' },
+    { text: 'Opus 5 ███ 24% 1M ' },
+    { text: '│ моя строка 99% диска', wrapped: true },
+  ]);
+  assert.strictEqual(S.statuslineOf(tailFirst, 16), 'Opus 5 ███ 24% 1M │ моя строка 99% диска');
+
+  // И перенос на три ряда — собираем все.
+  const three = wrapBuf([
+    { text: 'Opus 5 │ repo ' },
+    { text: '███ 24% 1M ', wrapped: true },
+    { text: '│ моя строка', wrapped: true },
+  ]);
+  assert.strictEqual(S.statuslineOf(three, 16), 'Opus 5 │ repo ███ 24% 1M │ моя строка');
+});
+
 test('snapshotRows keeps blank rows that sit BETWEEN content', () => {
   assert.strictEqual(S.snapshotRows(fakeBuf(['a', '', 'b', '']), 16), 'a\n\nb');
 });

@@ -91,12 +91,18 @@ function foreignCommandFrom(layers) {
 // который люди носили с собой, и у такого человека в конфиге лежит её ранняя копия — склейка
 // честно напечатала бы одно и то же подряд. Сравниваем БЕЗ цвета: копия могла разойтись с
 // оригиналом в оттенках, оставшись тем же текстом.
+// И чужой кусок не печатаем ВООБЩЕ, пока в нашем нет процента. «Наш идёт первым» защищает
+// полоску только тогда, когда наш процент в строке есть, — а до первого ответа модели окна
+// контекста ещё нет, и мы печатаем один «Opus 5 │ repo». Первым процентом в строке тогда
+// станет чужой (у кого-то там расход диска, у кого-то покрытие тестами), и вкладка нарисует
+// его как контекст. Ровно этот же порядок уже охраняет цифры лимитов ниже по файлу.
 const NO_ANSI = /\x1b\[[0-9;]*m/g;
 function composeLine(ours, foreign) {
   const f = String(foreign || '').replace(/[\r\n]+.*$/s, '').trim();
   if (!f) return ours;
   const bare = (s) => String(s).replace(NO_ANSI, '').trim();
   if (bare(f) === bare(ours)) return ours;
+  if (/%/.test(bare(f)) && !/%/.test(bare(ours))) return ours;
   return `${ours} │ ${f}`;
 }
 
@@ -113,8 +119,12 @@ function readForeign(data, input) {
     if (!cmd) return '';
     const { spawnSync } = require('child_process');
     const cwd = (data && data.workspace && data.workspace.current_dir) || undefined;
+    // SIGKILL, а не мягкий TERM: таймаут гасит оболочку, но пока жив хоть кто-то с нашей
+    // трубой в руках, синхронный запуск ждёт закрытия трубы, а не смерти процесса. Чужая
+    // строка, оставившая что-нибудь в фоне, подвесила бы отрисовку насовсем.
     const r = spawnSync(cmd, {
-      shell: true, input, cwd, timeout: FOREIGN_MS, encoding: 'utf8', maxBuffer: 1 << 20,
+      shell: true, input, cwd, timeout: FOREIGN_MS, killSignal: 'SIGKILL',
+      encoding: 'utf8', maxBuffer: 1 << 20, windowsHide: true,
     });
     return (r && r.stdout) || '';
   } catch (_) { return ''; }

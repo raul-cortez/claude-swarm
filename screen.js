@@ -67,6 +67,44 @@ function snapshotWrapped(buf, rows) {
   return out.join('\n');
 }
 
+// Строка статуса Клода (model │ dir [полоска] % │ задача) рисуется самым нижним рядом.
+// Берём нижний ряд, похожий на неё (есть разделители │ или блоки полоски), — из него
+// приложение показывает подпись на карточке и полоску контекста.
+//
+// Найденный ряд ДОБИРАЕМ В ОБЕ СТОРОНЫ по пометке isWrapped. С тех пор как наша строка
+// печатается вместе со строкой человека (swarm-statusline.js, readForeign), она стала вдвое
+// длиннее и в узком окне переносится, а ряды эмулятор хранит порознь. Обе половины опасны
+// поодиночке, и обе встречаются: разделитель │ может остаться и в голове, и в хвосте —
+// смотря где ляжет перенос. Хвост сам по себе — это ЧУЖАЯ строка вместо нашей: полоска
+// нарисуется по первому проценту в ней, а на этом же проценте стоит решение о перезапуске
+// по контексту. Голова сама по себе — обрезанная наша, без чужого куска вовсе.
+function statuslineOf(buf, rows) {
+  const end = contentEnd(buf);   // тот же якорь, что у snapshot(): пустой хвост врёт
+  const start = Math.max(0, end - rows);
+  for (let y = end - 1; y >= start; y--) {
+    const line = buf.getLine(y);
+    if (!line) continue;
+    const t = line.translateToString(true).trim();
+    if (!t.includes('│') && !/[█░]/.test(t)) continue;
+    let top = y;
+    while (top > start && buf.getLine(top) && buf.getLine(top).isWrapped) top--;
+    let bottom = y;
+    while (bottom + 1 < end && buf.getLine(bottom + 1) && buf.getLine(bottom + 1).isWrapped) bottom++;
+    // Склеиваем как snapshotWrapped: у ряда, за которым идёт продолжение, хвост обрезать
+    // нельзя, иначе на стыке пропадёт пробел и два слова срастутся.
+    let whole = '';
+    for (let i = top; i <= bottom; i++) {
+      const l = buf.getLine(i);
+      if (!l) continue;
+      const next = i + 1 <= bottom ? buf.getLine(i + 1) : null;
+      whole += l.translateToString(!(next && next.isWrapped));
+    }
+    return whole.trim() || t;
+  }
+
+  return '';
+}
+
 // A selection row before the answer: "❯ 1. Yes". Claude Code paints ❯, but
 // Cursor / some terminals use an arrow (→ ▸ ▶) or a plain ">".
 const OPTION_RE = /^\s*[❯>→➜▸►▶]?\s*\d+\.\s/;
@@ -596,5 +634,5 @@ module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack,
-  contentEnd, snapshotRows, snapshotWrapped,
+  contentEnd, snapshotRows, snapshotWrapped, statuslineOf,
 };
