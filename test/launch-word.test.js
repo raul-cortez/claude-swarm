@@ -82,14 +82,13 @@ test('две команды — ровно два пункта, названны
   assert.deepStrictEqual(e[1].val, { cmd: 'claude-my', flags: '' });
 });
 
-test('команд больше двух — «другая» уже не одна, и каждая называет себя', () => {
-  const e = menu({ list: [{ cmd: 'claude' }, { cmd: 'claude-my' }, { cmd: 'cld', flags: '--model sonnet' }] });
-  assert.deepStrictEqual(e.map((x) => x.label), [
-    L.NEW_TAB,
-    L.NEW_TAB + ': claude-my',
-    L.NEW_TAB + ': cld --model sonnet',
-  ]);
-  assert.deepStrictEqual(e[2].val, { cmd: 'cld', flags: '--model sonnet' });
+test('подписок хоть десять — пунктов всё равно два, список уходит в окно выбора', () => {
+  const list = ['claude', 'claude-my', 'cld', 'glm', 'codex', 'gemini', 'aider', 'qwen', 'kimi', 'droid']
+    .map((cmd) => ({ cmd, flags: '' }));
+  const e = menu({ list });
+  assert.strictEqual(e.length, 2);
+  assert.deepStrictEqual(e.map((x) => x.label), [L.NEW_TAB, L.OTHER_SUB]);
+  assert.deepStrictEqual(e[1].val, { pick: true });   // рендерер откроет окно выбора
 });
 
 test('меню не всплывает там, где спросят и без него', () => {
@@ -116,20 +115,15 @@ test('наследованная команда не двоится, флаги 
   const e2 = L.launchMenuEntries({
     mode: 'agent', pick: 'folder', list, inherited: { cmd: 'claude', flags: '' },
   });
-  assert.deepStrictEqual(e2.map((x) => x.label), [
-    L.NEW_TAB,
-    L.NEW_TAB + ': claude --model opus',
-    L.NEW_TAB + ': claude-my',
-  ]);
+  assert.deepStrictEqual(e2.map((x) => x.label), [L.NEW_TAB, L.OTHER_SUB]);
+  assert.deepStrictEqual(e2[1].val, { pick: true });
 });
 
 test('в папке с чистым терминалом наследование подписано по-человечески', () => {
   const e = menu({ inherited: { blank: true } });
   assert.strictEqual(e[0].hint, L.BLANK_LABEL + ' — как в этой папке');
-  assert.deepStrictEqual(e.map((x) => x.label).slice(1), [
-    L.NEW_TAB + ': claude',
-    L.NEW_TAB + ': claude-my',
-  ]);
+  assert.strictEqual(e[1].label, L.OTHER_SUB);
+  assert.deepStrictEqual(e[1].val, { pick: true });   // обе команды «другие» — окно выбора
 });
 
 (async () => {

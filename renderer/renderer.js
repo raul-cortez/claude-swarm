@@ -898,8 +898,15 @@ function openLaunchMenu(anchor, cwd, toggle) {
 // Открыть вкладку в этой папке, спросив под кнопкой, чем именно. `toggle` — для кнопок, у которых
 // меню разворачивается прямо по клику: повторный клик тогда закрывает (см. openLaunchMenu).
 async function createSessionFrom(anchor, cwd, toggle) {
-  const pick = await openLaunchMenu(anchor, cwd || '', toggle);
+  let pick = await openLaunchMenu(anchor, cwd || '', toggle);
   if (!pick) return;
+  // «Другой подпиской», а их несколько — спрашиваем тем же окном выбора, каким встречаем первую
+  // вкладку новой папки. Под кнопкой список команд не разворачиваем: при десяти вбитых подписках
+  // это была бы простыня на месте выбора из двух.
+  if (pick.pick) {
+    pick = await pickAgent();
+    if (!pick) return;                 // передумал в окне выбора — вкладки не будет
+  }
   createSession({ cwd: cwd || undefined, ...pick });
 }
 
