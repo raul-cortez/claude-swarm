@@ -296,21 +296,14 @@ test('агент на месте — ждём, но не дольше часа �
   assert.strictEqual(R.step(stuck, sig({ shellBusy: false })).action, 'fire');
 });
 
-// Агента закрывают сигналом, а не буквами в поле ввода (см. restartExit в main.js). Разговор с
-// процессом короткий: закрылся за секунды — или не закроется вовсе, и ждать его час, как
-// напечатанный `/exit`, незачем.
-test('закрыт сигналом — ждём полминуты, а не час', () => {
+// Ревью правки про закрытие сигналом: короткий срок ожидания здесь пробовали и убрали. Он
+// создавал гонку — отменяем перезапуск, стирая заготовку, а агент дозакрывается секундой позже,
+// и вкладка остаётся голой оболочкой навсегда: спрашивать больше не у кого, печатать нечем.
+test('срок ожидания ухода один, каким бы способом ни просили', () => {
   const st = (age) => ({ ...idle(), phase: 'exiting', exitAt: NOW - age });
-  // Полминуты ещё не вышло — ждём.
-  assert.strictEqual(R.step(st(R.KILL_WAIT_MS - 1), sig({ signalled: true })).action, 'nothing');
-  const r = R.step(st(R.KILL_WAIT_MS + 1), sig({ signalled: true }));
-  assert.strictEqual(r.action, 'drop');
-  assert.ok(r.note.includes('по сигналу'));
-  // Тот же возраст без сигнала — это напечатанный /exit, и он ждёт час.
-  assert.strictEqual(R.step(st(R.KILL_WAIT_MS + 1), sig()).action, 'nothing');
-  // Не добиваем: вкладка остаётся жить, перезапуск лишь откладывается.
-  assert.ok(r.state.retryAt > NOW);
-  assert.strictEqual(r.state.phase, 'idle');
+  assert.strictEqual(R.step(st(60_000), sig()).action, 'nothing');
+  assert.strictEqual(R.step(st(R.PENDING_MS - 1), sig()).action, 'nothing');
+  assert.strictEqual(R.step(st(R.PENDING_MS + 1), sig()).action, 'drop');
 });
 
 // Ревью, проход 2 и 4: снятая галочка не должна бросать вкладку между /exit и запуском.
