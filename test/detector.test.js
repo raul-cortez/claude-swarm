@@ -601,6 +601,48 @@ test('хук «готов» + «жди результата» на экране 
   assert.strictEqual(D.tickStatus(d, NOW, DONE_WAIT).status, 'ready');
 });
 
+// Живьём это выглядело так: агент пишет фразу исправно, вкладка становится оранжевой — и
+// через минуту сама зеленеет. Минута — срок напоминания idle_prompt: строка ввода у фоновой
+// вкладки и правда пустует. Напоминание не сообщает ничего нового ни про фон, ни про рамку.
+test('хук: напоминание про пустую строку ввода не гасит фон', () => {
+  for (const nudge of ['lull', 'nag']) {
+    const d = mkD();
+    D.applyHook(d, 'bgw', NOW);
+    D.applyHook(d, nudge, NOW + 60_000);
+    const eff = D.tickStatus(d, NOW + 60_000, BG);
+    assert.strictEqual(eff.status, 'running', `${nudge}: вкладка занята`);
+    assert.strictEqual(eff.bg, true, `${nudge}: и занята именно фоном`);
+    assert.strictEqual(d.hookState.at, NOW + 60_000, `${nudge}: подтверждение свежее сигнала`);
+  }
+  // А настоящее событие фон снимает: агента разбудил фон, он заговорил и кончил ход зовом.
+  const d = mkD();
+  D.applyHook(d, 'bgw', NOW);
+  D.applyHook(d, 'ask', NOW + 60_000);
+  assert.strictEqual(D.tickStatus(d, NOW + 60_000, BG).status, 'waiting');
+});
+
+test('хук «готов» + фон в стенограмме: отметка про фон не теряется', () => {
+  // Сигнал хука всегда свежее последней записи файла, поэтому по свежести спор решался в
+  // пользу зелёного — хотя оба канала согласны, что ход кончился, и расходятся только в том,
+  // почему. Так зеленела вкладка со старым скриптом хука (обычный idle вместо bgw).
+  const d = mkD();
+  D.applyTranscript(d, { status: 'running', kind: null, at: NOW, text: BG, bg: true });
+  D.applyHook(d, 'idle', NOW + 1000);
+  const eff = D.tickStatus(d, NOW + 1000, BG);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.bg, true);
+  assert.strictEqual(eff.detail, D.BG_DETAIL);
+});
+
+test('хук «готов» + законченный ход в стенограмме: по-прежнему «готов»', () => {
+  // Обратная сторона: файл говорит «ход закончен», и оранжевого тут быть не должно —
+  // даже если фраза про фон висит на экране с прошлого хода.
+  const d = mkD();
+  D.applyTranscript(d, { status: 'ready', kind: null, at: NOW, text: 'Готово.', bg: false });
+  D.applyHook(d, 'idle', NOW + 1000);
+  assert.strictEqual(D.tickStatus(d, NOW + 1000, BG).status, 'ready');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
