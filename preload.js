@@ -68,6 +68,11 @@ contextBridge.exposeInMainWorld('swarm', {
   // terminals — so their focus/redraw burst isn't mistaken for real activity.
   uiRepaint: () => ipcRenderer.send('ui:repaint'),
 
+  // На какую вкладку человек смотрит прямо сейчас: активная вкладка плюс фокус окна. Знает
+  // это только окно, а нужно оно main — там решают, можно ли гасить вкладку с непрочитанным
+  // ответом (см. unread.js).
+  reportViewing: (id, focused) => ipcRenderer.send('tabs:viewing', { id, focused }),
+
   // Opt-in «precise status via Claude hooks». Renderer pushes the saved pref on
   // startup and on toggle; main adds/removes the hooks block in swarm-settings.json
   // (scoped to swarm sessions). Takes effect on sessions started after the change.
