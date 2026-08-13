@@ -17,6 +17,8 @@ function hookSettings(command) {
     PostToolUse: entry,        // → busy: a tool finished, so work resumed. Without
                                // it an approved permission stays «ждёт» until the
                                // next tool starts.
+    SubagentStop: entry,       // → subend: подагент закончил. Парный к `sub`, который
+                               // приходит с его шагов через те же Pre/PostToolUse.
   };
 }
 

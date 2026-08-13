@@ -74,6 +74,21 @@ test('напоминания про неотвеченный ввод — отд
   assert.strictEqual(runHook({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).token, 'lull');
 });
 
+// Шаги подагента приходят в те же хуки той же сессии, и отличают их только agent_id /
+// agent_type. Пока они шли как busy, вкладка с открытым вопросом светилась оранжевым —
+// «занята», — потому что фоновая разведка затирала рамку своим шагом раз в пару секунд.
+test('шаги подагента идут своим токеном, а не «работает»', () => {
+  const sub = { session_id: 's1', agent_id: 'a1', agent_type: 'general-purpose' };
+  assert.strictEqual(runHook({ ...sub, hook_event_name: 'PreToolUse', tool_name: 'Bash' }).token, 'sub');
+  assert.strictEqual(runHook({ ...sub, hook_event_name: 'PostToolUse', tool_name: 'Bash' }).token, 'sub');
+  assert.strictEqual(runHook({ ...sub, hook_event_name: 'SubagentStop' }).token, 'subend');
+  // Свой Task главный ход запускает сам — это его работа, и она видна.
+  assert.strictEqual(runHook({ hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: 's1' }).token, 'busy');
+  assert.strictEqual(runHook({ hook_event_name: 'PostToolUse', tool_name: 'Agent', session_id: 's1' }).token, 'busy');
+  // А рамка на экране одна на всех: кто бы её ни открыл, Enter уходит в неё.
+  assert.strictEqual(runHook({ ...sub, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion' }).token, 'box');
+});
+
 test('PermissionRequest → perm', () => {
   assert.strictEqual(runHook({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', session_id: 's1' }).token, 'perm');
 });

@@ -397,6 +397,78 @@ test('arbitrate: спиннер на отлистанном экране нич�
     'отлистанный экран — прошлое, спиннер на нём может быть от прошлого хода');
 });
 
+// --- шаг подагента статуса не назначает ---------------------------------------
+// Живьём: агент отправил разведку фоновым подагентом, следом открыл вопрос с вариантами и
+// остановился. Вкладка светилась оранжевым — «занята», человек мимо неё проходит, — потому
+// что каждый шаг разведки приходил как «работает» и затирал открытую рамку.
+
+test('шаг подагента не отменяет «ждёт»', () => {
+  const d = mkD();
+  D.applyHook(d, 'box', NOW);
+  D.applyHook(d, 'sub', NOW + 100);
+  const eff = D.tickStatus(d, NOW + 200, QUESTION);
+  assert.strictEqual(eff.status, 'waiting', 'разведка ходит, а вопрос ждёт человека');
+  assert.strictEqual(eff.box, true);
+});
+
+test('шаг подагента поднимает «готов» до «работает в фоне»', () => {
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  D.applyHook(d, 'sub', NOW + 100);
+  const eff = D.tickStatus(d, NOW + 200, QUIET);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.bg, true, 'ход кончился, но задачу давать рано — фон разбудит');
+});
+
+test('подагент закончил — вкладка снова «готов»', () => {
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  D.applyHook(d, 'sub', NOW + 100);
+  D.applyHook(d, 'subend', NOW + 200);
+  assert.strictEqual(D.tickStatus(d, NOW + 300, QUIET).status, 'ready');
+});
+
+test('конца от подагента не пришло — отметка сама стареет', () => {
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  D.applyHook(d, 'sub', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.SUB_STALE_MS - 1, QUIET).status, 'running');
+  assert.strictEqual(D.tickStatus(d, NOW + D.SUB_STALE_MS + 1, QUIET).status, 'ready',
+    'иначе упавший подагент оставил бы вкладку занятой навсегда');
+});
+
+// Обратная сторона той же слепоты, и она дороже: канал замолчал на «работает», а на
+// экране живая рамка. Оранжевая вкладка значит «занята» — человек мимо неё проходит,
+// а она его ждёт.
+
+test('arbitrate: замолчавший хук «работает» + живая рамка = ждёт ответа', () => {
+  const d = mkD();
+  D.applyHook(d, 'busy', NOW);
+  const eff = D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUESTION);
+  assert.strictEqual(eff.status, 'waiting');
+  assert.strictEqual(eff.box, true, 'Enter уйдёт в коробку — печатать в такую вкладку нельзя');
+});
+
+test('arbitrate: свежий хук «работает» рамкой не отменяется', () => {
+  const d = mkD();
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + 1000, QUESTION).status, 'running',
+    'исправный канал сам скажет про рамку — ждать его, а не читать экран');
+});
+
+test('arbitrate: рамка на отлистанном экране «работает» не отменяет', () => {
+  const d = mkD({ scrolledBack: true });
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUESTION).status, 'running');
+});
+
+test('arbitrate: проза на экране «работает» не отменяет даже по несвежему сигналу', () => {
+  const d = mkD();
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, ASK).status, 'running',
+    'строка зова живёт на экране и после ответа — рамка нет');
+});
+
 test('arbitrate: «ждёт» от хука спиннером не сбивается', () => {
   const d = mkD();
   D.applyHook(d, 'perm', NOW);

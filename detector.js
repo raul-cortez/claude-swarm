@@ -386,7 +386,34 @@ function keepsThroughNudge(was) {
   return was.status === 'running' && !!was.bg;
 }
 
+// --- подагент: сигнал, который статуса не назначает ---------------------------
+// Шаги подагента приходят в те же хуки той же сессии (см. isSubagent в hooks/swarm-signal.mjs)
+// и про главный ход не говорят ничего. Поэтому они НЕ ложатся в hookState — иначе фоновая
+// разведка раз в пару секунд затирала бы «ждёт» своим «работает», и вкладка с открытым
+// вопросом светилась бы оранжевым, «занята». Ровно это и было живьём.
+//
+// Но и выбрасывать их нельзя: вкладка, которая отправила разведку и закрыла ход, без них
+// зелёная — «свободна, дай задачу», — хотя задачу давать рано. Поэтому знание живёт отдельной
+// отметкой времени и поднимает ТОЛЬКО «готов» до «работает в фоне».
+//
+// Срок нужен обоим концам. `subend` (SubagentStop) снимает отметку сразу, как только подагент
+// закончил, — это точный конец. А отстой на случай, когда конца не будет вовсе: подагент упал,
+// сессию перезапустили, событие переименовали. Без него вкладка осталась бы оранжевой навсегда,
+// то есть врала бы в ту же сторону, что и до починки. Две минуты — заметно больше промежутка
+// между шагами живого подагента (он ходит по инструментам) и достаточно мало, чтобы забытая
+// отметка не пережила разговор.
+const SUB_STALE_MS = 120_000;
+
+function subWorking(d, now) {
+  return !!d.subAt && now - d.subAt < SUB_STALE_MS;
+}
+
 function applyHook(d, token, now) {
+  if (token === 'sub' || token === 'subend') {
+    d.hooksActive = true;
+    d.subAt = token === 'sub' ? now : 0;
+    return true;
+  }
   const m = HOOK_TOKEN[token];
   if (!m) return false;
   d.hooksActive = true;
@@ -438,6 +465,21 @@ function arbitrate(d, now, snap) {
       && !d.scrolledBack && RE_RUNNING.test(snap)) {
     return { status: 'running', detail: 'работает' };
   }
+  // Та же подстраховка, повёрнутая в другую сторону, и цена ошибки здесь выше: канал
+  // замолчал на «работает», а на экране стоит ЖИВАЯ рамка. Оранжевая вкладка означает
+  // «занята, не подходи» — то есть человек мимо неё проходит, а она его ждёт. Именно так
+  // терялся вопрос, пока шаги фонового подагента приходили как busy (см. isSubagent в
+  // hooks/swarm-signal.mjs); чинит это хук, но остаться без страховки нельзя: сессия могла
+  // подняться со старым скриптом, а «работает» ничем не стареет и держится вечно.
+  //
+  // Ограничения те же три, и по тем же причинам: только сильная мебель (RE_WAIT_NOW —
+  // рамку она рисует сама, в потоке речи не встречается), только по несвежему сигналу
+  // (исправный канал подтверждает ход на каждом инструменте, спорить не о чем) и только
+  // по живому экрану (отлистанный показывает прошлое).
+  if (hs.status === 'running' && now - (hs.at || 0) > HOOK_STALE_MS
+      && !d.scrolledBack && RE_WAIT_NOW.test(snap)) {
+    return mkWaiting(snap, true);
+  }
   // Зов прозой: строка на экране, рамки нет — печатать в такую вкладку можно.
   if (!tr && hs.status === 'ready' && asksNow(d, snap)) {
     return { status: 'waiting', detail: 'ждёт ответа', kind: 'question', box: false };
@@ -459,6 +501,12 @@ function arbitrate(d, now, snap) {
   if (hs.status === 'ready' && (tr ? tr.bg : waitsForWork(snap))) {
     return mkBackground();
   }
+  // Тот же фон, только замеченный не по словам агента, а по живому подагенту: ход кончился,
+  // а разведка ещё ходит. Апгрейд опять же только из «готов» — «ждёт» шаг подагента не
+  // отменяет (см. applyHook).
+  if (hs.status === 'ready' && subWorking(d, now)) {
+    return mkBackground();
+  }
   const out = { status: hs.status, detail: detailFor(hs.status, hs.bg), kind: hs.status === 'waiting' ? hs.kind : null,
     box: hs.status === 'waiting' && !!hs.box };
   if (hs.bg && hs.status === 'running') out.bg = true;
@@ -476,7 +524,7 @@ function tickStatus(d, now, snap) {
 }
 
 module.exports = {
-  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS, BG_DETAIL,
+  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS, SUB_STALE_MS, BG_DETAIL,
   RE_WAIT, RE_WAIT_NOW, RE_RUNNING,
   decide, hasWaitChrome, hasPromptBox, asksNow, applyLatch, keyboardEvent,
   applyHook, applyTranscript, fromTranscript, decideFromTranscript, arbitrate, tickStatus,

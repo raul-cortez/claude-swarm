@@ -94,6 +94,28 @@ function callsUser(matcher, text) {
   return closingKind(matcher, text) === 'ask';
 }
 
+// --- шаг ПОДАГЕНТА — это не ход вкладки ---------------------------------------
+// Инструменты, которые запускает подагент (Task/Agent), приходят в те же хуки той же
+// сессии: тот же session_id, тот же терминал, те же PreToolUse/PostToolUse. Отличает их
+// одна пара полей — agent_id / agent_type, — которую Клод кладёт только в события
+// подагента (проверено на 2.1.229; у главного хода их нет).
+//
+// Считать такой шаг за «работает» нельзя. Живьём это выглядело так: агент отправил
+// разведку фоновым подагентом, следом открыл вопрос с вариантами и остановился — а
+// вкладка светилась оранжевым, «работает». Человек мимо неё проходит: занята. На самом
+// деле на экране стояла коробка с вариантами, и каждый шаг разведки затирал её `busy`,
+// раз в несколько секунд, всё время, пока та ходила по репозиторию.
+//
+// Про ГЛАВНЫЙ ход шаг подагента не говорит ничего: тот может в это время работать, ждать
+// ответа или вовсе быть законченным. Поэтому у таких шагов свой токен `sub` — «подагент
+// жив», — и статуса вкладки он не назначает вовсе: приложение поднимает им только зелёную
+// вкладку до «работает в фоне» и никогда не трогает «ждёт» (см. HOOK_TOKEN в detector.js).
+// Потерять этот сигнал совсем было бы жалко: вкладка, отправившая разведку и закрывшая ход,
+// светилась бы «готов», то есть «дай мне задачу», пока разведка ходит по репозиторию.
+function isSubagent(p) {
+  return !!(p && (p.agent_id || p.agent_type));
+}
+
 // event JSON → one of: busy | idle | perm | ask | box | bgw (see detector.js HOOK_TOKEN). null
 // => emit nothing (event we don't care about).
 function tokenFor(p, matcher) {
@@ -131,10 +153,17 @@ function tokenFor(p, matcher) {
       // здесь. Зов прозой (Stop с фразой) печати не мешает — в строку ввода можно набирать что
       // угодно, — а в открытую коробку Enter уходит выбором варианта. Разделять их приходится
       // здесь, потому что дальше это уже не отличить ничем: статус у них один.
-      return p.tool_name === 'AskUserQuestion' ? 'box' : 'busy';
+      //
+      // Вопрос — исключение из правила про подагента: РАМКА на экране одна на всех. Кто бы
+      // её ни открыл, Enter уходит в неё, и человек нужен здесь и сейчас.
+      if (p.tool_name === 'AskUserQuestion') return 'box';
+      return isSubagent(p) ? 'sub' : 'busy';
     // A tool finished => work is flowing again. Without this the app stays «ждёт»
     // after you approve a permission, until the NEXT tool starts or the turn ends.
-    case 'PostToolUse': return 'busy';
+    case 'PostToolUse': return isSubagent(p) ? 'sub' : 'busy';
+    // Подагент закончил. Отдельный токен, потому что молчание «жив» отличить от смерти
+    // нечем: шаги приходят по инструментам, а между ними подагент может думать минутами.
+    case 'SubagentStop': return 'subend';
     default: return null;
   }
 }
@@ -275,4 +304,4 @@ function isDirectRun(moduleUrl, argvPath) {
 
 if (isDirectRun(import.meta.url, process.argv[1])) main();
 
-export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker, outputFor, denyReason, DENY_REASON, FALLBACK, isDirectRun };
+export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker, outputFor, denyReason, DENY_REASON, FALLBACK, isDirectRun, isSubagent };
