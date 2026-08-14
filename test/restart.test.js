@@ -306,6 +306,28 @@ test('разрешение не исполняется поверх непроч
   assert.strictEqual(held.state.phase, 'granted', 'разрешение не выбрасываем — дождёмся человека');
 });
 
+// Единственное место, где перезапуск стоит МОЛЧА и подолгу: разрешение получено, агент попрощался
+// словами «вкладку можно гасить», а она живёт дальше. Живьём это выглядело как зависшая функция и
+// разбиралось только чтением журнала приложения задним числом — поэтому причину отдаём наружу.
+test('простой с разрешением на руках называет свою причину', () => {
+  const granted = { ...idle(), phase: 'granted', at: NOW - 1000, prompt: 'дальше' };
+  const cases = [
+    [{ unread: true }, 'unread'],
+    [{ sub: 2 }, 'sub'],
+    [{ status: 'running' }, 'busy'],
+    [{ dialog: true }, 'box'],
+    [{ shellBusy: false }, 'gone'],
+  ];
+  for (const [over, hold] of cases) {
+    const r = R.step(granted, sig({ hasLine: true, ...over }));
+    assert.strictEqual(r.action, 'nothing');
+    assert.strictEqual(r.hold, hold, `причина простоя для ${JSON.stringify(over)}`);
+    assert.ok(R.holdText(hold), 'и у причины есть человеческие слова');
+  }
+  // Ничто не держит — причины нет, и такт кончается делом.
+  assert.strictEqual(R.step(granted, sig({ hasLine: true })).action, 'exit');
+});
+
 // Живой круг: агент разрешил перезапуск, дописал эстафету и попрощался зовом — и этим зовом сам
 // себя запирал. Перезапуск стоял с разрешением в руках, пока человек не ответит: вживую восемь
 // минут, а ночью отвечать некому вовсе, и разрешение сгорало по сроку (трижды подряд — до немоты).
@@ -405,6 +427,26 @@ test('разрешение целиком портится, а не только
   // А вовремя — исполняется.
   const fresh = { ...granted, at: NOW - 1000 };
   assert.strictEqual(R.step(fresh, sig({ hasLine: true })).action, 'exit');
+});
+
+// Разрешение портится от того, что вкладка ЖИВЁТ дальше: берётся за новое, узнаёт то, чего нет в
+// записке. Под непрочитанным она не живёт — агент сказал своё и молчит, ждём мы человеческие глаза.
+// Считай мы эти минуты, ночь выглядела бы так: ответ лёг мимо глаз, разрешение через десять минут
+// протухло, через двадцать просьба заново — и до утра, по двадцать строк просьбы в час, ровно в тот
+// контекст, который мы взялись сберечь.
+test('непрочитанное останавливает часы разрешения, а не тратит их', () => {
+  const old = { ...idle(), phase: 'granted', at: NOW - R.GRANT_CALM_MS - 1, prompt: 'дальше', silent: 1 };
+  const r = R.step(old, sig({ hasLine: true, unread: true }));
+  assert.strictEqual(r.action, 'nothing');
+  assert.strictEqual(r.state.phase, 'granted', 'разрешение живо');
+  assert.strictEqual(r.state.at, NOW, 'часы переведены на сейчас');
+  assert.strictEqual(r.state.silent, 1, 'и молчанием это не считается');
+  // Человек взглянул — гасим тем же разрешением, не спрашивая заново.
+  assert.strictEqual(R.step(r.state, sig({ hasLine: true })).action, 'exit');
+  // А просто занятая вкладка тратит срок как раньше: она и правда живёт дальше.
+  const busy = R.step(old, sig({ hasLine: true, status: 'running' }));
+  assert.strictEqual(busy.action, 'drop');
+  assert.strictEqual(busy.state.silent, 2);
 });
 
 // Ревью, проход 6: у срока переспроса был потолок, но не было пола. «Спроси через минуту» от агента,

@@ -127,6 +127,26 @@ test('без фразы вердикта нет', () => {
   assert.strictEqual(kind('Просто отчёт. Жду сборку.'), null);
 });
 
+// --- saysNone: агент сказал прямо, что от человека ничего не нужно ------------------
+// Нужно перезапуску: строгая пометка «человек этого не видел» держится до ОТВЕТА человека, а
+// отвечать на «от тебя ничего» он не станет — вкладка запирала бы себя (см. unread.onTurnEnd).
+// Отличие от `callKind === null` в том, что молчание фразой не считается: ход без подписи ничего
+// не сообщает о том, ждут ли ответа, и обращаться с ним надо как с обычным ответом.
+
+const none = (text, list) => A.saysNone(A.buildAskMatcher(list), text);
+
+test('saysNone catches an explicit «ничего»', () => {
+  assert.strictEqual(none('Готово. Сейчас от тебя: ничего.', []), true);
+  assert.strictEqual(none('Сейчас от тебя: ничего, жду фиксы по базе.', []), true);
+  assert.strictEqual(none('Сейчас от тебя: ничего, вкладку можно гасить.', []), true);
+});
+
+test('saysNone is false for a real call and for silence', () => {
+  assert.strictEqual(none('Сейчас от тебя: путь к схеме.', []), false);
+  assert.strictEqual(none('Починил сборку, тесты зелёные.', []), false, 'ход без фразы — не «ничего»');
+  assert.strictEqual(none('', []), false);
+});
+
 // --- askExcerpt: the text of the question, for the tooltip / notification / bridge --
 
 const excerpt = (text, list, max) => A.askExcerpt(A.buildAskMatcher(list), text, max);

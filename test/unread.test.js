@@ -34,15 +34,60 @@ test('переключился на вкладку — прочитал', () => 
   assert.strictEqual(U.isUnread(U.onViewed(st)), false);
 });
 
+// Служебный круг сворма: он сам напечатал агенту просьбу о перезапуске (или уже держит на руках
+// разрешение) и ждёт. Всё, что агент говорит внутри круга, адресовано сворму — и пометкой лечь не
+// должно, даже если человек когда-то раньше писал в эту вкладку и его ожидание всё ещё открыто.
+//
+// Живой случай, ради которого отметка и заведена: агент разрешил перезапуск словами «вкладку можно
+// гасить», сворм разрешение принял — и сам себе его запретил, потому что конец того же хода стал
+// «ответом, которого человек не видел». Снять такую пометку было нечем: отвечать на «от тебя
+// ничего» человек не станет.
+test('служебный круг сворма пометки не ставит', () => {
+  const svc = U.onSwarmAsk(asked());
+  const st = U.onTurnEnd(svc, { now: NOW, viewing: true, done: true, needsYou: true });
+  assert.strictEqual(U.isUnread(st), false);
+});
+
+test('круг закрылся — следующий ход помечается как обычно', () => {
+  const svc = U.onSwarmAsk(asked());
+  const back = U.onSwarmIdle(U.onTurnEnd(svc, { now: NOW, done: true, needsYou: true }));
+  const st = U.onTurnEnd(back, { now: NOW + 1000, viewing: false, done: true, needsYou: true });
+  assert.strictEqual(U.isUnread(st), true);
+});
+
+// Человек написал во вкладку, пока шёл служебный круг. Дальше в ней говорят с ним, и его ожидание
+// перебивает наше: итог такого хода он ждёт по-настоящему.
+test('человек вмешался в служебный круг — итог снова его', () => {
+  const svc = U.onSwarmAsk(asked());
+  const mine = U.onHumanSend(svc);
+  const st = U.onTurnEnd(mine, { now: NOW, viewing: false, done: true, needsYou: true });
+  assert.strictEqual(U.isUnread(st), true);
+});
+
 // А вот если ответ лёг ПРЯМО ТЕБЕ В ГЛАЗА — вкладка была открыта и окно в фокусе, — то
 // «переключение на неё» уже случиться не может: ты и так на неё смотришь. Значит снять пометку
 // нечем, кроме твоего ответа. Иначе она снималась бы сама собой в тот же миг, в который встала,
 // и весь сторож existed бы только на бумаге.
 test('ответ лёг тебе прямо в глаза — снимает только твой ответ, не взгляд', () => {
-  const st = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: true });
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: true, needsYou: true });
   assert.strictEqual(U.isUnread(st), true);
   assert.strictEqual(U.isUnread(U.onViewed(st)), true, 'взгляд на открытую вкладку — не событие');
   assert.strictEqual(U.isUnread(U.onHumanSend(st)), false, 'а ответ — событие');
+});
+
+// А строгость эта держится ровно до тех пор, пока от человека чего-то ждут. Ход, кончившийся
+// словами «Сейчас от тебя: ничего», ответа не просит — и строгая пометка на нём была замком без
+// ключа: снять её мог только ответ, которого агент сам не ждал. Вкладка стояла с готовым
+// разрешением на перезапуск, пока человек не напишет ей что-нибудь просто так.
+test('«от тебя ничего» на глазах у человека — прочитано сразу', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: true, needsYou: false });
+  assert.strictEqual(U.isUnread(st), false);
+});
+
+test('«от тебя ничего» мимо глаз — пометка есть, но её снимает взгляд', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: false, done: true, needsYou: false });
+  assert.strictEqual(U.isUnread(st), true, 'сказанное всё равно надо увидеть');
+  assert.strictEqual(U.isUnread(U.onViewed(st)), false);
 });
 
 test('твой ответ снимает пометку и в мягком случае тоже', () => {
@@ -85,8 +130,8 @@ test('уход в фон помечает, но ожидание оставля�
 // Строгость пересчитывается на КАЖДОМ конце хода, а не запоминается с первого: между
 // промежуточным докладом и итогом человек успевает и прийти, и уйти.
 test('строгость берётся от последнего ответа, а не от первого', () => {
-  const bg = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: false });
-  const fin = U.onTurnEnd(bg, { now: NOW + 1000, viewing: false, done: true });
+  const bg = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: false, needsYou: true });
+  const fin = U.onTurnEnd(bg, { now: NOW + 1000, viewing: false, done: true, needsYou: true });
   assert.strictEqual(U.isUnread(U.onViewed(fin)), false, 'итог лёг мимо глаз — взгляд снимает');
 });
 

@@ -159,7 +159,7 @@ function defaultWorkdir() {
 // provisioning failed (then we simply skip injection and behave as before).
 let STATUSLINE_SETTINGS = null;
 const { hookSettings } = require('./hook-config');
-const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, callKind, askExcerpt } = require('./ask-phrases');
+const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, callKind, saysNone, askExcerpt } = require('./ask-phrases');
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
@@ -707,12 +707,19 @@ setInterval(() => {
           // `done` отделяет замолчавшего агента от ушедшего в фон: «ничего, жду замер стенда»
           // человеку тоже сказано, но настоящий ответ будет потом, и ожидание закрывать рано.
           //
-          // Служебный ход сворма (просьба о перезапуске) сюда не попадает сам собой, без всякой
-          // отметки: его начинал не человек, а пометка ставится только тому, чьего итога ждут.
+          // Служебный ход сворма (просьба о перезапуске) отмечен отдельно — см. unread.onSwarmAsk.
+          //
+          // `needsYou` — нужно ли от человека что-нибудь. Зов вопросом или разрешением («ждёт») —
+          // нужно; уход в фон и прямое «Сейчас от тебя: ничего» — нет. Второе видно только в тексте
+          // хода, поэтому берём его же, что и телега (d.trFinal — весь ход, а не последняя реплика).
+          // У вкладки без стенограммы текста нет, и такой ход считается обычным ответом: это прежнее
+          // поведение, а не потеря — строгость лишь держит пометку до ответа человека.
           d.unread = unread.onTurnEnd(d.unread, {
             now,
             viewing: viewingNow(id),
             done: next.status !== 'running',
+            needsYou: next.status === 'waiting'
+              || (!next.bg && !saysNone(ASK_MATCHER, d.trFinal || d.trText || '')),
           });
           restartKick(id, d, 'turn');
         }
@@ -4544,6 +4551,9 @@ function restartClearPending(d) {
   // выхода, и короткий срок ожидания, а следующий круг может пойти совсем другим путём.
   d.rsSignalled = false;
   d.rsKillPid = null;
+  // И причину простоя: круг кончился, а следующий начнётся с чистого листа — иначе о новой
+  // задержке по той же причине мы бы промолчали, приняв её за уже рассказанную.
+  d.rsHold = '';
   d.rsShellBusy = undefined;
   d.rsProbeErr = false;
   d.rsProbedAt = 0;
@@ -4619,6 +4629,19 @@ function restartTick(id, d, now) {
   });
   d.rs = r.state;
   if (r.note) restartNote(id, r.note);
+  // Служебный круг открылся или закрылся. Пока он идёт, всё сказанное агентом адресовано СВОРМУ, и
+  // пометкой «человек этого не видел» ложиться не должно — иначе вкладка запирает себя собственной
+  // перепиской (см. unread.onSwarmAsk). Отмечаем по переходам, а не по фазе каждый такт: человек
+  // мог вмешаться в круг своим сообщением, и его ожидание перебивает наше.
+  if (r.action === 'ask' || r.action === 'grant') d.unread = unread.onSwarmAsk(d.unread);
+  else if (r.action === 'drop' || r.action === 'fire') d.unread = unread.onSwarmIdle(d.unread);
+  // Почему стоим с разрешением на руках. Раз в смену причины, а не каждый такт: между разрешением и
+  // его исполнением проходит до десяти минут, и всё это время человек видит вкладку, которой сказали
+  // «можно гасить», — а она живёт. Молчать здесь значит выглядеть зависшей.
+  if (r.hold !== undefined && r.hold !== d.rsHold) {
+    d.rsHold = r.hold;
+    if (r.hold) restartNote(id, `разрешение на перезапуск есть, но пока не гашу: ${restart.holdText(r.hold)}`);
+  } else if (r.action !== 'nothing') d.rsHold = '';
   // Круг «спросили — ответили» закрылся: снимаем тишину в телеграме. Раньше её снимал только
   // переход работает→готов, и если ход просьбы такого перехода не дал (статус его не заметил,
   // вкладка ушла в «ждёт»), отметка переживала круг и глушила СЛЕДУЮЩИЙ, настоящий итог — тот,

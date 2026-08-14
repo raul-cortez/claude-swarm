@@ -144,6 +144,18 @@ function waitsWith(matcher, text) {
   return callKind(matcher, text) === 'wait';
 }
 
+// Агент сказал ПРЯМО, что от человека ничего не нужно: подпись есть, и она не зов — всё равно,
+// «ничего» это или «ничего, жду фиксы». Отличается от `callKind(...) !== 'ask'` тем, что молчание
+// подписью не считает: ход без неё вообще ничего не сообщает о том, ждут ли ответа, и обращаться с
+// ним надо как с обычным ответом человеку.
+//
+// Нужно перезапуску: строгая пометка «человек этого не видел» держится до ОТВЕТА человека, а
+// отвечать на «от тебя ничего» он не станет — см. unread.onTurnEnd.
+function saysNone(matcher, text) {
+  const tail = tailFrom(matcher, text);
+  return tail != null && callKind(matcher, text) !== 'ask';
+}
+
 // WHAT the agent is asking, as text — for the pult tooltip, the notification and
 // (later) the Telegram bridge. The whole closing message is usually a report ending
 // with the request, so the useful part starts AT the phrase: «Сейчас от тебя: путь к
@@ -165,7 +177,7 @@ const DEFAULT_SOURCES = phraseSources(DEFAULT_ASK_PHRASES);
 
 return {
   DEFAULT_ASK_PHRASES, DEFAULT_SOURCES, MAX_PHRASES, MAX_LEN,
-  normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, askExcerpt,
+  normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, saysNone, askExcerpt,
 };
 
 });
