@@ -4565,34 +4565,29 @@ function restartClearPending(d) {
 
 function restartTick(id, d, now) {
   const state = d.rs || restart.initial();
-  // Файл ответа читаем в двух состояниях, и во второе он попал не сразу.
-  //   • ждём ответа на просьбу — очевидное;
-  //   • идёт отсрочка — потому что агент вправе передумать раньше названного им срока, и сказать
-  //     нам об этом он может только этим файлом (см. restart.earlyStep). Раньше здесь стояла одна
-  //     фаза, и вкладка, освободившаяся через десять минут вместо тридцати, стояла с готовым
-  //     разрешением, о котором никто не спрашивал.
-  // В остальных фазах не читаем: это лишний поход на диск, а в папке вкладки — ещё и лишний повод
-  // для соседа увидеть чужой служебный файл. Во время отсрочки походом это обычно и не пахнет:
-  // файла там нет, и всё чтение — одна неудачная попытка открыть его раз в полминуты.
-  let answer = null;
-  let file = '';
-  if (state.phase === 'asked' || (state.phase === 'idle' && state.retryAt > now)) {
-    file = restartAnswerFile(id, d);
-    try {
-      answer = { raw: fs.readFileSync(file, 'utf8'), mtime: fs.statSync(file).mtimeMs };
-    } catch (_) { answer = null; }
-  }
   // Ждём ухода агента, которого сами и закрыли: тогда ответ даёт ОДИН его pid, а всё остальное
   // в этой фазе не читается вовсе (см. goneStep). Разница не косметическая — этот такт идёт
   // четыре раза в секунду, а полный набор стоит чтения снимка расхода с диска и двух снятий
   // экрана. Заодно и точность: `d.shellBusy` обновляется раз в пять секунд, то есть в этой фазе
   // он заведомо устаревший.
   const byPid = state.phase === 'exiting' && d.rsSignalled && d.rsShellBusy !== undefined;
+  const pct = byPid ? 0 : restartPctOf(d, now);
+  // В каких состояниях читать файл ответа, решает автомат (restart.wantsAnswer) — и решает не для
+  // экономии: ответ, прочитанный не вовремя, перезапускает вкладку по ответу про прошлый круг, а не
+  // прочитанный вовремя — теряет готовое разрешение на часы.
+  let answer = null;
+  let file = '';
+  if (restart.wantsAnswer(state, { now, enabled: RESTART_ENABLED, threshold: RESTART_PCT, pct })) {
+    file = restartAnswerFile(id, d);
+    try {
+      answer = { raw: fs.readFileSync(file, 'utf8'), mtime: fs.statSync(file).mtimeMs };
+    } catch (_) { answer = null; }
+  }
   const r = restart.step(state, {
     now,
     enabled: RESTART_ENABLED,
     threshold: RESTART_PCT,
-    pct: byPid ? 0 : restartPctOf(d, now),
+    pct,
     status: d.status,
     // «Работает в фоне» — это статус «работает» с отметкой. Для перезапуска разница
     // принципиальная: ход отдан, агент ничего не делает (см. turnOver).
@@ -4649,9 +4644,11 @@ function restartTick(id, d, now) {
   if (r.action !== 'nothing') d.rsQuiet = false;
   // Ответ прочитан и больше не нужен — ни в успехе, ни в отказе. Неразобранное (action
   // 'nothing' в фазе asked) остаётся лежать: тик мог попасть в середину записи.
-  if (file && r.action !== 'nothing') { try { fs.unlinkSync(file); } catch (_) {} }
+  // А `dropAnswer` — про залежавшийся файл, который автомат читать больше не будет: он бы лежал в
+  // чужом репозитории и попадался нам под руку каждые полминуты (см. step).
+  if (file && (r.action !== 'nothing' || r.dropAnswer)) { try { fs.unlinkSync(file); } catch (_) {} }
 
-  if (r.action === 'ask') { restartClearPending(d); restartAsk(id, d, restartPctOf(d, now)); }
+  if (r.action === 'ask') { restartClearPending(d); restartAsk(id, d, pct); }
   else if (r.action === 'grant') restartGrant(id, d, r.state);
   else if (r.action === 'exit') restartExit(id, d);
   else if (r.action === 'fire') restartFire(id, d);

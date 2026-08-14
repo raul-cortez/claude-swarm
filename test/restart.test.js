@@ -189,12 +189,69 @@ test('вкладку, которую нечем поднять, досрочны
   assert.strictEqual(r.action, 'nothing');
 });
 
-// Отсрочка кончилась сама — дальше обычный путь, и лежащий рядом файл ответа на него не влияет:
-// его сотрёт restartAsk перед тем, как спросить заново.
-test('после срока спрашиваем заново, а не читаем старый файл', () => {
+// Живой случай (14.08): в 16:07 спросили, к 16:17 ответа не было — отсрочка. В 20:49 агент положил
+// в файл разрешение с эстафетой и промптом, и оно пролежало часами: после истёкшего срока сворм в
+// файл больше не смотрел. Дождавшись переспроса, он напечатал бы двадцать строк просьбы заново — и
+// тут же выбросил этот ответ как залежавшийся, добавив ещё двадцать минут.
+const expired = () => ({ ...idle(), retryAt: NOW - 1 });
+
+test('разрешение, положенное после истёкшего срока, подхватываем, а не спрашиваем заново', () => {
   const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
-  const r = R.step({ ...idle(), retryAt: NOW - 1 }, sig({ answer: { raw, mtime: NOW } }));
-  assert.strictEqual(r.action, 'ask');
+  const r = R.step(expired(), sig({ answer: { raw, mtime: NOW - 5000 } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.phase, 'granted');
+  assert.strictEqual(r.state.prompt, 'дальше');
+  assert.strictEqual(r.state.at, NOW, 'срок годности считается от зова, а не от нашего вопроса');
+  assert.ok(/сам/.test(r.note || ''), 'человеку видно, что разрешение пришло без просьбы');
+});
+
+test('после срока агент может и отказать сам — новый срок мы уважаем', () => {
+  const r = R.step(expired(), sig({ answer: { raw: '{"restart":false,"retry":45}', mtime: NOW } }));
+  assert.strictEqual(r.action, 'drop');
+  assert.strictEqual(r.state.retryAt, NOW + 45 * 60 * 1000);
+});
+
+// Лежащий ответ читается ради разрешения, а не ради перезапуска любой вкладки: пока порог не
+// перейдён, гасить нечего, и файл — просто мусор в чужой папке.
+test('ниже порога лежащий ответ вкладку не гасит', () => {
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  assert.strictEqual(R.step(expired(), sig({ pct: 20, answer: { raw, mtime: NOW } })).action, 'nothing');
+});
+
+test('залежавшийся файл после срока обычному пути не мешает, но его убирают', () => {
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step(expired(), sig({ answer: { raw, mtime: NOW - R.ANSWER_WAIT_MS - 1 } }));
+  assert.strictEqual(r.action, 'ask', 'ответ про прошлый круг нас не перезапускает и не запирает');
+  assert.strictEqual(r.dropAnswer, true, 'иначе он лежит в чужом git status и читается каждые полминуты');
+  // И когда спросить пока нельзя, файл всё равно убирают: вкладка бывает занята часами.
+  const busy = R.step(expired(), sig({ status: 'running', answer: { raw, mtime: NOW - R.ANSWER_WAIT_MS - 1 } }));
+  assert.strictEqual(busy.action, 'nothing');
+  assert.strictEqual(busy.dropAnswer, true);
+});
+
+test('недописанный ответ после срока держит просьбу, а не рождает вторую', () => {
+  // Тик попал в середину записи: эстафета текстом — это килобайты. Спросить сейчас значит просить
+  // дважды об одном, а стереть — уничтожить уже написанное агентом.
+  const r = R.step(expired(), sig({ answer: { raw: '{"restart":tr', mtime: NOW } }));
+  assert.strictEqual(r.action, 'nothing');
+  assert.ok(!r.dropAnswer);
+});
+
+// Когда читать файл, решает автомат: не вовремя прочитанный ответ перезапускает вкладку по прошлому
+// кругу, а не прочитанный вовремя — теряет готовое разрешение на часы.
+test('файл ответа читаем в трёх состояниях, и только в них', () => {
+  const o = { now: NOW, enabled: true, threshold: 30, pct: 40 };
+  assert.strictEqual(R.wantsAnswer({ ...idle(), phase: 'asked' }, o), true, 'ждём ответа на просьбу');
+  assert.strictEqual(R.wantsAnswer({ ...idle(), retryAt: NOW + 1000 }, o), true, 'идёт отсрочка');
+  assert.strictEqual(R.wantsAnswer(expired(), o), true, 'срок истёк, но порог всё ещё перейдён');
+  assert.strictEqual(R.wantsAnswer(idle(), { ...o, pct: 20 }), false, 'ниже порога гасить нечего');
+  assert.strictEqual(R.wantsAnswer(idle(), { ...o, enabled: false }), false, 'функция выключена');
+  assert.strictEqual(R.wantsAnswer({ ...idle(), phase: 'muted' }, o), false, 'спрашивать некому');
+  // Фазы после разрешения: там ответ не читается вовсе, и это ещё и про цену — фаза выхода
+  // тактуется четыре раза в секунду.
+  for (const phase of ['granted', 'exiting']) {
+    assert.strictEqual(R.wantsAnswer({ ...idle(), phase }, o), false, phase);
+  }
 });
 
 test('ждём ответа — второй раз не спрашиваем', () => {
