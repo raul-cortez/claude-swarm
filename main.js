@@ -4414,6 +4414,59 @@ function restartAnswerFile(id, d) {
   return path.join(restartDir(), name);
 }
 
+// Имя БЕЗ ключа вкладки — для того, кто нашей просьбы не видел.
+//
+// Именной файл узнают из просьбы, и это работает, пока разговор тот самый. А свежая сессия после
+// перезапуска (или сессия, которую ещё ни разу не спрашивали) пути не знает вовсе — и «положи файл
+// в любой момент» для неё пустой звук. Общее имя знать неоткуда не надо: оно одно на все вкладки и
+// пишется в документации.
+//
+// Цена общего имени — две вкладки в одной папке (у нас это норма, см. injectSessionId): чей это
+// файл, по имени не понять, и перезапустить по нему не ту вкладку значит снести чужую работу без
+// эстафеты. Поэтому общий файл читает только вкладка, которая в своей папке одна; остальным он не
+// достаётся, и об этом мы говорим вслух, а не молчим.
+const RESTART_SHARED_NAME = '.swarm-restart.json';
+
+function restartTabsInCwd(cwd) {
+  let n = 0;
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (d && !d.dead && d.cwd === cwd) n++;
+  }
+  return n;
+}
+
+function restartReadAt(file) {
+  try {
+    return { raw: fs.readFileSync(file, 'utf8'), mtime: fs.statSync(file).mtimeMs };
+  } catch (_) { return null; }
+}
+
+// Ответ вкладки: свой именной файл, а если его нет — общий. Возвращает и путь: прочитанное мы
+// стираем, и стереть надо ровно тот файл, который прочитали.
+function restartReadAnswer(id, d) {
+  const named = restartAnswerFile(id, d);
+  const own = restartReadAt(named);
+  if (own) return { file: named, answer: own };
+  const cwd = d && d.cwd;
+  if (!cwd) return { file: named, answer: null };
+  const shared = path.join(cwd, RESTART_SHARED_NAME);
+  const any = restartReadAt(shared);
+  if (!any) return { file: named, answer: null };
+  if (restartTabsInCwd(cwd) > 1) {
+    // Раз на появление файла, а не каждые полминуты: строка объясняет, что делать, и повторять её
+    // до утра незачем.
+    if (!d.rsSharedWarned) {
+      d.rsSharedWarned = true;
+      restartNote(id, `в этой папке открыта не одна вкладка — ${RESTART_SHARED_NAME} я не трогаю.`
+        + ` Положи ответ в ${path.basename(named)}`);
+    }
+    return { file: named, answer: null };
+  }
+  d.rsSharedWarned = false;
+  return { file: shared, answer: any };
+}
+
 function restartHandoffName(id, d) {
   return '.swarm-handoff-' + restartKeyOf(id, d) + '.md';
 }
@@ -4577,11 +4630,10 @@ function restartTick(id, d, now) {
   // прочитанный вовремя — теряет готовое разрешение на часы.
   let answer = null;
   let file = '';
-  if (restart.wantsAnswer(state, { now, enabled: RESTART_ENABLED, threshold: RESTART_PCT, pct })) {
-    file = restartAnswerFile(id, d);
-    try {
-      answer = { raw: fs.readFileSync(file, 'utf8'), mtime: fs.statSync(file).mtimeMs };
-    } catch (_) { answer = null; }
+  if (restart.wantsAnswer(state, { now, enabled: RESTART_ENABLED })) {
+    const got = restartReadAnswer(id, d);
+    file = got.file;
+    answer = got.answer;
   }
   const r = restart.step(state, {
     now,

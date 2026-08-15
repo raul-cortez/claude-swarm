@@ -211,11 +211,52 @@ test('после срока агент может и отказать сам —
   assert.strictEqual(r.state.retryAt, NOW + 45 * 60 * 1000);
 });
 
-// Лежащий ответ читается ради разрешения, а не ради перезапуска любой вкладки: пока порог не
-// перейдён, гасить нечего, и файл — просто мусор в чужой папке.
-test('ниже порога лежащий ответ вкладку не гасит', () => {
+// Решение владельца (15.08): «сделать максимально гибко, чтобы в любой момент можно было записать
+// файл, и скрипт понял, что надо перезапускать». Порог, время работы и отсрочка — причины не
+// НАЧИНАТЬ разговор самим; положенный файл ими не связан. Кто его кладёт, тот и знает лучше нас:
+// агент чувствует, что потерял нить, человек это видит со стороны, а процент — только догадка.
+test('зов файлом работает и до порога, и на молодой вкладке', () => {
   const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
-  assert.strictEqual(R.step(expired(), sig({ pct: 20, answer: { raw, mtime: NOW } })).action, 'nothing');
+  for (const over of [{ pct: 20 }, { pct: 0 }, { uptimeMs: 60_000 }, { threshold: 75 }]) {
+    const r = R.step(idle(), sig({ ...over, answer: { raw, mtime: NOW } }));
+    assert.strictEqual(r.action, 'grant', JSON.stringify(over));
+  }
+  // А чем поднимать — по-прежнему нужно: без строки запуска перезапуск не перезапуск, а потеря.
+  assert.strictEqual(R.step(idle(), sig({ hasBase: false, answer: { raw, mtime: NOW } })).action, 'nothing');
+  // И выключенная галочка главнее файла: она тоже решение человека, и он вправе ждать, что
+  // выключенная функция не гасит вкладки ничем.
+  assert.strictEqual(R.step(idle(), sig({ enabled: false, answer: { raw, mtime: NOW } })).action, 'nothing');
+});
+
+// Немота — это «больше не спрашиваю», и только: в неё вкладка попадает, когда агент трижды не
+// ответил или разрешение трижды не дожило до спокойного мига. Появившийся файл опровергает и то,
+// и другое, а игнорировать написанное разрешение значит объяснять человеку, почему сворм смотрит
+// мимо чёрным по белому написанного «можно».
+test('из немоты вытаскивает положенный файл', () => {
+  const muted = { ...idle(), phase: 'muted', silent: R.MAX_SILENT };
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step(muted, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.phase, 'granted');
+  assert.strictEqual(r.state.silent, 0, 'счётчик неответов обнуляет ответ');
+  assert.ok(/молчал/.test(r.note || ''), 'человеку видно, что вкладка вышла из немоты');
+  // Отказ из немоты тоже принимаем: агент ответил, значит писать файлы он может, и круг возобновлён.
+  const no = R.step(muted, sig({ answer: { raw: '{"restart":false,"retry":30}', mtime: NOW } }));
+  assert.strictEqual(no.action, 'drop');
+  assert.strictEqual(no.state.phase, 'idle');
+  assert.strictEqual(no.state.retryAt, NOW + 30 * 60 * 1000);
+  // А без файла немота остаётся немотой: спрашивать мы перестали не просто так.
+  assert.strictEqual(R.step(muted, sig()).action, 'nothing');
+  assert.strictEqual(R.step(muted, sig()).state.phase, 'muted');
+});
+
+// Полразрешения — «можно» без промпта или без указателя на эстафету — по-прежнему отказ. Но раз
+// файл теперь кладут и руками, причину надо назвать: иначе человек видит, что сворм его записку
+// молча проигнорировал.
+test('неполный зов отвергается с названной причиной', () => {
+  const r = R.step(idle(), sig({ answer: { raw: '{"restart":true}', mtime: NOW } }));
+  assert.strictEqual(r.action, 'drop');
+  assert.ok(/no-prompt/.test(r.note || ''), r.note);
 });
 
 test('залежавшийся файл после срока обычному пути не мешает, но его убирают', () => {
@@ -237,18 +278,18 @@ test('недописанный ответ после срока держит п�
   assert.ok(!r.dropAnswer);
 });
 
-// Когда читать файл, решает автомат: не вовремя прочитанный ответ перезапускает вкладку по прошлому
-// кругу, а не прочитанный вовремя — теряет готовое разрешение на часы.
-test('файл ответа читаем в трёх состояниях, и только в них', () => {
-  const o = { now: NOW, enabled: true, threshold: 30, pct: 40 };
+// Когда читать файл, решает автомат, а не условие в руках: не вовремя прочитанный ответ
+// перезапускает вкладку по прошлому кругу, а не прочитанный вовремя — теряет готовое разрешение.
+test('файл ответа читаем всюду, кроме уже начатого перезапуска', () => {
+  const o = { now: NOW, enabled: true };
   assert.strictEqual(R.wantsAnswer({ ...idle(), phase: 'asked' }, o), true, 'ждём ответа на просьбу');
   assert.strictEqual(R.wantsAnswer({ ...idle(), retryAt: NOW + 1000 }, o), true, 'идёт отсрочка');
-  assert.strictEqual(R.wantsAnswer(expired(), o), true, 'срок истёк, но порог всё ещё перейдён');
-  assert.strictEqual(R.wantsAnswer(idle(), { ...o, pct: 20 }), false, 'ниже порога гасить нечего');
+  assert.strictEqual(R.wantsAnswer(expired(), o), true, 'срок истёк');
+  assert.strictEqual(R.wantsAnswer(idle(), o), true, 'просто простой — файл всё равно смотрим');
+  assert.strictEqual(R.wantsAnswer({ ...idle(), phase: 'muted' }, o), true, 'молчим мы, а не он');
   assert.strictEqual(R.wantsAnswer(idle(), { ...o, enabled: false }), false, 'функция выключена');
-  assert.strictEqual(R.wantsAnswer({ ...idle(), phase: 'muted' }, o), false, 'спрашивать некому');
-  // Фазы после разрешения: там ответ не читается вовсе, и это ещё и про цену — фаза выхода
-  // тактуется четыре раза в секунду.
+  // Фазы после разрешения: там ответ уже принят и исполняется, а фаза выхода вдобавок тактуется
+  // четыре раза в секунду.
   for (const phase of ['granted', 'exiting']) {
     assert.strictEqual(R.wantsAnswer({ ...idle(), phase }, o), false, phase);
   }
