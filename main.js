@@ -148,9 +148,9 @@ function defaultWorkdir() {
 }
 
 // --- context progress bar, out of the box -----------------------------------
-// The per-tab context bar is scraped from a "NN%" in Claude's statusline (see
-// renderer updateCtx). Stock Claude prints no such line, so a fresh install would
-// show no bar. Rather than ask every user to configure `statusLine` by hand, we
+// The per-tab context bar comes from the numbers our statusline drops beside itself
+// (see ctxFillOf, and usageSnapshot in swarm-statusline.js). Stock Claude runs no such
+// script, so a fresh install would show no bar. Rather than ask every user to configure `statusLine` by hand, we
 // SHIP one (swarm-statusline.js) and inject it into each Claude launch via
 // `--settings`. That touches no file in the user's own config and needs no
 // separately-installed Node — the script runs under Electron-as-node.
@@ -408,7 +408,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, setAskPhrases, askFingerprint, parsePrompt, scrolledBack } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent } = require('./detector');
@@ -447,7 +447,7 @@ function makeDetector(cols, rows) {
     // сделанный, пока вид был живым. Пока отлистано, ВСЕ читатели экрана получают этот
     // снимок, а байты перерисовки не считаются работой. См. snapshot() ниже.
     scrolledBack: false, liveSnap: '', livePrompt: '',
-    status: '', detail: '', statusline: '', question: null, sub: 0, dead: false,
+    status: '', detail: '', statusline: '', ctxPct: null, question: null, sub: 0, dead: false,
     // Ход кончился словами «ничего, жду замер стенда»: статус «работает», но работает
     // не агент, а фоновая задача, и человеку это докладывают иначе. См. detector.js.
     bg: false,
@@ -576,6 +576,23 @@ function extractStatusline(d) {
   return statuslineOf(d.term.buffer.active, SNAP_ROWS);
 }
 
+// Заполнение контекста для полоски на вкладке. Берём ЧИСЛО из снимка расхода — того
+// самого, что статуслайн кладёт файлом рядом с настройками (swarm-statusline.js,
+// usageSnapshot), и по которому уже принимается решение о перезапуске (restartPctOf).
+// Раньше полоска жила на первом проценте из строки с экрана, и это врало: строка
+// приходит склеенной с соседними рядами, так что фраза агента «процессор загружен на
+// 80%» становилась «контекст занят на 80%» при живых 15%. Снимок не путается: он
+// приходит от самого Клода числами.
+//
+// Строка остаётся ЗАПАСНЫМ путём — для вкладки, которой наш статуслайн не подставлен
+// (в команде уже стоит своё --settings, см. injectStatusline). Там процент берётся
+// только вплотную к полоске блоков (ctxFromLine), а не первый попавшийся.
+function ctxFillOf(d, line) {
+  const u = readUsage(d.claudeSessionId);
+  if (u && u.ctx && u.ctx.used != null) return u.ctx.used;
+  return ctxFromLine(line);
+}
+
 function feedDetector(id, chunk) {
   const d = det.get(id);
   if (!d || d.dead) return;
@@ -657,6 +674,11 @@ setInterval(() => {
       const wasBox = !!d.waitingBox;
       d.waitingBox = next.status === 'waiting' && !!next.box;
       const statusline = extractStatusline(d);
+      // Снимок расхода читаем с диска не каждый такт, а когда строка статуса
+      // перерисовалась: снимок пишет тот же перерисованный статуслайн, между
+      // перерисовками читать нечего — а такт здесь раз в 300 мс на каждую вкладку.
+      if (statusline !== d.statusline) d.ctxPct = ctxFillOf(d, statusline);
+      const ctxPct = d.ctxPct;
       // How many sub-agents are running (Claude's Task/agent tool). Sent raw; the
       // renderer decides whether to keep the tab «работает» while they run and
       // whether to show the agent badge — both are toggles in the tab settings.
@@ -682,7 +704,7 @@ setInterval(() => {
         d.question = question;
         d.sub = sub;
         d.waitingKind = kind;
-        safeSend('session:status', { id, status: next.status, detail: next.detail, statusline, question, sub, waitingKind: kind, sure });
+        safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure });
         // Вкладка кончила ход — а перезапуск как раз этого и ждал: ответ агента ложится на диск в
         // конце хода, и гасить прежнего агента можно с того же мига. Без этого толчка круг упирался
         // в такт раз в полминуты и стоял на глазах у человека (см. restartKick).

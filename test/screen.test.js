@@ -251,6 +251,33 @@ test('перенесённая строка возвращается ЦЕЛИК�
   assert.strictEqual(S.statuslineOf(three, 16), 'Opus 5 │ repo ███ 24% 1M │ моя строка');
 });
 
+test('добор переноса не втягивает обёрнутую прозу выше', () => {
+  // Ровно тот случай, из-за которого полоска врала: длинная фраза агента переносится
+  // ряд за рядом и упирается в строку статуса, а цепочка isWrapped тянется через весь
+  // абзац. Раньше строка статуса возвращалась вместе с ним, и первым процентом в ней
+  // оказывался процессорный.
+  const rows = [{ text: 'не могу прогнать тесты, ' }];
+  for (let i = 0; i < 8; i++) rows.push({ text: 'процессор загружен на 80% ', wrapped: true });
+  rows.push({ text: 'Opus 5 │ repo ██░ 24% 1M', wrapped: true });
+  const line = S.statuslineOf(wrapBuf(rows), 16);
+  assert.ok(!line.includes('не могу прогнать'), 'проза в строку статуса не попадает');
+  assert.ok(line.endsWith('Opus 5 │ repo ██░ 24% 1M'));
+});
+
+// --- процент контекста из строки: только у полоски блоков ---------------------
+test('ctxFromLine берёт процент вплотную к полоске, а не первый в строке', () => {
+  assert.strictEqual(S.ctxFromLine('Opus 5 │ repo ██░ 24% 1M │ 5ч 37%'), 24);
+  assert.strictEqual(S.ctxFromLine('процессор загружен на 80% ██░ 24% 1M'), 24);
+  assert.strictEqual(S.ctxFromLine('💀 ██████████ 100% 1M'), 100);
+});
+
+test('ctxFromLine молчит там, где полоски контекста нет', () => {
+  assert.strictEqual(S.ctxFromLine('не могу прогнать тесты, процессор загружен на 80%'), null);
+  assert.strictEqual(S.ctxFromLine('Opus 5 │ repo │ 5ч 37%'), null);
+  assert.strictEqual(S.ctxFromLine(''), null);
+  assert.strictEqual(S.ctxFromLine(null), null);
+});
+
 test('snapshotRows keeps blank rows that sit BETWEEN content', () => {
   assert.strictEqual(S.snapshotRows(fakeBuf(['a', '', 'b', '']), 16), 'a\n\nb');
 });

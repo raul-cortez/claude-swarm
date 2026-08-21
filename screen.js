@@ -78,6 +78,8 @@ function snapshotWrapped(buf, rows) {
 // смотря где ляжет перенос. Хвост сам по себе — это ЧУЖАЯ строка вместо нашей: полоска
 // нарисуется по первому проценту в ней, а на этом же проценте стоит решение о перезапуске
 // по контексту. Голова сама по себе — обрезанная наша, без чужого куска вовсе.
+const WRAP_MAX = 3;   // сколько рядов переноса добираем в каждую сторону
+
 function statuslineOf(buf, rows) {
   const end = contentEnd(buf);   // тот же якорь, что у snapshot(): пустой хвост врёт
   const start = Math.max(0, end - rows);
@@ -86,10 +88,13 @@ function statuslineOf(buf, rows) {
     if (!line) continue;
     const t = line.translateToString(true).trim();
     if (!t.includes('│') && !/[█░]/.test(t)) continue;
+    // Добор ОГРАНИЧЕН: строка статуса занимает от одного до трёх рядов, а цепочка
+    // isWrapped тянется через весь обёрнутый абзац прозы выше — и втягивала его в строку
+    // статуса целиком вместе с любыми процентами в нём.
     let top = y;
-    while (top > start && buf.getLine(top) && buf.getLine(top).isWrapped) top--;
+    while (top > start && y - top < WRAP_MAX && buf.getLine(top) && buf.getLine(top).isWrapped) top--;
     let bottom = y;
-    while (bottom + 1 < end && buf.getLine(bottom + 1) && buf.getLine(bottom + 1).isWrapped) bottom++;
+    while (bottom + 1 < end && bottom - y < WRAP_MAX && buf.getLine(bottom + 1) && buf.getLine(bottom + 1).isWrapped) bottom++;
     // Склеиваем как snapshotWrapped: у ряда, за которым идёт продолжение, хвост обрезать
     // нельзя, иначе на стыке пропадёт пробел и два слова срастутся.
     let whole = '';
@@ -103,6 +108,24 @@ function statuslineOf(buf, rows) {
   }
 
   return '';
+}
+
+// Заполнение контекста ИЗ строки статуса — запасной путь для вкладки, у которой нет
+// снимка расхода (см. ctxFillOf в main.js: свой статуслайн вкладке не подставлен, потому
+// что в команде уже стоит своё --settings). Процент берём только тот, что стоит ВПЛОТНУЮ
+// к полоске блоков, а не первый в строке. Первый — это то, из-за чего полоска врала:
+// строка приходит склеенной с соседними рядами (см. добор по isWrapped выше), и фраза
+// агента «не могу прогнать тесты, процессор загружен на 80%» красила вкладку в 80% при
+// живых 15% контекста. Блоки рисует только метр контекста — ни наш (renderLine в
+// swarm-statusline.js), ни чужой процент без них не спутать с прозой.
+const CTX_BAR_RE = /[█░▓▒]{2,}[^%\n]{0,8}?(\d{1,3})\s*%/;
+
+function ctxFromLine(line) {
+  const m = CTX_BAR_RE.exec(String(line == null ? '' : line));
+  if (!m) return null;
+  const pct = parseInt(m[1], 10);
+  if (!isFinite(pct)) return null;
+  return Math.max(0, Math.min(100, pct));
 }
 
 // A selection row before the answer: "❯ 1. Yes". Claude Code paints ❯, but
@@ -634,5 +657,5 @@ module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack,
-  contentEnd, snapshotRows, snapshotWrapped, statuslineOf,
+  contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine,
 };

@@ -366,7 +366,7 @@ window.swarm.onClaudeSession(({ id, claudeSessionId }) => {
   persistTabs();
 });
 
-// Inferred status from main (running / ready / waiting + detail + statusline).
+// Inferred status from main (running / ready / waiting + detail + context fill).
 const RUN_BUFFER_MS = 2500; // delay painting "работает" so sub-buffer blips never show
 // Leaving «ждёт» is held separately (and shorter): its job is only to keep the Пульт
 // queue steady through a repaint blip while you read the question — main already
@@ -401,13 +401,13 @@ function statusName(s) {
 const KIND_LABEL = { permission: 'разрешение', question: 'вопрос' };
 function waitLabel(s) { return KIND_LABEL[s && s.waitKind] || 'ждёт ответа'; }
 
-window.swarm.onStatus(({ id, status, detail, statusline, question, sub, waitingKind, sure }) => {
+window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind, sure }) => {
   const s = sessions.get(id);
   if (!s || !s.alive) return;
 
   if (STATUS_DEBUG) console.debug('[status] ← main', statusName(s), 'raw:', status, 'detail:', detail, 'shown:', s.status);
 
-  if (statusline != null) { s.statusline = statusline; updateCtx(s); }
+  if (ctxPct !== undefined) { s.ctxPct = ctxPct; updateCtx(s); }
   if (question !== s.question) { s.question = question; renderPult(); }
   if ((waitingKind || null) !== (s.waitKind || null)) {
     s.waitKind = waitingKind || null;
@@ -523,18 +523,20 @@ function updateAgents(s) {
   if (num) num.textContent = n > 1 ? String(n) : '';
 }
 
-// Show the session's context fill on its card, parsed from the Claude statusline
-// (which contains "… ████░░ 65% …"). Colored green/amber/red by how full it is.
+// Заполнение контекста на карточке вкладки. Число приходит готовым из main (ctxFillOf):
+// точное, от самого Клода. Разбирать процент из строки статуса здесь больше нельзя —
+// в неё попадает проза агента, и полоска показывала «80%» от фразы про загрузку
+// процессора, пока контекста было занято 15%.
 function updateCtx(s) {
   const ctx = s.tab.querySelector('.ctx');
-  const m = (s.statusline || '').match(/(\d+)\s*%/);
-  if (!m) { ctx.hidden = true; return; }
-  const pct = Math.max(0, Math.min(100, parseInt(m[1], 10)));
+  const pct = Number(s.ctxPct);
+  if (s.ctxPct == null || !isFinite(pct)) { ctx.hidden = true; return; }
+  const val = Math.max(0, Math.min(100, Math.round(pct)));
   ctx.hidden = false;
-  ctx.querySelector('.ctx-fill').style.width = pct + '%';
-  ctx.querySelector('.ctx-num').textContent = pct + '%';
+  ctx.querySelector('.ctx-fill').style.width = val + '%';
+  ctx.querySelector('.ctx-num').textContent = val + '%';
   ctx.classList.remove('ctx-lo', 'ctx-mid', 'ctx-hi');
-  ctx.classList.add(pct < 50 ? 'ctx-lo' : pct < 80 ? 'ctx-mid' : 'ctx-hi');
+  ctx.classList.add(val < 50 ? 'ctx-lo' : val < 80 ? 'ctx-mid' : 'ctx-hi');
 }
 
 window.swarm.onExit(({ id }) => {
