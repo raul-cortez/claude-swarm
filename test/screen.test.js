@@ -903,6 +903,54 @@ test('обычный вывод агента за лимит не принима
   assert.strictEqual(S.limitHit(''), false);
 });
 
+
+// Настоящие строки Claude Code 2.1.239 — вынуты `strings` из бинарника, а не вспомнены. Это и
+// был последний открытый вопрос ночного режима: угадали ли мы формулировку стены.
+test('баннеры настоящего Клода узнаются', () => {
+  assert.strictEqual(S.limitHit('Usage limit reached · continuing automatically at 3:00 PM · esc to cancel'), true);
+  assert.strictEqual(S.limitHit('Usage limit reached · continuing shortly · esc to cancel'), true);
+  assert.strictEqual(S.limitHit('Usage limit reached again after you continued · continuing automatically at 7:00 AM'), true);
+  assert.strictEqual(S.limitHit('Lower-priority mode ended · you have reached your weekly usage limit'), true);
+  assert.strictEqual(S.limitHit("You're out of usage credits. /model to switch models."), true);
+  assert.strictEqual(S.limitHit('Your organization is out of usage credits. Contact your admin to add more.'), true);
+});
+
+// Слово limit в интерфейсе Клода встречается ещё в десятке мест, и ни одно из них не значит
+// «окно подписки кончилось»: контекст, подагенты, бюджет, быстрый режим.
+test('чужие потолки Клода за стену подписки не принимаются', () => {
+  assert.strictEqual(S.limitHit('Context limit reached'), false);
+  assert.strictEqual(S.limitHit('Concurrent subagent limit reached. You can run 5 at once'), false);
+  assert.strictEqual(S.limitHit('Subagent nesting limit reached (depth 3)'), false);
+  assert.strictEqual(S.limitHit('Budget limit reached ($20.00)'), false);
+  assert.strictEqual(S.limitHit('Fast limit reached and temporarily disabled'), false);
+  assert.strictEqual(S.limitHit("You've reached your Fable 5 limit"), false);
+  assert.strictEqual(S.limitHit('spend limit reached (daily; resets 2026-08-08 00:00 UTC)'), false);
+});
+
+// Режим низкого приоритета: строка про сброс есть, а стены нет — агент в эту минуту РАБОТАЕТ.
+// Разбудить его значит напечатать «продолжай» в середину живого хода.
+test('низкий приоритет со словами про сброс стеной не считается', () => {
+  assert.strictEqual(S.limitHit('Continuing now at lower priority until your limit resets at 3:00 PM. Your weekly limit still applies.'), false);
+  assert.strictEqual(S.limitHit('Continuing automatically when your limit resets at 3:00 PM'), false);
+});
+
+// Разговор О стене — не стена. Этот файл, документация и вывод теста печатаются в те же вкладки.
+test('цитата и русская проза за стену не принимаются', () => {
+  assert.strictEqual(S.limitHit('⏺ в 2.1.239 баннер звучит как Usage limit reached — проверил strings'), false);
+  assert.strictEqual(S.limitHit('  assert.strictEqual(S.limitHit("Usage limit reached"), true);'), false);
+  assert.strictEqual(S.limitHit('• Anthropic API: "401", "Invalid API key", "usage limit reached"'), false);
+  assert.strictEqual(S.limitHit('Мы читаем экран, потому что usage limit reached виден только там, и это давняя история про то, как ночь ошибалась'), false);
+});
+
+// Сброс — обратный случай: окно открылось, и вкладка ждёт одного нажатия. Ночью его некому
+// сделать, поэтому отличаем от стены отдельно.
+test('сообщение о сбросе лимита узнаётся и стеной не считается', () => {
+  assert.strictEqual(S.limitReset('Your usage limit has reset · press enter to continue'), true);
+  assert.strictEqual(S.limitHit('Your usage limit has reset · press enter to continue'), false);
+  assert.strictEqual(S.limitReset('Usage limit reached · continuing automatically at 3:00 PM'), false);
+  assert.strictEqual(S.limitReset(''), false);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }

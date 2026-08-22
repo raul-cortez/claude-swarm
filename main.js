@@ -412,7 +412,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent } = require('./detector');
@@ -4236,7 +4236,7 @@ function nightSt(d) {
       // limitAt — когда увидели стену, wokeUntil — по какому сбросу уже будили. Второе нужно
       // потому, что сообщение о лимите остаётся на экране и ПОСЛЕ подъёма: без него ночь
       // ловила бы одну и ту же строку по кругу и печатала в работающую вкладку.
-      limitAt: 0, wokeUntil: 0, limitMute: false,
+      limitAt: 0, wokeUntil: 0, limitMute: false, resetMute: false,
       stoodKey: '', stoodPhase: '',
     };
   }
@@ -4404,6 +4404,28 @@ function nightOnLimit(id, d) {
   }, wait);
 }
 
+// Окно открылось само, и Клод ждёт одного нажатия: «Your usage limit has reset · press enter
+// to continue». Будильник тут ни при чём — сброс уже случился, ждать нечего, — но и вкладка
+// сама не тронется. Днём на клавишу нажимает человек, ночью нажимаем мы.
+//
+// Считается тем же потолком, что и подъём после стены: три касания за ночь на вкладку, дальше
+// пусть стоит. Отметка resetMute снимается, когда вкладка снова заработала, — сообщение с
+// экрана никуда не девается, и без отметки мы печатали бы в неё каждые двадцать секунд.
+function nightOnLimitReset(id, d) {
+  const st = nightSt(d);
+  if (st.resetMute) return;
+  st.resetMute = true;
+  if (st.wakes >= NIGHT_MAX_WAKES) {
+    tgLog(`ночь: у вкладки ${id} сбросился лимит, но потолок подъёмов исчерпан`);
+    return;
+  }
+  st.wakes++;
+  st.limitAt = 0;
+  nightType(id, night.wakeWord());
+  nightLog('wake', id, d, {});
+  tgLog(`ночь: вкладка ${id} дождалась сброса лимита — нажал за неё`);
+}
+
 // Вопрос про порог фазы: вкладка простаивает, а работа могла и не кончиться.
 function nightAskPhase(id, d) {
   const st = nightSt(d);
@@ -4449,7 +4471,11 @@ setInterval(() => {
       // Стена лимита. Ищем и у «готовой» вкладки, и у ждущей: сообщение остаётся на экране, а
       // ход при этом кончился — со стороны это ровно «готов».
       if (!st.wakeTimer && (d.status === 'ready' || d.status === 'waiting')) {
-        if (limitHit(snapshot(d))) nightOnLimit(id, d);
+        const snap = snapshot(d);
+        // Сообщение о сбросе разбираем ПЕРЕД стеной: на экране они уживаются (стена осталась
+        // выше, сброс пришёл ниже), а значат противоположное — «жди ещё» и «жать прямо сейчас».
+        if (limitReset(snap)) nightOnLimitReset(id, d);
+        else if (limitHit(snap)) nightOnLimit(id, d);
       }
       // Ждущую вкладку разбираем и ЗДЕСЬ, а не только на перемене статуса. Такт статуса зовёт
       // nightOnWaiting по событию — «что-то в вкладке изменилось», — а вкладка, стоящая на
@@ -4461,7 +4487,7 @@ setInterval(() => {
       if (d.status === 'waiting') nightOnWaiting(id, d);
       nightResolvePhase(id, d, now);
       // Вкладка снова работает — значит стена лимита, если она была, кончилась сама.
-      if (d.status === 'running') st.limitMute = false;
+      if (d.status === 'running') { st.limitMute = false; st.resetMute = false; }
       // Сколько вкладка простаивает. Считаем здесь, а не в такте статуса: там это лишнее поле
       // в горячем цикле, а здесь — две строчки раз в двадцать секунд.
       if (d.status === 'ready' && !d.bg) { if (!st.readyAt) st.readyAt = now; }

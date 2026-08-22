@@ -662,29 +662,72 @@ function scrolledBack(snapshot) {
 // только по сообщению. Время сброса при этом берётся из снимка (там оно абсолютное и
 // точное), так что разбирать часы из текста не нужно — и не нужно угадывать часовой пояс.
 //
-// «Approaching» и «nearing» отбрасываем: это предупреждение, при нём агент прекрасно
-// работает, а разбудить работающую вкладку значит перебить её на середине хода.
-// Приставка ОБЯЗАТЕЛЬНА, и это не придирка к регулярке. С необязательной группой `|` съедал
-// весь смысл: альтернатива имеет низший приоритет, и выражение читалось как «limit reached» ИЛИ
-// «limit will reset at» — то есть ловило любую строку с этими словами. А `rate limit reached` из
-// чужого вывода (лог теста, работа с чьим-то API, цитата из документации) агент печатает
-// сплошь, и ночь принимала это за стену: писала в сводку потерянные часы и печатала «продолжай»
-// в здоровую вкладку.
-const LIMIT_RE = /\b(?:usage|5-hour|five-hour|weekly|session)\s+limit\s+reached\b|\blimit\s+will\s+reset\s+at\b/i;
+// Формулировки взяты не по памяти, а из самого Claude Code (2.1.239, `strings` по бинарнику):
+//
+//   Usage limit reached · continuing automatically at 3:00 PM · esc to cancel
+//   Usage limit reached again after you continued · continuing automatically shortly · …
+//   Lower-priority mode ended · you have reached your weekly usage limit
+//   You're out of usage credits. /model to switch models.
+//   Your usage limit has reset · press enter to continue        (это уже не стена, см. ниже)
+//
+// Оттуда же два урока. Первый: `limit will reset at` в нынешнем Клоде НЕ ВСТРЕЧАЕТСЯ вовсе —
+// это формулировка первых версий, и держим мы её только ради тех, кто сидит на старой сборке.
+// Второй: похожая строка `until your limit resets at 15:00` печатается, когда агент как раз
+// РАБОТАЕТ (режим низкого приоритета), — принять её за стену значило бы разбудить занятого.
+const LIMIT_RE = new RegExp([
+  // Главный баннер и его вариант после автопродолжения.
+  /\b(?:usage|5-hour|five-hour|weekly|session)\s+limit\s+reached\b/,
+  // «Ты исчерпал…» — тот же смысл с другим порядком слов: слово reached стоит ПЕРЕД лимитом.
+  // Окно называть обязательно: «You've reached your Fable 5 limit» — это диалог про модель, у
+  // него есть кнопки, и разбирает его обычная ветка ожидания, а не будильник.
+  /\byou(?:'ve|’ve| have)?\s+reached\s+your\s+(?:\w+[\s-]){0,2}(?:usage|weekly|5-hour|five-hour|session)[\s-]+(?:\w+[\s-]){0,2}limit\b/,
+  // Кредиты: стена без сброса (у неё нет окна, поэтому будильник заводить не по чему —
+  // но в журнал попасть она обязана, иначе утром простой вкладки нечем объяснить).
+  /\bout\s+of\s+usage\s+credits\b/,
+  // Клод до 2.x.
+  /\blimit\s+will\s+reset\s+at\b/,
+].map((r) => r.source).join('|'), 'i');
+
+// Предупреждение — не стена: при нём агент прекрасно работает, а разбудить работающую вкладку
+// значит перебить её на середине хода.
 const LIMIT_SOFT_RE = /approach|nearing|almost|warning/i;
 
-function limitHit(snapshot) {
+// Сообщение о сбросе. Отдельно от стены и с обратным смыслом: окно уже открылось, вкладка
+// стоит и ждёт ОДНОГО нажатия. Днём его делает человек, ночью — некому.
+const LIMIT_RESET_RE = /\busage\s+limit\s+has\s+reset\b/i;
+
+// Строка — сообщение самого Клода, а не чужие слова на экране.
+//
+// Ровно на этом ночь спотыкалась: `rate limit reached` из вывода теста, цитата в документации,
+// комментарий в коде — и ночь писала в сводку потерянные часы и печатала «продолжай» в здоровую
+// вкладку. Три признака отличают баннер от разговора о баннере, и все три дешёвые:
+//
+//   • кириллица — агент здесь пишет по-русски, интерфейс Клода по-английски всегда;
+//   • обратные кавычки и двойные кавычки — так цитируют, а не сообщают (сам Клод свои же
+//     сообщения перечисляет в кавычках, например в подсказке про ошибки API);
+//   • место — баннер начинается почти с начала строки, а в прозе фраза оказывается в середине.
+function ownMessage(line) {
+  if (/[а-яё]/i.test(line)) return false;
+  if (/[`"]/.test(line)) return false;
+  return true;
+}
+
+function hits(snapshot, re) {
   for (const line of String(snapshot == null ? '' : snapshot).split('\n')) {
     const t = line.trim();
-    if (!t || LIMIT_SOFT_RE.test(t)) continue;
-    if (LIMIT_RE.test(t)) return true;
+    if (!t || LIMIT_SOFT_RE.test(t) || !ownMessage(t)) continue;
+    const m = re.exec(t);
+    if (m && m.index <= 80) return true;
   }
   return false;
 }
 
+function limitHit(snapshot) { return hits(snapshot, LIMIT_RE); }
+function limitReset(snapshot) { return hits(snapshot, LIMIT_RESET_RE); }
+
 module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
-  parsePrompt, fingerprintOf, scrolledBack, limitHit,
+  parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset,
   contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine,
 };
