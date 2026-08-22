@@ -888,6 +888,15 @@ test('предупреждение о близком лимите стеной �
   assert.strictEqual(S.limitHit('Warning: nearing your weekly limit reached soon'), false);
 });
 
+// Ловушка регулярки: `|` имеет низший приоритет, и с необязательной приставкой выражение
+// читалось как «любая строка со словами limit reached». А `rate limit reached` из чужого вывода
+// агент печатает сплошь — и ночь принимала это за стену подписки.
+test('чужой «rate limit reached» стеной подписки не считается', () => {
+  assert.strictEqual(S.limitHit('Error: rate limit reached, retrying in 2s'), false);
+  assert.strictEqual(S.limitHit('limit reached'), false);
+  assert.strictEqual(S.limitHit('# если limit reached — повторяем запрос'), false);
+});
+
 test('обычный вывод агента за лимит не принимается', () => {
   assert.strictEqual(S.limitHit('⏺ Готово, тесты зелёные'), false);
   assert.strictEqual(S.limitHit('const LIMIT = 90; // предел'), false);

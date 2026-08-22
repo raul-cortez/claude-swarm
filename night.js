@@ -44,6 +44,12 @@ const WAKE_LAG_MS = 120_000;
 // у агента нет тоже — потолок остаётся единственным. Шесть фаз за восемь часов уводят работу
 // туда, где утреннее ревью дороже сделанного.
 const MAX_CONTINUES = 3;
+// Столько же и ВОПРОСОВ про порог фазы, и это отдельный счётчик по важной причине. Раньше
+// вкладка, ответившая «всё сделано», запиралась отметкой навсегда — а отличить «закончил всю
+// работу» от «закончил очередной шаг» по одному взгляду на статус нельзя: и то и другое к
+// моменту проверки выглядит как молчащая зелёная вкладка. Запирающая отметка отнимала у такой
+// вкладки остаток ночи, потолок же стоит три вопроса — цена ошибки в другую сторону.
+const MAX_ASKS = 3;
 // Столько же и толчков в ждущую вкладку. Отдельный счётчик, потому что это разные события:
 // продолжение — работа дальше, толчок — попытка снять остановку.
 const MAX_NUDGES = 3;
@@ -147,13 +153,14 @@ function phaseDecision(st, ctx) {
   // его разбудит сама. Вопрос сюда — перебивание.
   if (c.bg) return { act: 'skip', why: 'ждёт фоновую задачу' };
   if (c.limited) return { act: 'skip', why: 'стоит на лимите' };
-  // Уже спрашивали, и вкладка ответила «всё сделано». Без этой памяти вопрос повторялся бы
-  // каждые две минуты до утра: ход-то у ответа свой, и проверка «про этот ход уже спрашивали»
-  // его не ловит. Снимается, когда вкладка снова заработает — значит работа появилась.
-  if (s.finished) return { act: 'skip', why: 'уже сказала, что закончила' };
   if ((c.now - (c.startedAt || 0)) < WARMUP_MS) return { act: 'skip', why: 'вкладка только открылась' };
   if ((c.now - (c.readyAt || 0)) < IDLE_MS) return { act: 'skip', why: 'простаивает меньше двух минут' };
+  // Простой должен быть НОВЫМ, а не тем же самым. Вкладка, которая наш вопрос попросту
+  // проигнорировала (бывает: агент занят своим и в строку ввода не смотрит), из «готова» не
+  // выходила вовсе — её простой начался раньше вопроса, и спрашивать второй раз незачем.
+  if (s.askedAt && (c.readyAt || 0) <= s.askedAt) return { act: 'skip', why: 'простой тот же, что был при вопросе' };
   if ((s.continues || 0) >= MAX_CONTINUES) return { act: 'stand', why: 'потолок продолжений за ночь' };
+  if ((s.asks || 0) >= MAX_ASKS) return { act: 'stand', why: 'потолок вопросов за ночь' };
   if (s.askedTurn && s.askedTurn === c.turn) return { act: 'skip', why: 'про этот ход уже спрашивали' };
   return { act: 'ask', why: 'простой две минуты' };
 }
@@ -233,6 +240,12 @@ function digest(entries, tabs, now, opts) {
   const from = Number.isFinite(opts && opts.from) ? opts.from : (list.length ? list[0].at : at);
   const byName = (t) => String((t && t.name) || 'вкладка');
 
+  // Имя вкладки у записи хука появляется не всегда: он знает только id разговора Клода, а
+  // приложение подставляет имя, только если такая вкладка ещё жива (после самоперезапуска id
+  // другой). Без этой заглушки `/morning` печатал «• undefined — …»: в окне рендерер это
+  // прикрывал своим `|| 'вкладка'`, а текст для чата — нет.
+  const nm = (e) => (e && e.tab) || 'вкладка';
+
   const groups = [];
   const push = (id, title, rows) => { if (rows.length) groups.push({ id, title, rows }); };
 
@@ -265,7 +278,7 @@ function digest(entries, tabs, now, opts) {
     if (e.kind !== 'limit') continue;
     const woke = list.find((w) => w.kind === 'wake' && w.tab === e.tab && w.at > e.at);
     limited.push({
-      tab: e.tab, id: e.id,
+      tab: nm(e), id: e.id,
       text: woke
         ? `стояла на лимите с ${clock(e.at)} до ${clock(woke.at)} — разбудили сами`
         : `упёрлась в лимит в ${clock(e.at)}` + (e.until ? `, сброс в ${clock(e.until)}` : ''),
@@ -277,7 +290,7 @@ function digest(entries, tabs, now, opts) {
   // 4. Решено без тебя. Дословная развилка из отказа хука — самая ценная группа: это очередь
   // на ревью, и другого места, где виден точный вопрос, у нас нет.
   const decided = list.filter((e) => e.kind === 'deny-box').map((e) => ({
-    tab: e.tab, id: e.id,
+    tab: nm(e), id: e.id,
     text: short(e.text, 400) || 'вопрос без текста',
     meta: [clock(e.at), Array.isArray(e.options) && e.options.length
       ? 'варианты: ' + e.options.map((o) => short(o, 40)).join(' / ') : ''].filter(Boolean).join(' · '),
@@ -286,16 +299,17 @@ function digest(entries, tabs, now, opts) {
 
   // 5. Продолжили сами. Второе место, где агент ушёл дальше, чем ему разрешали словами.
   const went = list.filter((e) => e.kind === 'continue').map((e) => ({
-    tab: e.tab, id: e.id,
+    tab: nm(e), id: e.id,
     text: short(e.text, 400) || 'закрыла этап и пошла дальше',
     meta: `${clock(e.at)} · продолжение №${e.n || 1}`,
   }));
   push('went', 'Продолжили сами', went);
 
-  // 6. Толчки, оставшиеся без последствий, и вкладки, которых мы решили не трогать. Не дела, а
-  // объяснение: почему ночь прошла тише, чем ожидалось.
+  // 6. Вкладки, которых ночь решила НЕ трогать, с причиной. Не дела, а объяснение: почему ночь
+  // прошла тише, чем ожидалось. Самих толчков и вопросов здесь нет намеренно — в сводке важен
+  // их исход (он уже в группах выше или в живом состоянии вкладки), а не число попыток.
   const stood = list.filter((e) => e.kind === 'stand').map((e) => ({
-    tab: e.tab, id: e.id,
+    tab: nm(e), id: e.id,
     text: short(e.why, 200) || 'оставили стоять',
     meta: clock(e.at),
   }));
@@ -303,11 +317,11 @@ function digest(entries, tabs, now, opts) {
 
   // 7. Тихие. Отдельно мёртвые: вкладка, которой нет, — не «закончила».
   const done = list.filter((e) => e.kind === 'done').map((e) => ({
-    tab: e.tab, id: e.id, text: short(e.text, 300) || 'ход закончен', meta: clock(e.at),
+    tab: nm(e), id: e.id, text: short(e.text, 300) || 'ход закончен', meta: clock(e.at),
   }));
   push('done', 'Закончили и молчат', done);
   const died = list.filter((e) => e.kind === 'died').map((e) => ({
-    tab: e.tab, id: e.id, text: 'вкладка закрылась', meta: clock(e.at),
+    tab: nm(e), id: e.id, text: 'вкладка закрылась', meta: clock(e.at),
   }));
   push('died', 'Умерли', died);
 
@@ -346,7 +360,7 @@ function digestText(dg) {
 
 return {
   NIGHT, IDLE_MS, NUDGE_DELAY_MS, WARMUP_MS, WAKE_LAG_MS, MAX_CONTINUES, MAX_NUDGES,
-  GATE_FIVE, GATE_SEVEN, KINDS,
+  MAX_ASKS, GATE_FIVE, GATE_SEVEN, KINDS,
   rule, phaseAsk, wakeWord,
   nudgeDecision, phaseDecision,
   entry, line, parse, digest, digestText, eta, clock, short,

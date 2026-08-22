@@ -400,8 +400,15 @@ function pickUsage(snaps, sessionId) {
   if (!own) return null;
   const home = String(own.home || '');
   const pool = home ? list.filter((s) => String(s.home || '') === home) : [own];
-  const fresh = pool.slice().sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))[0] || own;
-  if (!fresh.five && !fresh.seven) return null;
+  // Самый свежий из тех, у кого ЕСТЬ числа окон, а не просто самый свежий. Снимок пишется и
+  // когда в нём одно заполнение контекста: у сессии, не получившей ещё ни одного ответа API, и
+  // у вкладки на ключе вместо подписки. Такой файл, легший последним, обнулял ворота целиком —
+  // ровно в тот момент, когда они нужны: рабочая вкладка на 97%, открыл новую, и подагенты
+  // снова разрешены всем.
+  const fresh = pool
+    .filter((s) => s.five || s.seven)
+    .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))[0];
+  if (!fresh) return null;
   return { five: fresh.five || null, seven: fresh.seven || null, at: Number(fresh.at) || 0 };
 }
 

@@ -418,6 +418,18 @@ test('снимок расхода берётся самый свежий, но �
   assert.strictEqual(H.pickUsage(snaps, 'unknown'), null, 'своего снимка нет — не решаем ничего');
 });
 
+// Снимок пишется и когда в нём одно заполнение контекста: у сессии, не получившей ещё ни одного
+// ответа API, и у вкладки на ключе вместо подписки. Такой файл, легший последним, обнулял ворота
+// целиком — ровно тогда, когда они нужны.
+test('снимок без чисел окон не отменяет ворота', () => {
+  const snaps = [
+    { session: 'work', home: '/h', at: 5, five: { spent: 97 } },
+    { session: 'fresh', home: '/h', at: 99, ctx: { used: 10 } },
+  ];
+  assert.strictEqual(H.pickUsage(snaps, 'fresh').five.spent, 97, 'берём свежий из ТЕХ, где числа есть');
+  assert.strictEqual(H.pickUsage([{ session: 'x', home: '/h', at: 1, ctx: { used: 1 } }], 'x'), null);
+});
+
 test('снимок без аккаунта (строка статуса прежней версии) считается только своим', () => {
   const snaps = [{ session: 'mine', at: 1, five: { spent: 10 } }, { session: 'x', at: 99, five: { spent: 99 } }];
   assert.strictEqual(H.pickUsage(snaps, 'mine').five.spent, 10);

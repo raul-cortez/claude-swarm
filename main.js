@@ -4192,12 +4192,19 @@ function nightOn() { return tgPresence === night.NIGHT; }
 function nightPath() { return path.join(app.getPath('userData'), 'night.jsonl'); }
 function nightDigestPath() { return path.join(app.getPath('userData'), 'night-digest.json'); }
 
-// Идёт ли круг самоперезапуска. Печатать в вкладку в это время нельзя: перезапуск сам
-// разговаривает с агентом (просьба, ответ в файл, `/exit`), и наш текст, приехавший посреди
-// этого разговора, попадёт в ту же строку ввода. Два писателя в одну строку — это мусор
-// вместо просьбы и потерянный перезапуск.
+// Разговаривает ли перезапуск с агентом ПРЯМО СЕЙЧАС. Печатать в вкладку в это время нельзя:
+// он сам печатает туда просьбу и `/exit`, и наш текст, приехавший посреди, попадёт в ту же
+// строку ввода. Два писателя в одну строку — мусор вместо просьбы и потерянный перезапуск.
+//
+// Занятость — это ровно две фазы, `asked` и `exiting`. Остальные — покой, и путать их с
+// разговором нельзя: `muted` (агент трижды не ответил) и `granted` под непрочитанным ждут
+// СУТКАМИ — у второй часы разрешения намеренно остановлены до человеческих глаз, а ночью глаз
+// нет. Считай мы их занятостью, вкладка, однажды заслужившая такую фазу, до утра не получила
+// бы ни толчка, ни вопроса, ни будильника по лимиту.
+const NIGHT_RS_BUSY = ['asked', 'exiting'];
+
 function nightBusyWithRestart(d) {
-  return !!(d && d.rs && d.rs.phase && d.rs.phase !== 'idle');
+  return !!(d && d.rs && NIGHT_RS_BUSY.includes(d.rs.phase));
 }
 
 // Когда включили ночь: по этой границе сводка отбирает записи журнала. Ноль — ночи не было.
@@ -4225,7 +4232,7 @@ function nightSt(d) {
     d.ni = {
       nudges: 0, nudgedKeys: [], continues: 0, wakes: 0,
       nudgeTimer: null, wakeTimer: null,
-      readyAt: 0, askedAt: 0, askedTurn: 0, finished: false,
+      readyAt: 0, askedAt: 0, askedTurn: 0, asks: 0,
       // limitAt — когда увидели стену, wokeUntil — по какому сбросу уже будили. Второе нужно
       // потому, что сообщение о лимите остаётся на экране и ПОСЛЕ подъёма: без него ночь
       // ловила бы одну и ту же строку по кругу и печатала в работающую вкладку.
@@ -4354,9 +4361,10 @@ function nightOnLimit(id, d) {
     ? ((five.spent || 0) >= (seven.spent || 0) ? five : seven)
     : (five || seven);
   const untilMs = worst && Number.isFinite(worst.resetsAt) ? worst.resetsAt * 1000 : 0;
-  // Та же стена, по которой мы уже будили: сообщение о лимите с экрана не исчезает, и без
-  // этой проверки ночь печатала бы «продолжай» в работающую вкладку раз за разом. Новая стена
-  // отличается временем сброса — оно уходит вперёд.
+  // Та же стена, которую мы уже обработали: сообщение о лимите с экрана не исчезает, а такт
+  // приходит каждые двадцать секунд. Отметку ставим ЗДЕСЬ, до всякой записи в журнал, — иначе
+  // одна стена давала строку в журнал (и строку в утренней сводке) три раза в минуту до утра.
+  // Новая стена отличается временем сброса: оно уходит вперёд.
   if (untilMs && untilMs <= st.wokeUntil) return;
   // Время сброса неизвестно (снимка расхода нет — вкладка не рисовала строку статуса). Будить
   // нечем, поэтому только записываем, и ровно один раз.
@@ -4368,6 +4376,7 @@ function nightOnLimit(id, d) {
     tgLog(`ночь: вкладка ${id} упёрлась в лимит (время сброса неизвестно — не бужу)`);
     return;
   }
+  st.wokeUntil = untilMs;
   st.limitAt = Date.now();
   nightLog('limit', id, d, { until: untilMs });
   tgLog(`ночь: вкладка ${id} упёрлась в лимит, сброс ${night.clock(untilMs)}`);
@@ -4379,8 +4388,15 @@ function nightOnLimit(id, d) {
   st.wakeTimer = setTimeout(() => {
     st.wakeTimer = null;
     if (!nightOn() || d.dead || nightBusyWithRestart(d)) return;
+    // Будим только ПРОСТАИВАЮЩУЮ вкладку. За часы ожидания всё могло измениться: стена оказалась
+    // ложной (строка про лимит в чужом выводе), агент поднялся сам, человек дал ему работу. Наше
+    // «продолжай», напечатанное в середину живого хода, — тот же мусор в строке ввода, от
+    // которого мы уворачиваемся у перезапуска.
+    if (d.status !== 'ready' || d.bg) {
+      tgLog(`ночь: сброс лимита у вкладки ${id} — но она уже работает, не трогаю`);
+      return;
+    }
     st.wakes++;
-    st.wokeUntil = untilMs;             // по этому сбросу уже будили — второй раз не ловим
     st.limitAt = 0;
     nightType(id, night.wakeWord());
     nightLog('wake', id, d, {});
@@ -4392,6 +4408,7 @@ function nightOnLimit(id, d) {
 function nightAskPhase(id, d) {
   const st = nightSt(d);
   st.askedAt = Date.now();
+  st.asks = (st.asks || 0) + 1;
   st.askedTurn = d.turnStartedAt || st.askedAt;
   nightType(id, night.phaseAsk(nightMarker()));
   nightLog('phase-ask', id, d, {});
@@ -4411,8 +4428,9 @@ function nightResolvePhase(id, d, now) {
     nightLog('continue', id, d, { n: st.continues, text, at: now });
     tgLog(`ночь: вкладка ${id} продолжила сама (${st.continues}/${night.MAX_CONTINUES})`);
   } else if (d.status === 'ready') {
-    // Сказала «всё сделано» — больше не спрашиваем. Снимется, когда вкладка снова заработает.
-    st.finished = true;
+    // Молчит. Это может быть и «всё сделано», и «сделал очередной шаг и снова жду» — по одному
+    // взгляду на статус их не различить, поэтому запирающей отметки здесь НЕТ: вкладку ограничит
+    // потолок вопросов, а не наша догадка о смысле её молчания.
     nightLog('done', id, d, { text, at: now });
   }
 }
@@ -4433,10 +4451,17 @@ setInterval(() => {
       if (!st.wakeTimer && (d.status === 'ready' || d.status === 'waiting')) {
         if (limitHit(snapshot(d))) nightOnLimit(id, d);
       }
+      // Ждущую вкладку разбираем и ЗДЕСЬ, а не только на перемене статуса. Такт статуса зовёт
+      // nightOnWaiting по событию — «что-то в вкладке изменилось», — а вкладка, стоящая на
+      // вопросе, ничего не меняет: вывода нет, статус тот же, текст тот же. Из этого выходил
+      // ровно тот провал, ради которого функция и написана: включаешь ночь в час, три вкладки
+      // УЖЕ стоят на вопросах — и стоят до утра, потому что события больше не будет. Тем же
+      // лечится и отложенное: не прошёл прогрев, не было текста вопроса, была открыта рамка —
+      // раньше такой отказ становился вечным, теперь через двадцать секунд решаем заново.
+      if (d.status === 'waiting') nightOnWaiting(id, d);
       nightResolvePhase(id, d, now);
-      // Вкладка снова работает — значит работа появилась, и прошлое «всё сделано» больше не
-      // приговор. Иначе одна честная «я закончил» запирала бы вопрос про фазу до утра.
-      if (d.status === 'running') { st.finished = false; st.limitMute = false; }
+      // Вкладка снова работает — значит стена лимита, если она была, кончилась сама.
+      if (d.status === 'running') st.limitMute = false;
       // Сколько вкладка простаивает. Считаем здесь, а не в такте статуса: там это лишнее поле
       // в горячем цикле, а здесь — две строчки раз в двадцать секунд.
       if (d.status === 'ready' && !d.bg) { if (!st.readyAt) st.readyAt = now; }
@@ -4444,7 +4469,6 @@ setInterval(() => {
       if (st.askedAt) continue;               // ждём, чем кончится прошлый вопрос
       const dec = night.phaseDecision(st, {
         presence: tgPresence, status: d.status, bg: d.bg, limited: !!st.wakeTimer,
-        finished: st.finished,
         now, startedAt: d.startedAt, readyAt: st.readyAt, turn: d.turnStartedAt || 0,
       });
       if (dec.act === 'ask') nightAskPhase(id, d);
@@ -4561,14 +4585,33 @@ function nightLoadDigest() {
   try {
     const store = JSON.parse(fs.readFileSync(nightDigestPath(), 'utf8'));
     const list = Array.isArray(store && store.digests) ? store.digests : [];
-    nightDigestNow = list[list.length - 1] || null;
+    const last = list[list.length - 1] || null;
+    // Прочитанную сводку не поднимаем. Иначе значок «утро — 2 стоят» возвращался бы с каждым
+    // запуском приложения и звал разбираться с ночью, которая была позавчера.
+    nightDigestNow = last && !last.read ? last : null;
   } catch (_) { nightDigestNow = null; }
 }
 
+// Отметка «прочитал» — в файл, а не только в память. Сам отчёт остаётся: перечитать вчерашнее
+// утро человек вправе, а вот звать его второй раз незачем.
+function nightMarkRead() {
+  try {
+    const store = JSON.parse(fs.readFileSync(nightDigestPath(), 'utf8'));
+    const list = Array.isArray(store && store.digests) ? store.digests : [];
+    if (!list.length) return;
+    list[list.length - 1].read = true;
+    fs.writeFileSync(nightDigestPath(), JSON.stringify(store));
+  } catch (_) { /* нет файла — нечего отмечать */ }
+}
+
 ipcMain.handle('night:state', () => nightState());
-// Сводку прочитали — значок гаснет. Файл при этом остаётся: перечитать вчерашнее утро
-// человек вправе, а вот звать его второй раз незачем.
-ipcMain.handle('night:dismiss', () => { nightDigestNow = null; nightPush(); return nightState(); });
+// Сводку прочитали — значок гаснет, и гаснет насовсем (см. nightMarkRead).
+ipcMain.handle('night:dismiss', () => {
+  nightDigestNow = null;
+  nightMarkRead();
+  nightPush();
+  return nightState();
+});
 
 // Одна дверь для обоих способов переключиться — иконкой в приложении и командой из телеги.
 // Возвращает, изменилось ли положение: телега на этом отвечает по-разному («включил» против

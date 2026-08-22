@@ -664,7 +664,13 @@ function scrolledBack(snapshot) {
 //
 // «Approaching» и «nearing» отбрасываем: это предупреждение, при нём агент прекрасно
 // работает, а разбудить работающую вкладку значит перебить её на середине хода.
-const LIMIT_RE = /(?:usage|5-hour|five-hour|weekly|session)?\s*limit\s+reached|limit\s+will\s+reset\s+at/i;
+// Приставка ОБЯЗАТЕЛЬНА, и это не придирка к регулярке. С необязательной группой `|` съедал
+// весь смысл: альтернатива имеет низший приоритет, и выражение читалось как «limit reached» ИЛИ
+// «limit will reset at» — то есть ловило любую строку с этими словами. А `rate limit reached` из
+// чужого вывода (лог теста, работа с чьим-то API, цитата из документации) агент печатает
+// сплошь, и ночь принимала это за стену: писала в сводку потерянные часы и печатала «продолжай»
+// в здоровую вкладку.
+const LIMIT_RE = /\b(?:usage|5-hour|five-hour|weekly|session)\s+limit\s+reached\b|\blimit\s+will\s+reset\s+at\b/i;
 const LIMIT_SOFT_RE = /approach|nearing|almost|warning/i;
 
 function limitHit(snapshot) {
