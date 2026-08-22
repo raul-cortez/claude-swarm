@@ -11,7 +11,7 @@
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
 import { pathToFileURL } from 'node:url';
-import { realpathSync } from 'node:fs';
+import { realpathSync, readFileSync, readdirSync, appendFileSync } from 'node:fs';
 
 // --- the «agent is calling you» phrases --------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
@@ -187,6 +187,106 @@ function markerFor(payload, matcher, override) {
   return `\x1b]777;notify;swarm;${token};${sid};${tr}\x07`;
 }
 
+// --- ночной режим ------------------------------------------------------------
+// Ночью человека у компьютера нет, и вопрос с вариантами — не просто недоступный выбор, а
+// потерянная ночь: вкладка встанет на нём до утра. Правило то же, что печатает приложение в
+// ждущую вкладку (night.js rule), и текст обязан совпадать — агент, получающий разные
+// инструкции в зависимости от того, КАК он спросил, ведёт себя случайно. Сверяется тестом.
+const nightRule = (marker) => [
+  'Человека нет у компьютера: ночной режим, ответа не будет до утра.',
+  'Интерактивный выбор недоступен.',
+  'Реши сам, если решение обратимо или переделка дешёвая: выбери разумный вариант,',
+  'назови его вслух в ходе и продолжай работу.',
+  'Остановись, если ответ задаёт направление и ошибка стоит дорого: развилка, где не угадать,',
+  'что именно нужно человеку; необратимое действие; ломающая совместимость правка.',
+  'Тогда сформулируй вопрос обычным текстом с вариантами и закончи ход строкой',
+  `«${marker}: …» — утром на него ответят.`,
+  'Не спрашивай второй раз об одном и том же: повторный вопрос ночью никто не прочитает.',
+].join(' ');
+
+// Что агент СОБИРАЛСЯ спросить. Единственное место во всей системе, где развилка видна
+// дословно — с вопросом и вариантами, до всякого разбора прозы: дальше по цепочке остаётся
+// только то, что агент сам решил сказать вслух. Отсюда её и берёт утренняя сводка.
+function askedQuestion(payload) {
+  const inp = (payload && payload.tool_input) || {};
+  const qs = Array.isArray(inp.questions) ? inp.questions : [];
+  const first = qs[0] || {};
+  const text = String(first.question || first.header || '').replace(/\s+/g, ' ').trim();
+  const options = (Array.isArray(first.options) ? first.options : [])
+    .map((o) => String((o && (o.label || o.description)) || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  return { text: text.slice(0, 600), options };
+}
+
+// --- ворота на подагентов ----------------------------------------------------
+// Живой случай: расход у подписки на пределе, сессия запускает пятерых подагентов, и все
+// они умирают через пять минут. Агент об этом знать не может — числа расхода Клод отдаёт
+// строке статуса, то есть другому процессу, и в контекст модели они не попадают вовсе.
+//
+// Пороги дублируют night.js (GATE_FIVE / GATE_SEVEN) и сверяются тестом: этот скрипт
+// запускается сам по себе, модулей приложения ему не видно.
+const GATE_FIVE = 90;
+const GATE_SEVEN = 97;
+
+// «2ч14м» / «18м». Своя копия по той же причине, что и пороги.
+function fmtEta(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return h > 0 ? `${d}д${h}ч` : `${d}д`;
+  if (h > 0) return m > 0 ? `${h}ч${m}м` : `${h}ч`;
+  return `${m}м`;
+}
+
+function etaOf(limit, nowSec) {
+  const r = limit && Number.isFinite(limit.resetsAt) ? limit.resetsAt : null;
+  return r != null && r > nowSec ? fmtEta(r - nowSec) : '';
+}
+
+// Запускать ли подагента. null — можно (в том числе когда данных нет: свежая сессия ещё не
+// получила ни одного ответа API, и rate_limits в ней пусты — отказать здесь значило бы
+// запретить первого же подагента в каждой новой вкладке).
+//
+// Недельное окно проверяется ПЕРВЫМ и отказ у него другой по смыслу: пятичасовое сбросится
+// вечером, и «подожди» там осмысленный совет, а недельное — через дни, ждать нечего.
+function gatesSubagent(payload, usage, nowSec) {
+  if (!payload || payload.hook_event_name !== 'PreToolUse') return null;
+  if (payload.tool_name !== 'Task') return null;
+  if (!usage) return null;
+  const five = usage.five;
+  const seven = usage.seven;
+  if (seven && Number.isFinite(seven.spent) && seven.spent >= GATE_SEVEN) {
+    const e = etaOf(seven, nowSec);
+    return { reason: `Недельное окно подписки израсходовано на ${seven.spent}%`
+      + (e ? ` (сброс через ${e})` : '') + '. Ждать бессмысленно, а подагенты умрут на середине:'
+      + ' делай шаги сам и экономно, без Task.' };
+  }
+  if (five && Number.isFinite(five.spent) && five.spent >= GATE_FIVE) {
+    const e = etaOf(five, nowSec);
+    return { reason: `Пятичасовое окно подписки израсходовано на ${five.spent}%`
+      + (e ? `, сброс через ${e}` : '') + '. Подагенты не успеют прогнаться и умрут на середине:'
+      + ' сделай следующий шаг сам или дождись сброса, а потом запускай.' };
+  }
+  return null;
+}
+
+// Строка расхода в начало хода: то же знание, но мягко — агент сам решает, звать ли пятерых.
+// Ворота ловят край, а это лечит причину: агент, который видит числа, до края не доходит.
+function usageNote(usage, nowSec) {
+  if (!usage) return '';
+  const part = (label, l) => {
+    if (!l || !Number.isFinite(l.spent)) return '';
+    const e = etaOf(l, nowSec);
+    return `${label} ${l.spent}%${e ? ` (сброс через ${e})` : ''}`;
+  };
+  const parts = [part('5ч', usage.five), part('7д', usage.seven)].filter(Boolean);
+  if (!parts.length) return '';
+  return `Расход подписки прямо сейчас: ${parts.join(', ')}.`
+    + ' Учитывай это, прежде чем запускать подагентов: на пределе они умрут на середине.';
+}
+
 // --- refusing the picker while the user is on a phone -------------------------
 // AskUserQuestion paints an interactive «choose 1/2/3» box in the terminal. Over Telegram
 // that's a dead end: there's no way to press a key in a box that only exists on a screen
@@ -217,16 +317,28 @@ const DENY_REASON = denyReason(FALLBACK.marker);
 function deniesPicker(payload, tgSessions, presence) {
   if (!payload || payload.hook_event_name !== 'PreToolUse') return false;
   if (payload.tool_name !== 'AskUserQuestion') return false;
-  if (presence === 'phone') return true;
+  // Ночь — третий признак, и самый весомый: с телефона выбрать нельзя, а ночью НЕКОМУ
+  // выбирать вовсе, и вкладка встанет на этой рамке до утра.
+  if (presence === 'phone' || presence === 'night') return true;
   const sid = String((payload && payload.session_id) || '');
   return !!sid && Array.isArray(tgSessions) && tgSessions.includes(sid);
+}
+
+// Почему нельзя открывать рамку — и что делать вместо этого. Два разных текста, потому что
+// это две разные обстановки: с телефона человек ОТВЕТИТ на вопрос прозой, а ночью ответа не
+// будет вовсе, и агенту надо решать самому по правилу.
+function denyReasonFor(presence, marker) {
+  const m = marker || FALLBACK.marker;
+  return presence === 'night' ? nightRule(m) : denyReason(m);
 }
 
 // The whole stdout payload for one event. terminalSequence sits at the top level (where
 // this hook has always put it) AND inside hookSpecificOutput, because which one a given
 // Claude Code version reads is not worth betting a status on — the token is idempotent,
 // so being read twice costs nothing, while being read zero times costs a wrong status.
-function outputFor(payload, matcher, tgSessions, presence) {
+function outputFor(payload, matcher, tgSessions, presence, extra) {
+  const ex = extra || {};
+  const nowSec = Number.isFinite(ex.nowSec) ? ex.nowSec : Math.floor(Date.now() / 1000);
   const deny = deniesPicker(payload, tgSessions, presence);
   // Отказ значит «ход продолжается», а не «агент ждёт». Тот же PreToolUse на
   // AskUserQuestion обычно и есть вопрос человеку — но не здесь: коробку с вариантами мы
@@ -236,19 +348,92 @@ function outputFor(payload, matcher, tgSessions, presence) {
   // вкладку ждущей, брало вопрос с экрана — а на экране в этот миг наше же объяснение,
   // почему коробка запрещена. Настоящий вопрос приходил секунд через пятнадцать и не
   // отправлялся вовсе: про эту вкладку мост уже отчитался.
-  const seq = markerFor(payload, matcher, deny ? 'busy' : null);
-  if (!seq && !deny) return null;
+  // Ворота на подагентов. Тот же приём, что у рамки: отказ приходит агенту результатом
+  // инструмента, внутри хода, и работа продолжается — просто без пятерых, которые всё равно
+  // умерли бы на середине. Круглосуточно, а не только ночью: умирают они одинаково.
+  const gate = deny ? null : gatesSubagent(payload, ex.usage, nowSec);
+  // Отказ (любой) значит «ход продолжается», а не «агент ждёт»: рамку мы только что
+  // запретили, и агент сейчас пойдёт писать прозой или делать шаг сам.
+  const seq = markerFor(payload, matcher, (deny || gate) ? 'busy' : null);
+  const note = (payload && payload.hook_event_name === 'UserPromptSubmit')
+    ? usageNote(ex.usage, nowSec) : '';
+  if (!seq && !deny && !gate && !note) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;
-  if (deny) {
+  if (deny || gate) {
     out.hookSpecificOutput = {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: denyReason(matcher && matcher.marker ? matcher.marker : FALLBACK.marker),
+      permissionDecisionReason: gate
+        ? gate.reason
+        : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker),
+    };
+    if (seq) out.hookSpecificOutput.terminalSequence = seq;
+  } else if (note) {
+    // Числа расхода в начало хода. Не отказ и ничему не мешает: агент просто ЗНАЕТ, сколько
+    // осталось, — раньше это знание жило в строке статуса, то есть в другом процессе.
+    out.hookSpecificOutput = {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: note,
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   }
   return out;
+}
+
+// --- снимки расхода: где взять числа -----------------------------------------
+// Строка статуса Клода кладёт их рядом с этим скриптом, по файлу на сессию (см. usageSnapshot
+// в swarm-statusline.js). Три тонкости, и без каждой ворота вредили бы больше, чем помогают:
+//
+//   • нет снимка своей сессии — НЕ РЕШАЕМ ничего. rate_limits приходят только на подписке и
+//     только с первого ответа API, так что у свежей вкладки их нет; отказ здесь запретил бы
+//     первого же подагента в каждой новой сессии.
+//   • берём самый свежий снимок по ВСЕМ вкладкам: окна общие на аккаунт, а простаивающая
+//     вкладка свой файл не обновляет — её проценты получасовой давности.
+//   • но только внутри своего АККАУНТА. Конфигов у человека несколько (`CLAUDE_CONFIG_DIR`,
+//     алиас вроде `claude-my`), окна у них разные, и смешать их значит запретить подагентов
+//     на личном аккаунте из-за расхода рабочего.
+function pickUsage(snaps, sessionId) {
+  const list = (Array.isArray(snaps) ? snaps : []).filter((s) => s && typeof s === 'object');
+  const sid = String(sessionId || '');
+  const own = list.find((s) => String(s.session || '') === sid && sid);
+  if (!own) return null;
+  const home = String(own.home || '');
+  const pool = home ? list.filter((s) => String(s.home || '') === home) : [own];
+  const fresh = pool.slice().sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))[0] || own;
+  if (!fresh.five && !fresh.seven) return null;
+  return { five: fresh.five || null, seven: fresh.seven || null, at: Number(fresh.at) || 0 };
+}
+
+function readUsage(sessionId) {
+  const dir = new URL('./usage/', import.meta.url);
+  let names = [];
+  try { names = readdirSync(dir); } catch (_) { return null; }
+  const snaps = [];
+  for (const n of names) {
+    if (!n.endsWith('.json')) continue;
+    try { snaps.push(JSON.parse(readFileSync(new URL(n, dir), 'utf8'))); } catch (_) { /* пропускаем */ }
+  }
+  return pickUsage(snaps, sessionId);
+}
+
+// --- ночной журнал -----------------------------------------------------------
+// Строка на развилку, которую агент прошёл сам. Пишет ХУК, а не приложение, потому что
+// дословный вопрос с вариантами есть только здесь: дальше остаётся лишь то, что агент решил
+// сказать вслух. Читает утренняя сводка (night.js parse/digest).
+//
+// Дописывание одной строкой и без чтения: тот же файл пишут одновременно все вкладки, а
+// каждая из них — отдельный процесс. Сломать сводку это не может, битую строку разбор
+// пропускает молча.
+function logNight(kind, payload, extra) {
+  try {
+    const e = Object.assign({
+      at: Date.now(),
+      kind,
+      session: String((payload && payload.session_id) || ''),
+    }, extra || {});
+    appendFileSync(new URL('./night.jsonl', import.meta.url), JSON.stringify(e) + '\n');
+  } catch (_) { /* журнал не важнее работы */ }
 }
 
 // The files the app writes beside this script (all three live in userData).
@@ -275,7 +460,19 @@ async function main() {
   process.stdin.on('data', (c) => { input += c; });
   process.stdin.on('end', () => {
     try {
-      const out = outputFor(JSON.parse(input || '{}'), matcher, tgSessions, presence);
+      const payload = JSON.parse(input || '{}');
+      // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале
+      // хода. На каждом PostToolUse обходить папку значило бы читать диск десятки раз за ход.
+      const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'
+        || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
+      const usage = wantsUsage ? readUsage(payload.session_id) : null;
+      const out = outputFor(payload, matcher, tgSessions, presence, { usage });
+      // Ночью запрещённая рамка — это принятое без человека решение. Записываем ЕГО, а не
+      // факт отказа: утром в сводке должна стоять развилка дословно.
+      if (presence === 'night' && deniesPicker(payload, tgSessions, presence)) {
+        const q = askedQuestion(payload);
+        logNight('deny-box', payload, { text: q.text, options: q.options });
+      }
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -304,4 +501,6 @@ function isDirectRun(moduleUrl, argvPath) {
 
 if (isDirectRun(import.meta.url, process.argv[1])) main();
 
-export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker, outputFor, denyReason, DENY_REASON, FALLBACK, isDirectRun, isSubagent };
+export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
+  outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
+  nightRule, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN };

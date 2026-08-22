@@ -255,7 +255,11 @@ function fmtTok(n) {
 //
 // `resetsAt` is kept as an absolute time on purpose: a snapshot can be minutes old (an
 // idle tab doesn't re-render), but the countdown computed from it is still exact.
-function usageSnapshot(data, nowSec) {
+// `home` — в каком КОНФИГЕ живёт эта сессия. Аккаунтов у человека бывает несколько
+// (`CLAUDE_CONFIG_DIR`, алиас вроде `claude-my`), и окна подписки у них РАЗНЫЕ. Без этого
+// поля читатель снимков (ворота на подагентов в hooks/swarm-signal.mjs) взял бы самый свежий
+// файл в папке и запретил подагентов на личном аккаунте из-за расхода рабочего.
+function usageSnapshot(data, nowSec, home) {
   const d = data || {};
   const win = d.context_window || {};
   const rl = d.rate_limits || {};
@@ -268,6 +272,7 @@ function usageSnapshot(data, nowSec) {
   return {
     at: nowSec,
     session: String(d.session_id || ''),
+    home: String(home || ''),
     model: d.model?.display_name || '',
     ctx: used == null ? null : { used, total: (win && win.total_tokens) || 1_000_000 },
     five: limit(rl.five_hour),
@@ -389,7 +394,7 @@ function main() {
       // Снимок расхода пишем ДО чужой строки: он и есть то, ради чего этот скрипт обязан
       // отработать до конца — из него живут полоска на карточке, /usage в телеге и порог
       // перезапуска. Чужая команда после него не может отнять у приложения ничего.
-      writeUsage(usageSnapshot(data, nowSec));
+      writeUsage(usageSnapshot(data, nowSec, configRoot(data, process.env)));
       process.stdout.write(composeLine(renderLine(data, nowSec), readForeign(data, input)));
     } catch (_) {
       // Bad/empty stdin must never make Claude show an error line — print nothing.

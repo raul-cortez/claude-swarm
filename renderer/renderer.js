@@ -285,6 +285,8 @@ const ICONS = {
   // Lucide "monitor" / "smartphone" — «где я сейчас»: за столом или с одним телефоном.
   monitor: SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   phone: SVG('<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>'),
+  moon: SVG('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+  sunrise: SVG('<path d="M12 2v6"/><path d="m4.93 8.93 1.41 1.41"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m17.66 10.34 1.41-1.41"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/>'),
 };
 
 // Put an icon + a folder name into an element (name via text node, never markup).
@@ -4201,11 +4203,17 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 // отвязкой группы в настройках или привязкой новой с телефона.
 const PRESENCE = [
   { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'телега молчит и в вкладки не пишет' },
-  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, мак не спит' },
+  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, мак не спит', needsBot: true },
+  // Ночь — не про телегу вовсе: человека нет до утра. Поэтому она в списке всегда, и бота для
+  // неё не нужно (спать можно и без телефона), а сводка утром ждёт в окне приложения.
+  { id: 'night', icon: 'moon', name: 'ночь', hint: 'агенты решают сами, разрешения стоят, утром сводка' },
 ];
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
 let presenceNow = 'desk';
+// Привязан ли бот. Решает не видимость кнопки (ночь бота не требует), а доступность одного
+// пункта — «за телефоном».
+let presenceBot = false;
 
 function presenceItem(id) {
   return PRESENCE.find((p) => p.id === id) || PRESENCE[0];
@@ -4217,6 +4225,7 @@ function presenceItem(id) {
 // спит). Цвет и правила — в styles.css, body.presence-phone.
 function paintPresence() {
   document.body.classList.toggle('presence-phone', presenceNow === 'phone');
+  document.body.classList.toggle('presence-night', presenceNow === 'night');
 }
 
 function renderPresencePill(st) {
@@ -4228,10 +4237,13 @@ function renderPresencePill(st) {
   // возвращался за стол, а мак не спал и агенты во всех вкладках отказывались показывать
   // варианты выбора — вернуть можно было только с телефона. Галки больше нет, положение
   // одно, и видно его всегда.
-  const ready = !!(st && st.chatId != null);
-  presencePill.hidden = !ready;
-  if (!ready) { presenceNow = 'desk'; paintPresence(); closePresenceMenu(); return; }
-  presenceNow = st.presence || 'desk';
+  // Кнопка видна ВСЕГДА, а не только с привязанной группой: ночь бота не требует — спать
+  // можно и без телефона, — и спрятать её значило бы спрятать единственный способ включить
+  // ночной режим у человека без бота. «За телефоном» в списке при этом гаснет: обещать
+  // «всё уйдёт в телегу» там, где телеги нет, нельзя.
+  presenceBot = !!(st && st.chatId != null);
+  presencePill.hidden = false;
+  presenceNow = (st && st.presence) || 'desk';
   paintPresence();
   const it = presenceItem(presenceNow);
   presencePill.classList.toggle('is-on', presenceNow !== 'desk');
@@ -4244,6 +4256,9 @@ function openPresenceMenu() {
   for (const p of PRESENCE) {
     const b = document.createElement('button');
     b.className = 'cmd-item presence-item' + (p.id === presenceNow ? ' is-now' : '');
+    // Без бота «за телефоном» выбирать нечем — но пункт остаётся на месте и с объяснением:
+    // исчезнувший пункт читается как «такого режима нет», а не как «сначала подключи бота».
+    if (p.needsBot && !presenceBot) b.disabled = true;
     const ic = document.createElement('span');
     ic.className = 'ic';
     ic.innerHTML = ICONS[p.icon];
@@ -4252,7 +4267,7 @@ function openPresenceMenu() {
     name.textContent = p.name;
     const hint = document.createElement('span');
     hint.className = 'cmd-hint';
-    hint.textContent = p.hint;
+    hint.textContent = b.disabled ? 'нужен бот в телеграме — настройки' : p.hint;
     b.append(ic, name, hint);
     b.addEventListener('click', async () => {
       closePresenceMenu();
@@ -4281,6 +4296,130 @@ presencePill.addEventListener('click', (e) => {
 });
 window.swarm.telegram.onState(renderPresencePill);
 window.swarm.telegram.state().then(renderPresencePill).catch(() => {});
+
+// --- утренняя сводка --------------------------------------------------------------------
+// Ночь кончилась — и первое, что нужно человеку, это не «всё хорошо», а список дел: кто стоит,
+// что решили без него, кто потерял часы на лимите. Значок в той же панели, что и обновление,
+// цветом ночи; окно — группы по тому, что от человека нужно (порядок задаёт night.js digest,
+// рендерер его не пересортировывает).
+const nightPill = document.getElementById('night-pill');
+let nightNow = { on: false, digest: null, typed: false };
+
+// Вкладки, о которых ночь имеет что сказать. Метка на карточке нужна ровно потому, что окно
+// сводки закрывают, а дела остаются: утром по полосе вкладок видно, с кем разбираться.
+function paintNightMarks(dg) {
+  const marked = new Set();
+  for (const g of ((dg && dg.groups) || [])) {
+    if (g.id === 'done') continue;              // «закончили и молчат» — не дело
+    for (const r of g.rows) if (r.id) marked.add(String(r.id));
+  }
+  for (const [id, s] of sessions) {
+    if (s && s.tab) s.tab.classList.toggle('night-mark', marked.has(String(id)));
+  }
+}
+
+function renderNightPill(st) {
+  if (st) nightNow = st;
+  const dg = nightNow.digest;
+  const rows = ((dg && dg.groups) || []).reduce((n, g) => n + g.rows.length, 0);
+  if (nightNow.on && nightNow.typed) {
+    // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
+    // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
+    nightPill.hidden = false;
+    nightPill.textContent = 'ночь включена';
+    nightPill.title = 'Ночной режим ещё включён, а ты за клавиатурой: агенты продолжают решать сами.'
+      + ' Клик — снять ночь и показать сводку.';
+  } else if (!nightNow.on && rows) {
+    const t = dg.totals || {};
+    nightPill.hidden = false;
+    nightPill.textContent = `утро — ${t.standing || 0} стоят, ${t.decided || 0} решений`;
+    nightPill.title = `Ночь длилась ${t.night || '—'}, вкладок ${t.tabs || 0}. Клик — сводка.`;
+  } else {
+    nightPill.hidden = true;
+  }
+  paintNightMarks(nightNow.digest);
+}
+
+function openNightModal() {
+  if (document.querySelector('.modal-overlay .modal.night')) return;
+  const dg = nightNow.digest;
+  const t = (dg && dg.totals) || {};
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal night">
+      <div class="modal-title">Утро</div>
+      <div class="night-sum"></div>
+      <div class="night-body"></div>
+      <div class="modal-actions">
+        <button class="modal-cancel night-keep">Оставить значок</button>
+        <button class="modal-ok neutral night-read">Прочитал</button>
+      </div>
+    </div>`;
+  overlay.querySelector('.night-sum').textContent = dg
+    ? `Ночь ${t.night || '—'}, вкладок ${t.tabs || 0}. Решений без тебя ${t.decided || 0}, стоят ${t.standing || 0}.`
+    : 'Сводки пока нет.';
+  const body = overlay.querySelector('.night-body');
+  for (const g of ((dg && dg.groups) || [])) {
+    const box = document.createElement('div');
+    box.className = 'night-group';
+    const h = document.createElement('div');
+    h.className = 'night-title';
+    h.textContent = g.title;
+    box.appendChild(h);
+    for (const r of g.rows) {
+      // Строка — кнопка: клик уводит в саму вкладку. Утром почти всё, что здесь написано,
+      // кончается словами «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
+      const b = document.createElement('button');
+      b.className = 'night-row';
+      const tab = document.createElement('span');
+      tab.className = 'nr-tab';
+      tab.textContent = r.tab || 'вкладка';
+      const text = document.createElement('span');
+      text.className = 'nr-text';
+      text.textContent = r.text || '';
+      const meta = document.createElement('span');
+      meta.className = 'nr-meta';
+      meta.textContent = r.meta || '';
+      b.append(tab, text, meta);
+      if (r.id && sessions.has(String(r.id))) {
+        b.addEventListener('click', () => { overlay.remove(); activate(String(r.id)); });
+      } else {
+        b.disabled = true;
+      }
+      box.appendChild(b);
+    }
+    body.appendChild(box);
+  }
+  if (!body.children.length) {
+    const e = document.createElement('div');
+    e.className = 'night-empty';
+    e.textContent = 'Ночь прошла тихо: никто не встал и ничего за тебя не решали.';
+    body.appendChild(e);
+  }
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector('.night-keep').addEventListener('click', close);
+  overlay.querySelector('.night-read').addEventListener('click', async () => {
+    close();
+    // «Прочитал» гасит значок и метки, но не файл: перечитать вчерашнее утро человек вправе,
+    // а звать его второй раз незачем.
+    try { renderNightPill(await window.swarm.night.dismiss()); } catch (_) { /* значок доживёт до следующего состояния */ }
+  });
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+}
+
+nightPill.addEventListener('click', async () => {
+  if (nightNow.on) {
+    // Снять ночь — та же дверь, что у списка «где я»: положение одно на всё приложение.
+    try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) { /* ниже всё равно спросим */ }
+    try { renderNightPill(await window.swarm.night.state()); } catch (_) { /* без сводки, но окно откроем */ }
+  }
+  openNightModal();
+});
+
+window.swarm.night.onState(renderNightPill);
+window.swarm.night.state().then(renderNightPill).catch(() => {});
 
 document.getElementById('new-session-folder').addEventListener('click', createSessionInFolder);
 document.getElementById('settings-btn').addEventListener('click', () => showSettingsModal());

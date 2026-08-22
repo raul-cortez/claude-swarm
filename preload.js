@@ -190,6 +190,14 @@ contextBridge.exposeInMainWorld('swarm', {
     onState:   (cb)    => ipcRenderer.on('telegram:state', (_e, s) => cb(s)),
   },
 
+  // Ночной режим: положение переключается через telegram.setPresence('night') — «где я» одно
+  // на всё приложение. Здесь только то, что есть у ночи своего: утренняя сводка.
+  night: {
+    state:    ()  => ipcRenderer.invoke('night:state'),
+    dismiss:  ()  => ipcRenderer.invoke('night:dismiss'),
+    onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
+  },
+
   // Git plumbing for the branch status bar. Each call targets a folder path
   // (the active session's cwd). info → { isRepo, branch, ahead, behind, dirty };
   // branches → string[]; fetch/pull/checkout → { ok, error };

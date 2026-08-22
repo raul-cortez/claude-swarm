@@ -19,6 +19,10 @@
   --ready:     #4ade80;  /* session idle / ready */
   --waiting:   #3fd0c9;  /* session waiting for my input */
   --permission:#f0b232;  /* waiting on a permission prompt (vs a plain question) */
+  /* Ночной режим. Холодная часть круга — единственная свободная (янтарный занят работой,
+     разрешениями и «за телефоном», бирюзовый — активной вкладкой и ожиданием) и
+     единственная, которая читается как «ночь» без подписи. */
+  --night:     #6f7bd6;
   --danger:    #e05a5a;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
 
@@ -1191,6 +1195,65 @@ body.presence-phone .presence-pill.is-on {
   background: color-mix(in srgb, var(--permission) 22%, var(--panel));
   border-color: var(--permission);
 }
+
+/* «Ночь» — та же схема, что у телефона, но ГРОМЧЕ: 20% против 16%. Смысл цвета не в том,
+   чтобы что-то показать ночью — ночью никто не смотрит. Он нужен утром: человек садится за
+   стол, а приложение всё ещё считает его ушедшим, и агенты продолжают решать за него молча.
+   Ночь снимается руками, значит «забыл снять» — самый вероятный промах. */
+body.presence-night #statusbar {
+  background: color-mix(in srgb, var(--night) 20%, var(--panel));
+  border-top-color: color-mix(in srgb, var(--night) 60%, var(--border));
+  color: color-mix(in srgb, var(--night) 45%, var(--muted));
+}
+body.presence-night .presence-pill.is-on {
+  background: color-mix(in srgb, var(--night) 24%, var(--panel));
+  border-color: var(--night);
+}
+body.presence-night .presence-item.is-now .ic { color: var(--night); }
+
+/* Вкладка, которая ночью встала или ушла дальше без человека. Утром по полосе вкладок видно,
+   с кем разбираться, ещё до открытия сводки; метка гаснет, когда сводку прочитали. */
+.tab.night-mark { border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
+.tab.night-mark::after {
+  content: '';
+  position: absolute; top: 4px; right: 4px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--night);
+}
+
+/* Значок утренней сводки. Вид у него как у значка обновления (тот же размер и место), цвет —
+   ночной: это отчёт за ночь, а не новость про приложение. */
+.night-pill {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--night); color: var(--night);
+  background: color-mix(in srgb, var(--night) 14%, transparent);
+  border-radius: 6px; padding: 2px 8px; margin-right: 4px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.night-pill[hidden] { display: none; }
+.night-pill:hover { background: color-mix(in srgb, var(--night) 26%, transparent); }
+
+/* Окно сводки. Группы одна под другой, в каждой — строка на вкладку; подробности в строке, а
+   не карточкой: восемь развёрнутых карточек в семь утра читать невозможно. */
+.modal.night { width: min(680px, 94vw); }
+.modal.night .night-sum { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.modal.night .night-body { max-height: min(60vh, 520px); overflow-y: auto; }
+.modal.night .night-group { margin-bottom: 14px; }
+.modal.night .night-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--night); margin-bottom: 6px;
+}
+.modal.night .night-row {
+  display: block; width: 100%; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; margin-bottom: 4px; cursor: pointer; color: var(--text); font: inherit;
+}
+.modal.night .night-row:hover { border-color: var(--night); }
+.modal.night .night-row .nr-tab { font-weight: 600; }
+.modal.night .night-row .nr-text { display: block; font-size: 12px; }
+.modal.night .night-row .nr-meta { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.modal.night .night-empty { color: var(--muted); font-size: 12px; }
 
 /* Пункт списка: иконка, название, пояснение под ними. */
 .presence-item { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center; }

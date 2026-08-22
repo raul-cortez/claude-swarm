@@ -653,9 +653,32 @@ function scrolledBack(snapshot) {
   return RE_SCROLLED_BACK.test(String(snapshot == null ? '' : snapshot));
 }
 
+// --- упёрлись в лимит подписки ------------------------------------------------
+// Окно израсходовано, и агент не работает не потому, что закончил. Со стороны это выглядит
+// как обычный конец хода: ход кончился, хук отчитался, вкладка зелёная. Днём человек видит
+// сообщение сам, ночью — нет, и вкладка простаивает до утра, хотя окно сбросилось в три.
+//
+// Читаем именно ЭКРАН, а не снимок расхода: проценты говорят «почти всё», а стену видно
+// только по сообщению. Время сброса при этом берётся из снимка (там оно абсолютное и
+// точное), так что разбирать часы из текста не нужно — и не нужно угадывать часовой пояс.
+//
+// «Approaching» и «nearing» отбрасываем: это предупреждение, при нём агент прекрасно
+// работает, а разбудить работающую вкладку значит перебить её на середине хода.
+const LIMIT_RE = /(?:usage|5-hour|five-hour|weekly|session)?\s*limit\s+reached|limit\s+will\s+reset\s+at/i;
+const LIMIT_SOFT_RE = /approach|nearing|almost|warning/i;
+
+function limitHit(snapshot) {
+  for (const line of String(snapshot == null ? '' : snapshot).split('\n')) {
+    const t = line.trim();
+    if (!t || LIMIT_SOFT_RE.test(t)) continue;
+    if (LIMIT_RE.test(t)) return true;
+  }
+  return false;
+}
+
 module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
-  parsePrompt, fingerprintOf, scrolledBack,
+  parsePrompt, fingerprintOf, scrolledBack, limitHit,
   contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine,
 };

@@ -335,6 +335,153 @@ test('end to end: the script denies the picker for a session listed on disk', ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- ночь и ворота на подагентов ---------------------------------------------
+
+test('ночью коробка запрещается любой вкладке, и причина — ночное правило', () => {
+  const ask = { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' };
+  assert.strictEqual(H.deniesPicker(ask, [], 'night'), true);
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor(ask, m, [], 'night');
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  // Ночью человек не ответит вовсе — значит правило должно ГОВОРИТЬ, что решать самому, а не
+  // «спроси прозой, я отвечу с телефона».
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /ночной режим/i);
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /Реши сам/);
+});
+
+test('за телефоном причина остаётся прежней, а не ночной', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' }, m, [], 'phone');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /с телефона/);
+});
+
+// Развилка дословно есть только здесь: дальше по цепочке остаётся лишь то, что агент сам
+// решил сказать вслух. Из этого и живёт группа «решено без тебя» в утренней сводке.
+test('вопрос агента разбирается с вариантами', () => {
+  const q = H.askedQuestion({ tool_input: { questions: [{
+    question: 'Мигрировать старый формат молча?',
+    options: [{ label: 'молча' }, { label: 'спросить при запуске' }],
+  }] } });
+  assert.strictEqual(q.text, 'Мигрировать старый формат молча?');
+  assert.deepStrictEqual(q.options, ['молча', 'спросить при запуске']);
+  assert.deepStrictEqual(H.askedQuestion({}), { text: '', options: [] });
+});
+
+test('на пределе пятичасового окна подагенты не запускаются', () => {
+  const now = 1_000_000;
+  const task = { hook_event_name: 'PreToolUse', tool_name: 'Task', session_id: 's1' };
+  const g = H.gatesSubagent(task, { five: { spent: 93, resetsAt: now + 2400 }, seven: { spent: 60 } }, now);
+  assert.ok(g, 'ворота должны сработать');
+  assert.match(g.reason, /Пятичасовое/);
+  assert.match(g.reason, /сброс через 40м/, 'человеку и агенту нужен срок, а не только факт');
+});
+
+// Ждать недельного сброса бессмысленно — он через дни. Совет там другой, и это не косметика:
+// «дождись сброса» ночью означало бы простой до утра и дальше.
+test('недельное окно проверяется первым и советует не ждать', () => {
+  const g = H.gatesSubagent({ hook_event_name: 'PreToolUse', tool_name: 'Task' },
+    { five: { spent: 99 }, seven: { spent: 98 } }, 0);
+  assert.match(g.reason, /Недельное/);
+  assert.match(g.reason, /Ждать бессмысленно/);
+});
+
+test('запас есть — ворота молчат', () => {
+  const ok = H.gatesSubagent({ hook_event_name: 'PreToolUse', tool_name: 'Task' },
+    { five: { spent: 70 }, seven: { spent: 40 } }, 0);
+  assert.strictEqual(ok, null);
+});
+
+// rate_limits приходят только на подписке и только с первого ответа API: у свежей сессии их
+// нет вовсе. Отказ здесь запретил бы ПЕРВОГО подагента в каждой новой вкладке.
+test('нет данных о расходе — подагенты разрешены', () => {
+  const task = { hook_event_name: 'PreToolUse', tool_name: 'Task' };
+  assert.strictEqual(H.gatesSubagent(task, null, 0), null);
+  assert.strictEqual(H.gatesSubagent(task, { five: null, seven: null }, 0), null);
+});
+
+test('ворота стоят только на подагентах', () => {
+  const usage = { five: { spent: 99 }, seven: { spent: 99 } };
+  assert.strictEqual(H.gatesSubagent({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }, usage, 0), null);
+  assert.strictEqual(H.gatesSubagent({ hook_event_name: 'PostToolUse', tool_name: 'Task' }, usage, 0), null);
+});
+
+// Окна общие на АККАУНТ, но аккаунтов у человека бывает несколько (CLAUDE_CONFIG_DIR, алиас
+// вроде claude-my). Смешать их значит запретить подагентов на личном из-за расхода рабочего.
+test('снимок расхода берётся самый свежий, но только своего аккаунта', () => {
+  const snaps = [
+    { session: 'mine', home: '/h/work', at: 10, five: { spent: 10 } },
+    { session: 'other', home: '/h/work', at: 20, five: { spent: 80 } },
+    { session: 'personal', home: '/h/my', at: 99, five: { spent: 99 } },
+  ];
+  assert.strictEqual(H.pickUsage(snaps, 'mine').five.spent, 80, 'свежий из своего аккаунта');
+  assert.strictEqual(H.pickUsage(snaps, 'personal').five.spent, 99);
+  assert.strictEqual(H.pickUsage(snaps, 'unknown'), null, 'своего снимка нет — не решаем ничего');
+});
+
+test('снимок без аккаунта (строка статуса прежней версии) считается только своим', () => {
+  const snaps = [{ session: 'mine', at: 1, five: { spent: 10 } }, { session: 'x', at: 99, five: { spent: 99 } }];
+  assert.strictEqual(H.pickUsage(snaps, 'mine').five.spent, 10);
+});
+
+test('в начало хода уезжают числа расхода, а не отказ', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+    { usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 } }, nowSec: 0 });
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(out.hookSpecificOutput.additionalContext, /5ч 93%/);
+  assert.match(out.hookSpecificOutput.additionalContext, /7д 61%/);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, undefined, 'это не запрет');
+  assert.match(out.terminalSequence, /;busy;/, 'статус хода не меняется');
+});
+
+test('без снимка расхода начало хода выглядит как раньше', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, []);
+  assert.deepStrictEqual(Object.keys(out), ['terminalSequence']);
+});
+
+test('end to end: ночь на диске даёт ночное правило любой вкладке', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-night-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'), JSON.stringify({ sessions: [], presence: 'night' }));
+  const out = JSON.parse(execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({
+      hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 'ночная',
+      tool_input: { questions: [{ question: 'Мигрировать молча?', options: [{ label: 'да' }] }] },
+    }),
+    encoding: 'utf8',
+  }));
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /ночной режим/i);
+  // И развилка легла в журнал — именно её утром читает сводка.
+  const log = fs.readFileSync(path.join(dir, 'night.jsonl'), 'utf8').trim().split('\n');
+  const e = JSON.parse(log[log.length - 1]);
+  assert.strictEqual(e.kind, 'deny-box');
+  assert.strictEqual(e.session, 'ночная');
+  assert.strictEqual(e.text, 'Мигрировать молча?');
+  assert.deepStrictEqual(e.options, ['да']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('end to end: ворота отказывают подагенту по снимку расхода на диске', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-gate-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  fs.mkdirSync(path.join(dir, 'usage'));
+  fs.writeFileSync(path.join(dir, 'usage', 'sid.json'), JSON.stringify({
+    at: Math.floor(Date.now() / 1000), session: 'sid', home: '/h/work',
+    five: { spent: 95, resetsAt: Math.floor(Date.now() / 1000) + 600 }, seven: { spent: 50 },
+  }));
+  const out = JSON.parse(execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Task', session_id: 'sid' }),
+    encoding: 'utf8',
+  }));
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /Пятичасовое окно/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

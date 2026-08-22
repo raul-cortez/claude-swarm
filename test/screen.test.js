@@ -870,6 +870,30 @@ test('одна фраза без стрелки экран не морозит',
   assert.strictEqual(S.scrolledBack('⏺ Пришло 2 new messages, разбираю'), false);
 });
 
+// --- стена лимита -------------------------------------------------------------
+// Упёршаяся в лимит вкладка со стороны выглядит как «готов»: ход кончился, хук отчитался.
+// Отличить её можно только по сообщению на экране — а время сброса берётся из снимка расхода,
+// поэтому часы из текста разбирать не нужно (и часовой пояс угадывать тоже).
+test('сообщение о лимите узнаётся в разных формулировках', () => {
+  assert.strictEqual(S.limitHit('Claude usage limit reached. Your limit will reset at 3am (Europe/Moscow).'), true);
+  assert.strictEqual(S.limitHit('  5-hour limit reached ∙ resets 3am'), true);
+  assert.strictEqual(S.limitHit('weekly limit reached'), true);
+  assert.strictEqual(S.limitHit('⏺ работаю\n\nYour limit will reset at 9pm'), true);
+});
+
+// Предупреждение — не стена: при нём агент прекрасно работает, а разбудить работающую вкладку
+// значит перебить её на середине хода.
+test('предупреждение о близком лимите стеной не считается', () => {
+  assert.strictEqual(S.limitHit('Approaching usage limit — 90% used'), false);
+  assert.strictEqual(S.limitHit('Warning: nearing your weekly limit reached soon'), false);
+});
+
+test('обычный вывод агента за лимит не принимается', () => {
+  assert.strictEqual(S.limitHit('⏺ Готово, тесты зелёные'), false);
+  assert.strictEqual(S.limitHit('const LIMIT = 90; // предел'), false);
+  assert.strictEqual(S.limitHit(''), false);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
