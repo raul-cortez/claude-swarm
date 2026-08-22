@@ -8,11 +8,11 @@
        Руками не править: разъехавшись, шапка предложит с первого экрана версию,
        которой уже нет. -->
   <!--DLTOP-->
-  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.36.5/swarm-0.36.5-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
+  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.37.0/swarm-0.37.0-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.36.5/swarm-0.36.5-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
+  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.37.0/swarm-0.37.0-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
   <br>
-  <sub>v0.36.5 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
+  <sub>v0.37.0 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
   <!--/DLTOP-->
 </p>
 
@@ -63,10 +63,10 @@
 ### Образ
 
 <!--DL-->
-**Последняя версия: 0.36.5** · [все релизы](https://github.com/raul-cortez/claude-swarm/releases)
+**Последняя версия: 0.37.0** · [все релизы](https://github.com/raul-cortez/claude-swarm/releases)
 
-- **macOS** (Apple Silicon): [`swarm-0.36.5-arm64.dmg`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.36.5/swarm-0.36.5-arm64.dmg)
-- **Windows**: [`swarm-0.36.5-x64.exe`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.36.5/swarm-0.36.5-x64.exe) — собирается в CI после тега
+- **macOS** (Apple Silicon): [`swarm-0.37.0-arm64.dmg`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.37.0/swarm-0.37.0-arm64.dmg)
+- **Windows**: [`swarm-0.37.0-x64.exe`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.37.0/swarm-0.37.0-x64.exe) — собирается в CI после тега
 <!--/DL-->
 
 > [!WARNING]
