@@ -119,6 +119,33 @@ function phaseAsk(tag) {
   ].join(' ');
 }
 
+// --- свои формулировки --------------------------------------------------------
+// Человек вправе сказать ночным агентам своё. Заготовки написаны под наш уклад (обратимое —
+// решай, дорогое — стой), а уклад бывает другой: у кого-то ночью нельзя касаться миграций, у
+// кого-то наоборот разрешено всё, кроме сети.
+//
+// Одно место, где своя формулировка НЕ свободна: метка вопроса. Тег зашит в протокол — по нему
+// сворм понимает, что вкладка ждёт человека, — и текст, не называющий его, оставит агента без
+// способа сказать «жду утра». Поэтому в своём тексте метка пишется как {тег}, а подставляет её
+// сворм: так человек не обязан помнить, какой именно тег настроен, и не может ошибиться в нём.
+const TAG_SLOT = /\{\s*(?:тег|tag)\s*\}/gi;
+
+function fill(text, tag) {
+  return String(text == null ? '' : text).replace(TAG_SLOT, String(tag || ''));
+}
+
+// Что печатать в вкладку: своё, если написано, иначе заготовка. Обе функции берут ОДИН и тот же
+// сырой текст настройки, чтобы «пусто — значит заготовка» было одним правилом, а не двумя.
+function ruleText(custom, tag) {
+  const t = String(custom == null ? '' : custom).trim();
+  return t ? fill(t, tag || '[swarm:вопрос]') : rule(tag);
+}
+
+function askText(custom, tag) {
+  const t = String(custom == null ? '' : custom).trim();
+  return t ? fill(t, tag || '[swarm:вопрос]') : phaseAsk(tag);
+}
+
 // Будильник по сбросу лимита. Коротко: вкладка стояла часами, и весь контекст у агента свой.
 function wakeWord() {
   return 'Ночной режим: окно лимита сбросилось, можно работать. Продолжай с того места, где остановился.';
@@ -446,7 +473,7 @@ function digestText(dg) {
 return {
   NIGHT, IDLE_MS, NUDGE_DELAY_MS, WARMUP_MS, BOOT_MS, WAKE_LAG_MS, MAX_CONTINUES, MAX_NUDGES,
   MAX_ASKS, GATE_FIVE, GATE_SEVEN, KINDS,
-  rule, phaseAsk, wakeWord,
+  rule, phaseAsk, wakeWord, ruleText, askText,
   nudgeDecision, phaseDecision,
   entry, line, parse, digest, digestText, eta, clock, short,
 };

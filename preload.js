@@ -187,6 +187,7 @@ contextBridge.exposeInMainWorld('swarm', {
   night: {
     state:    ()  => ipcRenderer.invoke('night:state'),
     dismiss:  ()  => ipcRenderer.invoke('night:dismiss'),
+    setTexts: (t)  => ipcRenderer.invoke('night:setTexts', t),
     onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
   },
 

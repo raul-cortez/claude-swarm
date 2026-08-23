@@ -244,6 +244,27 @@ test('журнал отдаётся по времени, даже если за�
   assert.deepStrictEqual(back.map((e) => e.tab), ['B', 'A']);
 });
 
+// --- свои формулировки --------------------------------------------------------
+// Человек вправе сказать ночным агентам своё: уклад бывает другой. Не свободна одна вещь —
+// метка вопроса: тег зашит в протокол, и текст без него оставит агента без способа сказать
+// «жду утра». Поэтому в своём тексте метка пишется {тег}, а подставляет её сворм.
+test('пустая формулировка — заготовка сворма', () => {
+  assert.strictEqual(night.ruleText('', '[t]'), night.rule('[t]'));
+  assert.strictEqual(night.ruleText('   ', '[t]'), night.rule('[t]'));
+  assert.strictEqual(night.askText(null, '[t]'), night.phaseAsk('[t]'));
+});
+
+test('своя формулировка вытесняет заготовку целиком', () => {
+  assert.strictEqual(night.ruleText('Реши сам, спорное — утром.', '[t]'), 'Реши сам, спорное — утром.');
+  assert.strictEqual(night.askText('Кончил или ждёшь?', '[t]'), 'Кончил или ждёшь?');
+});
+
+test('метка подставляется вместо {тег} в любом написании', () => {
+  assert.strictEqual(night.ruleText('стой и пиши {тег}', '[swarm:вопрос]'), 'стой и пиши [swarm:вопрос]');
+  assert.strictEqual(night.ruleText('write { TAG } and wait', '[q]'), 'write [q] and wait');
+  assert.strictEqual(night.askText('вариант 3: {тег}', '[q]'), 'вариант 3: [q]');
+});
+
 // --- утренняя сводка ----------------------------------------------------------
 
 function sampleDigest() {
@@ -410,6 +431,15 @@ test('сводка словами повторяет те же числа и т�
 // Хук запускается сам по себе, модулей приложения ему не видно, поэтому правило и пороги там
 // свои. Разъехаться они не имеют права: агент, получающий разное правило от рамки и от толчка,
 // ведёт себя случайно, а разные пороги значат, что ворота срабатывают не там, где обещано.
+test('своя формулировка в хуке подставляет метку так же, как в приложении', async () => {
+  const H = await import('../hooks/swarm-signal.mjs');
+  for (const t of ['', '  ', null]) {
+    assert.strictEqual(H.nightRuleText(t, '[q]'), night.ruleText(t, '[q]'));
+  }
+  const own = 'Ночь: реши сам, спорное — через {тег}.';
+  assert.strictEqual(H.nightRuleText(own, '[swarm:вопрос]'), night.ruleText(own, '[swarm:вопрос]'));
+});
+
 test('ночное правило в хуке слово в слово совпадает с night.js', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
   assert.strictEqual(H.nightRule('Сейчас от тебя'), night.rule('Сейчас от тебя'));

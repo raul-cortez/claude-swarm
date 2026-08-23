@@ -1370,6 +1370,7 @@ function showSettingsModal(tab) {
         <button class="set-tab" data-tab="tabs">Вкладки</button>
         <button class="set-tab" data-tab="keys">Клавиши</button>
         <button class="set-tab" data-tab="telegram">Телеграм</button>
+        <button class="set-tab" data-tab="night">Ночь</button>
         <button class="set-tab" data-tab="updates">Обновления</button>
       </nav>
 
@@ -1756,11 +1757,17 @@ function showSettingsModal(tab) {
               <button type="button" class="set-q" aria-label="подсказка">?</button>
               <span class="set-hint" hidden>Как за компьютером; длинный ответ придёт несколькими сообщениями.</span>
             </div>
-            <div class="tg-row tg-row-wrap">
-              <button type="button" class="set-check-btn" id="set-tg-prompt-toggle">Своя формулировка</button>
+            <div class="set-row">
+              <label class="set-radio">
+                <input type="radio" name="tg-detail" id="set-tg-detail-custom" />
+                <span class="set-check-tx">Своя формулировка</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Своя просьба вместо обеих заготовок. Пока выбрана она,
+                «кратко» и «полностью» не действуют — поэтому она и стоит третьим положением, а не
+                кнопкой рядом: выбор один, и видно, который в силе.</span>
             </div>
             <div id="set-tg-prompt-box" hidden>
-              <span class="set-note">Заменяет обе заготовки. Пусто — вернётся та, что выбрана выше.</span>
               <textarea class="set-input set-prose" id="set-tg-prompt" rows="2" spellcheck="false"></textarea>
             </div>
           </section>
@@ -1835,6 +1842,46 @@ function showSettingsModal(tab) {
             <button type="button" class="set-check-btn" id="set-tg-unpair" hidden>Отвязать группу</button>
             <button type="button" class="set-check-btn danger" id="set-tg-forget">Удалить токен</button>
           </div>
+        </section>
+      </div>
+
+      <div class="set-panel" data-panel="night">
+        <header class="set-panel-h">
+          <h2 class="set-h">Ночь</h2>
+          <p class="set-intro">Включается луной в нижней панели (или <span class="set-mono">/night</span> с
+            телефона). Ночью агенты решают обратимое сами, а на дорогих развилках останавливаются
+            и ждут утра; утром сворм показывает, кто что решил.</p>
+        </header>
+        <section class="set-group">
+          <div class="set-group-h">
+            <span>Что сворм говорит агенту ночью</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Два текста, и они уезжают агенту в разные моменты.
+              Пустое поле — заготовка сворма; она же стоит в поле подсказкой, её можно скопировать
+              и переписать под себя. Где нужно назвать метку вопроса, пишите
+              <span class="set-lit">{тег}</span> — сворм подставит ту, что настроена у вас.</span>
+          </div>
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Правило ночи</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Приезжает агенту, когда он собирается спросить вас
+                вариантами — внутри хода, так что вкладка даже не встаёт. Тем же текстом сворм
+                толкает вкладку, которая всё-таки встала с вопросом.</span>
+            </div>
+            <textarea class="set-input set-prose" id="set-night-rule" rows="5" spellcheck="false"></textarea>
+          </div>
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Вопрос замолчавшей вкладке</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Уезжает вкладке, которая закончила ход и две минуты
+                молчит: работа кончилась или ты на пороге следующей фазы? Ответ агент выбирает сам
+                из тех, что вы ему предложите.</span>
+            </div>
+            <textarea class="set-input set-prose" id="set-night-ask" rows="5" spellcheck="false"></textarea>
+          </div>
+          <div class="tg-state" id="set-night-note"></div>
         </section>
       </div>
 
@@ -1971,7 +2018,7 @@ function showSettingsModal(tab) {
   const tgExtra = overlay.querySelector('#set-tg-extra');
   const tgDetailShort = overlay.querySelector('#set-tg-detail-short');
   const tgDetailFull = overlay.querySelector('#set-tg-detail-full');
-  const tgPromptToggle = overlay.querySelector('#set-tg-prompt-toggle');
+  const tgDetailCustom = overlay.querySelector('#set-tg-detail-custom');
   const tgPromptBox = overlay.querySelector('#set-tg-prompt-box');
   const tgPromptI = overlay.querySelector('#set-tg-prompt');
   const tgAwakeI = overlay.querySelector('#set-tg-awake');
@@ -2117,9 +2164,13 @@ function showSettingsModal(tab) {
     // Настройки моста — только когда мосту есть куда писать. До этого они обещают
     // управление тем, чего ещё нет.
     tgExtra.hidden = !groupOk;
-    const detail = st.detail === 'full' ? 'full' : 'short';
+    const detail = (st.detail === 'full' || st.detail === 'custom') ? st.detail : 'short';
     tgDetailShort.checked = detail === 'short';
     tgDetailFull.checked = detail === 'full';
+    tgDetailCustom.checked = detail === 'custom';
+    // Поле своей формулировки открыто ровно тогда, когда она в силе: закрытое поле с текстом
+    // внутри — это и был прежний обман, когда выбранным стояло «кратко», а работала своя строка.
+    tgPromptBox.hidden = detail !== 'custom';
     // Привязались — код мёртв, и висящий QR только вводит в заблуждение («битый»).
     if (st.chatId != null) {
       stopTgTtl();
@@ -2140,9 +2191,6 @@ function showSettingsModal(tab) {
     tgCheckNote.className = 'tg-state' + (needsWork && !st.check.ok ? ' is-bad' : '');
     if (document.activeElement !== tgPromptI) tgPromptI.value = st.prompt || '';
     tgPromptI.placeholder = st.promptDefault || '';
-    // Своя формулировка есть — показываем поле сразу, иначе человек не поймёт, почему
-    // переключатель «кратко/полностью» ни на что не влияет.
-    if (st.prompt && tgPromptBox.hidden) togglePromptBox(true);
     tgAwakeI.checked = !!st.keepAwake;
     // Панель и кнопка в строке состояния показывают одно и то же состояние моста. Отвязка
     // группы отвечает только сюда (main её не рассылает), а кнопка при этом должна исчезнуть.
@@ -2160,17 +2208,15 @@ function showSettingsModal(tab) {
     if (tgTtlTimer) { clearInterval(tgTtlTimer); tgTtlTimer = null; }
   }
 
-  // Своя формулировка — путь для тех, кому мало двух заготовок, поэтому она свёрнута:
-  // на виду остаётся выбор из двух понятных вариантов, а не пустое поле для сочинения.
-  function togglePromptBox(open) {
-    tgPromptBox.hidden = !open;
-    tgPromptToggle.textContent = open ? 'Скрыть свою формулировку' : 'Своя формулировка';
-  }
-  tgPromptToggle.addEventListener('click', () => togglePromptBox(tgPromptBox.hidden));
-
-  const setDetail = async (d) => { renderTg(await window.swarm.telegram.setDetail(d)); };
+  const setDetail = async (d) => {
+    renderTg(await window.swarm.telegram.setDetail(d));
+    // Выбрал «свою» — курсор сразу в поле: без этого положение выбрано, а сказать в нём нечего,
+    // и следующий шаг человеку приходится искать глазами.
+    if (d === 'custom') tgPromptI.focus();
+  };
   tgDetailShort.addEventListener('change', () => { if (tgDetailShort.checked) setDetail('short'); });
   tgDetailFull.addEventListener('change', () => { if (tgDetailFull.checked) setDetail('full'); });
+  tgDetailCustom.addEventListener('change', () => { if (tgDetailCustom.checked) setDetail('custom'); });
 
   window.swarm.telegram.state().then(async (st) => {
     renderTg(st);
@@ -2182,6 +2228,35 @@ function showSettingsModal(tab) {
   // Main pushes state on its own too (the poller losing the network, a chat pairing
   // itself from the phone) — the panel must not need a reopen to notice.
   window.swarm.telegram.onState((st) => { if (document.body.contains(overlay)) renderTg(st); });
+
+  // --- Ночь: свои формулировки -------------------------------------------------------------
+  // Заготовка стоит в поле ПОДСКАЗКОЙ, а не значением: значением её пришлось бы отличать от
+  // своего текста при сохранении («это он переписал или просто не тронул?»), а подсказкой
+  // пустое поле честно значит «как у сворма». Скопировать её человеку есть откуда — она же
+  // напечатана серым прямо в поле.
+  const nightRuleI = overlay.querySelector('#set-night-rule');
+  const nightAskI = overlay.querySelector('#set-night-ask');
+  const nightNote = overlay.querySelector('#set-night-note');
+
+  function renderNightTexts(st) {
+    if (!st) return;
+    if (document.activeElement !== nightRuleI) nightRuleI.value = st.rule || '';
+    if (document.activeElement !== nightAskI) nightAskI.value = st.ask || '';
+    nightRuleI.placeholder = st.ruleDefault || '';
+    nightAskI.placeholder = st.askDefault || '';
+    const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
+    nightNote.textContent = own.length
+      ? `Своими словами: ${own.join(' и ')}. Метка вопроса у вас — ${st.tag || ''}.`
+      : `Оба текста — заготовки сворма. Метка вопроса — ${st.tag || ''}.`;
+  }
+
+  window.swarm.night.state().then(renderNightTexts).catch(() => {});
+  nightRuleI.addEventListener('change', async () => {
+    renderNightTexts(await window.swarm.night.setTexts({ rule: nightRuleI.value }));
+  });
+  nightAskI.addEventListener('change', async () => {
+    renderNightTexts(await window.swarm.night.setTexts({ ask: nightAskI.value }));
+  });
 
   overlay.querySelector('#set-tg-save').addEventListener('click', async () => {
     const token = tgTokenI.value.trim();

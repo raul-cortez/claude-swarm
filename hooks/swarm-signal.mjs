@@ -236,6 +236,17 @@ const nightRule = (tag) => [
   'Не спрашивай второй раз об одном и том же: повторный вопрос ночью никто не прочитает.',
 ].join(' ');
 
+// Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
+// его текст в тот же файл, где лежит «где я» (swarm-tgmode.json). Дубликат подстановки из
+// night.js ruleText — по той же причине, что и всё в этом файле: модулей приложения здесь нет.
+// Сверяется тестом.
+const TAG_SLOT = /\{\s*(?:тег|tag)\s*\}/gi;
+
+const nightRuleText = (custom, tag) => {
+  const t = String(custom == null ? '' : custom).trim();
+  return t ? t.replace(TAG_SLOT, String(tag || '')) : nightRule(tag);
+};
+
 // Что агент СОБИРАЛСЯ спросить. Единственное место во всей системе, где развилка видна
 // дословно — с вопросом и вариантами, до всякого разбора прозы: дальше по цепочке остаётся
 // только то, что агент сам решил сказать вслух. Отсюда её и берёт утренняя сводка.
@@ -359,9 +370,9 @@ function deniesPicker(payload, tgSessions, presence) {
 // Почему нельзя открывать рамку — и что делать вместо этого. Два разных текста, потому что
 // это две разные обстановки: с телефона человек ОТВЕТИТ на вопрос прозой, а ночью ответа не
 // будет вовсе, и агенту надо решать самому по правилу.
-function denyReasonFor(presence, marker) {
+function denyReasonFor(presence, marker, nightCustom) {
   const m = marker || FALLBACK.marker;
-  return presence === 'night' ? nightRule(m) : denyReason(m);
+  return presence === 'night' ? nightRuleText(nightCustom, m) : denyReason(m);
 }
 
 // The whole stdout payload for one event. terminalSequence sits at the top level (where
@@ -398,7 +409,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
       permissionDecision: 'deny',
       permissionDecisionReason: gate
         ? gate.reason
-        : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker),
+        : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker, ex.nightRule),
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   } else if (note) {
@@ -486,12 +497,16 @@ async function main() {
   try { phrases = await readJsonBeside('swarm-phrases.json'); } catch (_) { /* → FALLBACK */ }
   let tgSessions = [];
   let presence = '';
+  let nightCustom = '';
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
     tgSessions = tg.sessions || [];
     // «Где я» лежит в том же файле: приложение переписывает его при каждом переключении.
     // Нет поля (файл от прежней версии) — ведём себя как раньше, по списку сессий.
     presence = String(tg.presence || '');
+    // Своя формулировка ночного правила лежит там же: приложение переписывает файл при каждой
+    // правке. Нет поля (файл от прежней версии) — берём заготовку.
+    nightCustom = String(tg.nightRule || '');
   } catch (_) { /* none */ }
   const matcher = loadMatcher(() => phrases);
   let input = '';
@@ -505,7 +520,7 @@ async function main() {
       const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
-      const out = outputFor(payload, matcher, tgSessions, presence, { usage });
+      const out = outputFor(payload, matcher, tgSessions, presence, { usage, nightRule: nightCustom });
       // Ночью запрещённая рамка — это принятое без человека решение. Записываем ЕГО, а не
       // факт отказа: утром в сводке должна стоять развилка дословно.
       if (presence === 'night' && deniesPicker(payload, tgSessions, presence)) {
@@ -542,4 +557,4 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
-  nightRule, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN };
+  nightRule, nightRuleText, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN };

@@ -1575,7 +1575,12 @@ let TG_PROMPT = telegram.PROMPTS.short;
 function tgPromptDefault() { return telegram.detailPrompt(TG.detail); }
 
 // Своя формулировка перебивает пресет: человек, написавший её руками, знает, чего хочет.
-function tgApplyPrompt() { TG_PROMPT = TG.prompt || tgPromptDefault(); }
+// Что просят у агента, отвечающего в телегу. Своя формулировка действует, только когда она и
+// ВЫБРАНА: раньше она перебивала пресет молча, и переключатель «кратко/полностью» ни на что не
+// влиял, пока в поле лежал чужой текст. Теперь это одно и то же положение из трёх.
+function tgApplyPrompt() {
+  TG_PROMPT = (TG.detail === 'custom' && TG.prompt) ? TG.prompt : tgPromptDefault();
+}
 
 let TG = { token: '', chatId: null, isForum: false, topics: {} };
 let tgPoller = null;
@@ -1600,7 +1605,7 @@ function tgPath() { return path.join(app.getPath('userData'), 'telegram.json'); 
 // версии, — и заменяется обычным.
 function tgLegacyPath() { return path.join(app.getPath('userData'), 'telegram.dat'); }
 
-function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', keepAwake: true, night: false, whisperBin: '', whisperModel: '' }; }
+function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', keepAwake: true, night: false, nightRule: '', nightAsk: '', whisperBin: '', whisperModel: '' }; }
 
 // The last result of tgCheckChat(), so the settings panel can show «бот администратор,
 // темы доступны» without re-asking Telegram on every render.
@@ -1622,6 +1627,10 @@ function tgLoad() {
     // Ночь — не настройка, а положение дел, но записанное: см. tgSetPresence.
     night: !!d.night,
     nightFrom: Number.isFinite(d.nightFrom) ? d.nightFrom : 0,
+    // Свои формулировки ночи. Лежат здесь, потому что здесь же лежит «где я»: ночь — его
+    // третье положение, и файл этот хук уже читает (см. tgWriteModes).
+    nightRule: String(d.nightRule || ''),
+    nightAsk: String(d.nightAsk || ''),
     // `mirrorAll` из файлов прежних версий сюда не переносится и нигде не читается: галку
     // «писать всегда» заменило одно положение «где я» (см. TG_PRESENCE). Поле в старом
     // файле останется лежать до первого сохранения и исчезнет само.
@@ -2583,7 +2592,9 @@ function tgWriteModes() {
   // Список сессий этого не покрывает — вкладка попадает в него, только когда в неё УЖЕ
   // ответили с телефона, а вопрос с вариантами агент открывает и в той, куда не отвечали.
   // См. deniesPicker в hooks/swarm-signal.mjs.
-  const body = JSON.stringify({ sessions: ids.sort(), presence: tgPresence });
+  // Своя формулировка ночного правила уезжает хуку вместе с положением: отказ в рамке он
+  // печатает сам, и без этого поля агент получал бы наш текст, а не тот, что написал человек.
+  const body = JSON.stringify({ sessions: ids.sort(), presence: tgPresence, nightRule: TG.nightRule || '' });
   if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
   try {
     fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-tgmode.json'), body);
@@ -4236,14 +4247,18 @@ ipcMain.handle('telegram:reconnect', async () => {
 ipcMain.handle('telegram:setPrompt', (_e, raw) => {
   const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim().slice(0, 400);
   TG.prompt = text;
+  // Написал свою строку — значит она и в силе. Иначе человек печатает текст, а мост продолжает
+  // просить «кратко», и понять это можно только по тому, что ничего не изменилось.
+  if (text) TG.detail = 'custom';
+  else if (TG.detail === 'custom') TG.detail = 'short';
   tgApplyPrompt();
   try { tgSave(); } catch (e) { reportMainError(e); }
   return tgState();
 });
 
-// «Кратко или полностью» — какими просить агента отвечать в телегу. Своя формулировка,
-// если она есть, продолжает перебивать пресет: переключатель меняет то, что подставляется
-// вместо неё, а не отменяет её.
+// Какими просить агента отвечать в телегу: кратко, полно или своей формулировкой. Три
+// положения одного выбора — своя строка не добавка к пресету, а его замена (см. tgApplyPrompt).
+// Текст при переключении на пресет НЕ стираем: вернулся к «своей» — вернулась и она.
 ipcMain.handle('telegram:setDetail', (_e, raw) => {
   const detail = telegram.DETAILS.includes(raw) ? raw : 'short';
   TG.detail = detail;
@@ -4442,7 +4457,7 @@ function nightOnWaiting(id, d) {
     st.nudgedKeys.push(key);
     if (st.nudgedKeys.length > 8) st.nudgedKeys.shift();
     st.stoodKey = '';
-    nightType(id, night.rule(nightMarker()));
+    nightType(id, night.ruleText(TG.nightRule, nightMarker()));
     nightLog('nudge', id, d, { text: night.short(d.question, 300) });
     tgLog(`ночь: толчок в вкладку ${id} (${st.nudges}/${night.MAX_NUDGES})`);
   }, night.NUDGE_DELAY_MS);
@@ -4542,7 +4557,7 @@ function nightAskPhase(id, d) {
   st.askedAt = Date.now();
   st.asks = (st.asks || 0) + 1;
   st.askedTurn = d.turnStartedAt || st.askedAt;
-  nightType(id, night.phaseAsk(nightMarker()));
+  nightType(id, night.askText(TG.nightAsk, nightMarker()));
   nightLog('phase-ask', id, d, {});
   tgLog(`ночь: спросил вкладку ${id} про порог фазы`);
 }
@@ -4679,6 +4694,13 @@ function nightState() {
     from: nightFrom,
     typed: nightTyped,
     digest: nightDigestNow,
+    // Свои формулировки и заготовки рядом. Заготовку отдаём готовой строкой, а не просим
+    // рендерер собрать её сам: текст один на приложение, хук и подсказку в настройках.
+    rule: TG.nightRule || '',
+    ask: TG.nightAsk || '',
+    ruleDefault: night.rule(nightMarker()),
+    askDefault: night.phaseAsk(nightMarker()),
+    tag: nightMarker(),
   };
 }
 
@@ -4747,6 +4769,18 @@ function nightMarkRead() {
 
 ipcMain.handle('night:state', () => nightState());
 // Сводку прочитали — значок гаснет, и гаснет насовсем (см. nightMarkRead).
+// Свои формулировки ночи. Пусто — заготовка: пустое поле здесь честнее кнопки «сбросить»,
+// потому что не оставляет третьего состояния «своё, но пустое».
+ipcMain.handle('night:setTexts', (_e, raw) => {
+  const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 1200);
+  const t = raw || {};
+  if (t.rule !== undefined) TG.nightRule = clean(t.rule);
+  if (t.ask !== undefined) TG.nightAsk = clean(t.ask);
+  try { tgSave(); } catch (e) { reportMainError(e); }
+  tgWriteModes();                 // правило нужно и хуку, он читает файл рядом с собой
+  return nightState();
+});
+
 ipcMain.handle('night:dismiss', () => {
   nightDigestNow = null;
   nightMarkRead();

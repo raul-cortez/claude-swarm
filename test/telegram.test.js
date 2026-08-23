@@ -344,7 +344,10 @@ test('подробность выбирает формулировку, а не�
   assert.strictEqual(T.detailPrompt('short'), T.PROMPTS.short);
   assert.strictEqual(T.detailPrompt('нет такой'), T.PROMPTS.short);
   assert.strictEqual(T.detailPrompt(undefined), T.PROMPTS.short);
-  assert.deepStrictEqual(T.DETAILS, ['short', 'full']);
+  assert.deepStrictEqual(T.DETAILS, ['short', 'full', 'custom']);
+  // У «своей формулировки» текста в модуле нет: он живёт в настройках. Пустое положение
+  // отвечает краткой заготовкой, а не пустой строкой — иначе мост просил бы агента ни о чём.
+  assert.strictEqual(T.detailPrompt('custom'), T.PROMPTS.short);
   // Обе заготовки запрещают интерактивный выбор: в чате его нечем нажать.
   for (const p of Object.values(T.PROMPTS)) {
     assert.ok(/выбором клавиатурой/.test(p), p);
