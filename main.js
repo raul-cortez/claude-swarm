@@ -130,6 +130,9 @@ function ptyType(id, data) {
 // The command each new tab runs once its shell is ready. Change to '' if you
 // want a plain shell (and type `claude` yourself), or to something like
 // 'claude --resume' later.
+// Когда запустилось САМО приложение. Нужно ночному режиму: первые полминуты после запуска
+// вкладки перерисовывают прошлую переписку, и верить экрану в это время нельзя (night.BOOT_MS).
+const BOOT_AT = Date.now();
 const START_COMMAND = 'claude';
 
 function pickShell() {
@@ -500,7 +503,10 @@ function makeDetector(cols, rows) {
     // Итог хода: когда ход начался и на какой момент у нас есть его текст из стенограммы.
     // Второе сравнивается с первым — иначе в чат уезжает ответ на ПРОШЛУЮ задачу (см.
     // tgOnDone: с хуками статус «готов» приходит раньше, чем стенограмма догоняет).
-    turnStartedAt: 0, trReplyAt: 0, tgDoneTimer: null,
+    // turnEndedAt — когда ход кончился У НАС НА ГЛАЗАХ. Ноль значит «вкладка при нас ничего не
+    // делала», и это не то же, что «простаивает»: восстановленная и забытая вкладка простаивает
+    // честно, и ночному режиму спрашивать её не о чем (см. night.phaseDecision).
+    turnStartedAt: 0, turnEndedAt: 0, trReplyAt: 0, tgDoneTimer: null,
     // Что мост про эту вкладку уже доложил (запись стенограммы или сам текст). Тот же итог
     // второй раз — шум: см. tgNotifyDone.
     tgSentKey: '',
@@ -728,6 +734,7 @@ setInterval(() => {
         const wasOver = restart.turnOver({ status: prev, bg: wasBg });
         const isOver = restart.turnOver({ status: next.status, bg: next.bg });
         if (isOver && !wasOver) {
+          d.turnEndedAt = now;
           // Здесь же — а не в `turnEnded` ниже — встаёт пометка «человек этого ещё не видел»
           // (unread.js). Причина в том, ЧТО считать концом хода: телеграму нужен переход
           // работает→готов, потому что он отправляет ТЕКСТ итога, а тексту неоткуда взяться,
@@ -4317,7 +4324,7 @@ function nightSt(d) {
     d.ni = {
       nudges: 0, nudgedKeys: [], continues: 0, wakes: 0,
       nudgeTimer: null, wakeTimer: null,
-      readyAt: 0, askedAt: 0, askedTurn: 0, asks: 0,
+      readyAt: 0, askedAt: 0, askedTurn: 0, asks: 0, resolvedAt: 0,
       // limitAt — когда увидели стену, wokeUntil — по какому сбросу уже будили. Второе нужно
       // потому, что сообщение о лимите остаётся на экране и ПОСЛЕ подъёма: без него ночь
       // ловила бы одну и ту же строку по кругу и печатала в работающую вкладку.
@@ -4397,6 +4404,7 @@ function nightOnWaiting(id, d) {
     kind: d.waitingKind,
     box: !!d.waitingBox,
     now: Date.now(),
+    bootAt: BOOT_AT,
     startedAt: d.startedAt,
     fingerprint: key,
   });
@@ -4532,6 +4540,10 @@ function nightResolvePhase(id, d, now) {
   const st = nightSt(d);
   if (!st.askedAt || now - st.askedAt < NIGHT_RESOLVE_MS) return;
   st.askedAt = 0;
+  // С этого мига считаем работу заново: следующий вопрос вкладка получит только если ход
+  // кончится ПОСЛЕ разбора. Иначе её собственный ответ нам и был бы тем «новым простоем», из
+  // которого рождался следующий вопрос — круг на всю ночь (см. night.phaseDecision).
+  st.resolvedAt = now;
   const text = night.short(d.trFinal || d.trText || '', 300);
   if (d.status === 'running') {
     st.continues++;
@@ -4583,7 +4595,8 @@ setInterval(() => {
       if (st.askedAt) continue;               // ждём, чем кончится прошлый вопрос
       const dec = night.phaseDecision(st, {
         presence: tgPresence, status: d.status, bg: d.bg, limited: !!st.wakeTimer,
-        now, startedAt: d.startedAt, readyAt: st.readyAt, turn: d.turnStartedAt || 0,
+        now, bootAt: BOOT_AT, startedAt: d.startedAt, readyAt: st.readyAt,
+        workedAt: d.turnEndedAt || 0, turn: d.turnStartedAt || 0,
       });
       if (dec.act === 'ask') nightAskPhase(id, d);
       // Свой ключ, а не общий со ожиданием: иначе две ветки затирали бы друг другу отметку и
@@ -5616,6 +5629,7 @@ function restartFire(id, d) {
   // новый id разговора старым. То есть ровно то, от чего отвязка и ставилась.
   d.startedAt = Date.now();
   d.turnStartedAt = 0;
+  d.turnEndedAt = 0;
   d.sessionStartAt = Date.now();
   d.launchAt = Date.now();
   d.launchPid = null;

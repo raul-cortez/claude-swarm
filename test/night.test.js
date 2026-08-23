@@ -18,14 +18,16 @@ const OLD = NOW - 60 * 60_000;        // вкладка живёт час: пр�
 function waitCtx(over) {
   return Object.assign({
     presence: 'night', kind: 'question', box: false,
-    now: NOW, startedAt: OLD, fingerprint: 'мигрировать ли старый формат',
+    now: NOW, bootAt: OLD, startedAt: OLD, fingerprint: 'мигрировать ли старый формат',
   }, over || {});
 }
 
 function readyCtx(over) {
   return Object.assign({
     presence: 'night', status: 'ready', bg: false, limited: false,
-    now: NOW, startedAt: OLD, readyAt: NOW - night.IDLE_MS - 1000, turn: OLD,
+    now: NOW, bootAt: OLD, startedAt: OLD, readyAt: NOW - night.IDLE_MS - 1000,
+    // Вкладка при нас поработала и замолчала — иначе спрашивать её не о чем.
+    workedAt: NOW - night.IDLE_MS - 1000, turn: OLD,
   }, over || {});
 }
 
@@ -74,16 +76,37 @@ test('тем же вопросом второй раз не толкаем — �
   assert.match(d.why, /второй раз/);
 });
 
-test('новый вопрос через три часа — новый толчок', () => {
+// И НОВЫЙ вопрос после правила — тоже не толчок. Раньше он им был («новое событие»), и из
+// этого выходил круг: правило — новый вопрос — правило, всю ночь в одну вкладку. Агент,
+// услышавший правило и всё равно вставший с вопросом, тем и сказал, что вопрос настоящий.
+test('после правила вкладка стоит даже с новым вопросом', () => {
   const st = { nudges: 1, nudgedKeys: ['совсем другой вопрос'] };
-  assert.strictEqual(night.nudgeDecision(st, waitCtx()).act, 'nudge');
-});
-
-test('потолок толчков за ночь не переступается', () => {
-  const st = { nudges: night.MAX_NUDGES, nudgedKeys: [] };
   const d = night.nudgeDecision(st, waitCtx());
   assert.strictEqual(d.act, 'stand');
-  assert.match(d.why, /потолок/);
+  assert.match(d.why, /уже слышала/);
+});
+
+test('правило звучит один раз за ночь', () => {
+  assert.strictEqual(night.MAX_NUDGES, 1);
+  const d = night.nudgeDecision({ nudges: night.MAX_NUDGES, nudgedKeys: [] }, waitCtx());
+  assert.strictEqual(d.act, 'stand');
+});
+
+// Третьим вариантом ночного вопроса про фазу агенту ПРЕДЛОЖЕНО спросить и ждать утра. Толчок
+// правилом в такой вопрос — спор с собственным разрешением, и снова круг.
+test('вопрос после ночного разговора про фазу не толкаем', () => {
+  const d = night.nudgeDecision({ asks: 1 }, waitCtx());
+  assert.strictEqual(d.act, 'stand');
+  assert.match(d.why, /ждать до утра/);
+});
+
+// Полминуты после запуска приложения экран врёт: вкладки перерисовывают вчерашнюю переписку.
+test('сразу после запуска приложения ночь молчит', () => {
+  const boot = NOW - 5_000;
+  assert.strictEqual(night.nudgeDecision({}, waitCtx({ bootAt: boot })).act, 'skip');
+  const d = night.phaseDecision({}, readyCtx({ bootAt: boot }));
+  assert.strictEqual(d.act, 'skip');
+  assert.match(d.why, /только запустилось/);
 });
 
 // --- вопрос про порог фазы ----------------------------------------------------
@@ -96,6 +119,33 @@ test('минуту простоя не считаем простоем', () => {
   const d = night.phaseDecision({}, readyCtx({ readyAt: NOW - 60_000 }));
   assert.strictEqual(d.act, 'skip');
   assert.match(d.why, /двух минут/);
+});
+
+// Главный промах ночи, каким её увидели живьём: обновил сворм, все вкладки простаивают — и
+// через две минуты ночь пишет в КАЖДУЮ, хотя ни одна ничего не начинала. Простой сам по себе не
+// новость; новость — кончившийся ход.
+test('вкладку, которая при нас не работала, не спрашиваем', () => {
+  const d = night.phaseDecision({}, readyCtx({ workedAt: 0 }));
+  assert.strictEqual(d.act, 'skip');
+  assert.match(d.why, /не работала/);
+});
+
+test('ход, кончившийся до запуска приложения, за работу не считаем', () => {
+  const boot = NOW - 10 * 60_000;
+  const d = night.phaseDecision({}, readyCtx({ bootAt: boot, workedAt: boot + 1000 }));
+  assert.strictEqual(d.act, 'skip');
+  assert.match(d.why, /до запуска/);
+});
+
+// Второй круг того же промаха: вкладка ответила «всё сделано», замолчала — и через две минуты
+// получила тот же вопрос снова. Ответ нам работой не считается: он и есть та самая тишина.
+test('ответившую на прошлый вопрос не спрашиваем второй раз', () => {
+  const st = { resolvedAt: NOW - 5 * 60_000 };
+  const d = night.phaseDecision(st, readyCtx({ workedAt: NOW - 6 * 60_000 }));
+  assert.strictEqual(d.act, 'skip');
+  assert.match(d.why, /не работала/);
+  // А вкладка, которая после разбора закрыла ещё один ход, — заслуживает: это новая фаза.
+  assert.strictEqual(night.phaseDecision(st, readyCtx({ workedAt: NOW - 3 * 60_000 })).act, 'ask');
 });
 
 // «Сейчас от тебя: ничего, жду замер стенда» — агент не простаивает, он ждёт свою фоновую
