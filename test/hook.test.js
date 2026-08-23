@@ -296,8 +296,11 @@ test('отказ называет тег — и ровно тот, которы�
   const out = H.outputFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' }, m, ['s1']);
   const reason = out.hookSpecificOutput.permissionDecisionReason;
   assert.ok(reason.includes(ASK_TAG), 'отказ называет тег: ' + reason);
-  // And what it tells the agent to write must be what the matcher then accepts.
-  assert.ok(H.callsUser(m, 'Сделал. Что дальше? ' + ASK_TAG), 'таким тегом зов признаётся');
+  // And what it tells the agent to write must be what the matcher then accepts — включая
+  // МЕСТО: отказ велит начать сообщение строкой с тегом, и ровно так он и должен считаться.
+  assert.ok(/начни отдельной строкой/.test(reason), 'отказ называет место: ' + reason);
+  assert.ok(H.callsUser(m, ASK_TAG + '\n\nСделал. Что дальше?'), 'таким тегом зов признаётся');
+  assert.ok(!H.callsUser(m, 'Сделал. Что дальше? ' + ASK_TAG), 'а тег в конце строки — уже нет');
   // Своя фраза при этом продолжает работать — переход на теги её не отменяет.
   assert.ok(H.callsUser(m, 'Сделал.\n\nТвой ход: что дальше'), 'чужая фраза тоже зовёт');
 });

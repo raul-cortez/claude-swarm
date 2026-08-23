@@ -1437,11 +1437,12 @@ function showSettingsModal(tab) {
                 дописывало что-то в промпт вашего агента: вкладка тогда не отличит «ждёт ответа» от «готов».
                 Только Claude Code, применяется к новым вкладкам.</span>
             </div>
-            <span class="set-note">Агент ставит в самом конце сообщения <span class="set-mono">[вопрос]</span> —
-              и вкладка становится «ждёт ответа», — или <span class="set-mono">[фон]</span>, если ждёт свою
+            <span class="set-note">Агент начинает сообщение строкой <span class="set-mono">[swarm:вопрос]</span> —
+              и вкладка становится «ждёт ответа», — или <span class="set-mono">[swarm:фон]</span>, если ждёт свою
               фоновую задачу и человек не нужен. По-английски то же самое:
-              <span class="set-mono">[question]</span>, <span class="set-mono">[background]</span>.
-              Ничего не поставил — значит готов.</span>
+              <span class="set-mono">[swarm:question]</span>, <span class="set-mono">[swarm:background]</span>.
+              Ничего не поставил — значит готов. Считается только тег с начала строки: про сам тег агент
+              может писать в тексте свободно, себя он этим не позовёт.</span>
             <div class="set-field">
               <div class="set-head">
                 <span class="set-label">Свои фразы вызова</span>
@@ -1459,9 +1460,9 @@ function showSettingsModal(tab) {
                         placeholder="Сейчас от тебя"></textarea>
               <div class="ask-test">
                 <span class="ask-test-label">Проверка</span>
-                <input class="set-input" type="text" id="set-ask-test" spellcheck="false"
-                       autocapitalize="off" autocorrect="off"
-                       placeholder="вставьте конец сообщения агента" />
+                <textarea class="set-input" id="set-ask-test" rows="2" spellcheck="false"
+                          autocapitalize="off" autocorrect="off"
+                          placeholder="вставьте сообщение агента"></textarea>
                 <span class="ask-verdict" id="set-ask-verdict"></span>
               </div>
             </div>
@@ -1964,6 +1965,9 @@ function showSettingsModal(tab) {
   const askVerdictEl = overlay.querySelector('#set-ask-verdict');
   const draftPhrases = () => askI.value.split('\n').map((s) => s.trim()).filter(Boolean);
   const syncAskVerdict = () => {
+    // Поле многострочное, и это важно: тег считается с НАЧАЛА СТРОКИ, а однострочный input
+    // склеивал бы вставленное сообщение в одну строку — проверка отвечала бы «не позовёт»
+    // там, где живой агент зовёт. trim по краям безобиден: внутренние переводы строк целы.
     const sample = askTestI.value.trim();
     if (!sample) { askVerdictEl.textContent = ''; askVerdictEl.className = 'ask-verdict'; return; }
     const AP = window.SWARM_ASK_PHRASES;

@@ -46,20 +46,62 @@
 const ASK_TAGS = ['вопрос', 'question'];        // жду человека
 const WAIT_TAGS = ['фон', 'background'];        // жду свою фоновую задачу; человек не нужен
 
+// Приставка. Без неё меткой было любое `[вопрос]` в тексте — и агент, пишущий про сам
+// протокол (в доке, в отчёте, в этой самой переписке), звал человека нечаянно. Приставка
+// делает метку непохожей ни на что, что встречается в обычной речи и в примерах кода:
+// «[swarm:…]» пишут только те, кто пишет сворму.
+const TAG_NS = 'swarm';
+
 // Чему УЧИМ агента — одна форма из каждой пары. Понимаем все, но в правиле называем одну:
 // выбор из двух написаний в инструкции — это не свобода, а лишнее решение на каждом ходу.
 // Отсюда же их берут ночное правило и отказ от коробки с вариантами: текст, который агент
 // получает, обязан называть ту самую метку, которую мы потом ищем.
-const ASK_TAG = '[' + ASK_TAGS[0] + ']';
-const WAIT_TAG = '[' + WAIT_TAGS[0] + ']';
+const ASK_TAG = '[' + TAG_NS + ':' + ASK_TAGS[0] + ']';
+const WAIT_TAG = '[' + TAG_NS + ':' + WAIT_TAGS[0] + ']';
 
-// Внутри скобок терпим пробелы и любой регистр: [вопрос], [ Вопрос ], [QUESTION].
+// Метка стоит В НАЧАЛЕ СТРОКИ, и это не косметика, а вторая половина защиты от путаницы.
+// Приставка спасает от случайного слова, место — от НАМЕРЕННОГО упоминания: агент, который
+// объясняет протокол или цитирует доку, называет метку внутри фразы, и там она не значит
+// ничего. Позиция работает одинаково во всех трёх каналах, в том числе на экране, где границ
+// сообщения нет вовсе и «начало сообщения» спросить не у кого.
+//
+// Требовать метку ОДНУ на строке было бы строже, но дороже: агент, написавший
+// «[swarm:вопрос] что ставим?» одной строкой, остался бы незамеченным — вкладка позеленела бы,
+// хотя ждёт ответа. Молчание дороже лишнего зова, поэтому хватает начала строки.
+//
+// Приставку в скобках терпим и без неё: короткую форму `[вопрос]` агенты уже могли выучить из
+// чужих CLAUDE.md и старых эстафет, и перестать её узнавать значит молча потерять зов. Путаницы
+// от неё теперь нет — за это отвечает начало строки.
+//
+// Внутри скобок терпим пробелы и любой регистр: [swarm:вопрос], [ Swarm : Вопрос ], [QUESTION].
 function tagAlt(words) {
-  return '(?:' + words.map(function (w) { return '\\[\\s*' + w + '\\s*\\]'; }).join('|') + ')';
+  return '(?:\\[\\s*(?:' + TAG_NS + '\\s*:\\s*)?(?:' + words.join('|') + ')\\s*\\])';
 }
+// Начало строки — с двумя поправками, и каждая закрывает свой канал.
+//
+// РАЗМЕТКА: агент выделяет метку жирным или кодом, и в стенограмме это `**[swarm:вопрос]**`.
+// Экран разметки не видит (терминалу она достаётся уже разобранной), а стенограмма и хук
+// читают исходный текст — без этой поправки метка терялась бы ровно у половины каналов.
+//
+// МАРКЕР ⏺: это ЭКРАН, и без него правило «с начала строки» ломалось бы ровно там, куда мы
+// метку и просим ставить. Claude Code печатает первую строку своего сообщения как «⏺ текст»,
+// продолжение — с отступом. Значит тег ПЕРВОЙ строкой достаётся экрану как «⏺ [swarm:вопрос]»,
+// и без поправки он находился бы только в середине и в конце сообщения — то есть вкладка без
+// хуков молча не звала бы. Проверять снимок построчно нельзя: зов ищется по всей переписке
+// сразу (screen.js asksForInput), и мебель оттуда не вычищена.
+const TAG_BULLET = '(?:[⏺●]\\s*)?';
+const TAG_DECOR = '[ \\t]*' + TAG_BULLET + '[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*';
+const LINE_LEAD = '(?:^|\\r?\\n)' + TAG_DECOR;   // для поиска метки в тексте
+const TAIL_LEAD = '(?:\\r?\\n)?' + TAG_DECOR;    // хвост начинается РОВНО с этого места
+
+function tagLine(words) { return LINE_LEAD + tagAlt(words); }
+
 const ASK_TAG_SRC = tagAlt(ASK_TAGS);
 const WAIT_TAG_SRC = tagAlt(WAIT_TAGS);
+// Голая форма, без привязки к строке: ею метку ВЫЧИЩАЮТ из выжимки для подсказки и телеги,
+// а там неважно, где она стояла.
 const ANY_TAG_SRC = tagAlt(ASK_TAGS.concat(WAIT_TAGS));
+const ANY_TAG_LINE_SRC = tagLine(ASK_TAGS.concat(WAIT_TAGS));
 
 // --- ФРАЗЫ: путь совместимости --------------------------------------------------
 // Соглашение, которое было до тегов. Оставлено и поддерживается наравне: у людей эта
@@ -127,19 +169,24 @@ function normalizePhrases(list) {
 }
 
 // The regex SOURCES (strings, so they survive JSON on the way to the hook):
-//   mark    — ЛЮБАЯ метка: тег или фраза. По ней ищется последнее вхождение;
+//   mark    — ЛЮБАЯ метка: тег с начала строки или фраза. По ней ищется последнее вхождение;
 //   tagAsk  — тег зова, привязанный к началу хвоста;
 //   tagWait — тег фоновой работы, там же;
 //   none    — фраза с хвостом «ничего/жди»;
 //   wait    — фраза с хвостом «жду …» в первом лице (см. WAIT_TAIL).
 // Теги идут в mark вместе с фразами: иначе последним вхождением оказалась бы фраза из
 // позапрошлого хода, а свежий тег остался бы незамеченным.
+//
+// В mark тег привязан к началу строки, а в tagAsk/tagWait — к началу хвоста, и это одно и то
+// же место: хвост берётся РОВНО от найденной метки, то есть начинается с того самого перевода
+// строки. Врозь эти два источника разъехаться не могут — их собирает одна пара LINE_LEAD /
+// TAIL_LEAD.
 function phraseSources(list) {
   const alt = normalizePhrases(list).map(escapeRe).join('|');
   return {
-    mark: `(?:${ANY_TAG_SRC}|${alt})`,
-    tagAsk: `^${ASK_TAG_SRC}`,
-    tagWait: `^${WAIT_TAG_SRC}`,
+    mark: `(?:${ANY_TAG_LINE_SRC}|${alt})`,
+    tagAsk: `^${TAIL_LEAD}${ASK_TAG_SRC}`,
+    tagWait: `^${TAIL_LEAD}${WAIT_TAG_SRC}`,
     none: `(?:${alt})${NONE_TAIL}`,
     wait: `(?:${alt})${WAIT_TAIL}`,
   };
@@ -216,23 +263,37 @@ function saysNone(matcher, text) {
 }
 
 // WHAT the agent is asking, as text — for the pult tooltip, the notification and
-// (later) the Telegram bridge. The whole closing message is usually a report ending
-// with the request, so the useful part starts AT the phrase: «Сейчас от тебя: путь к
-// схеме». Falls back to the tail of the message when no phrase matched, because a
-// waiting agent still has to show something. Collapses blank lines and caps the
-// length — a chip tooltip is not a place for a page of text.
+// the Telegram bridge. Collapses blank lines and caps the length: a chip tooltip is
+// not a place for a page of text.
+//
+// Откуда резать — зависит от того, ЧЕМ агент позвал, и это не придирка.
+//   • Фраза («Сейчас от тебя: путь к схеме») сама и есть просьба, поэтому режем ОТ неё:
+//     отчёт выше человеку в уведомлении не нужен.
+//   • Тег просьбы не содержит — он только говорит «я жду». Сам вопрос стоит в КОНЦЕ
+//     сообщения (агент дописывает его последним абзацем), поэтому здесь берём хвост.
+// Раньше обе ветки резали от начала найденного места, и на теге в уведомление уезжало
+// начало отчёта — то есть ровно то, чего человеку знать не надо, чтобы ответить.
 function askExcerpt(matcher, text, max) {
-  // Тег из выжимки вычищаем: человеку в подсказке, уведомлении и телеге нужен вопрос, а
-  // не служебная метка. После вычистки работает та же логика, что и раньше: с фразы, если
-  // она есть, иначе с конца сообщения — а вопрос стоит как раз в конце.
+  // Тег из выжимки вычищаем — человеку нужен вопрос, а не служебная метка. Вычищаем ГОЛОЙ
+  // формой, без привязки к строке: неважно, где тег стоял, из текста он уходит весь.
   const t = String(text == null ? '' : text).replace(new RegExp(ANY_TAG_SRC, 'gi'), ' ')
     .replace(/[ \t]{2,}/g, ' ').trim();
   if (!t) return '';
   const cap = max || 500;
+  // Тег из текста уже вычищен, так что здесь совпасть может только ФРАЗА — и это то, что
+  // нам и нужно знать: есть фраза — режем от неё, нет — значит звали тегом.
   const hit = matcher && matcher.mark ? t.match(matcher.mark) : null;
-  const from = hit && hit.index != null ? t.slice(hit.index) : t.slice(-cap * 2);
-  const flat = from.replace(/\s*\n\s*\n\s*/g, ' — ').replace(/\s*\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  return flat.length > cap ? flat.slice(0, cap - 1).trimEnd() + '…' : flat;
+  const flatten = (s) => s.replace(/\s*\n\s*\n\s*/g, ' — ').replace(/\s*\n\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ').trim();
+  if (hit && hit.index != null) {
+    const flat = flatten(t.slice(hit.index));
+    return flat.length > cap ? flat.slice(0, cap - 1).trimEnd() + '…' : flat;
+  }
+  const flat = flatten(t);
+  if (flat.length <= cap) return flat;
+  // Многоточие СПЕРЕДИ — оно и говорит «текст обрезан слева». Первое слово в срезе почти
+  // всегда разрублено пополам, поэтому его выбрасываем: половина слова читается как опечатка.
+  return '…' + flat.slice(flat.length - (cap - 1)).replace(/^\S*\s+/, '');
 }
 
 // The default sources, so the hook's own fallback can be pinned against them.
@@ -240,7 +301,7 @@ const DEFAULT_SOURCES = phraseSources(DEFAULT_ASK_PHRASES);
 
 return {
   DEFAULT_ASK_PHRASES, DEFAULT_SOURCES, MAX_PHRASES, MAX_LEN,
-  ASK_TAGS, WAIT_TAGS, ASK_TAG, WAIT_TAG,
+  TAG_NS, ASK_TAGS, WAIT_TAGS, ASK_TAG, WAIT_TAG,
   normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, saysNone, askExcerpt,
 };
 

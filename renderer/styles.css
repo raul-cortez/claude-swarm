@@ -907,6 +907,10 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .ask-test { display: flex; align-items: center; gap: 8px; }
 .ask-test-label { flex: none; color: var(--muted); font-size: 12px; }
 .ask-test .set-input { flex: 1; min-width: 0; }
+/* Проверка стала многострочной (тег считается с начала строки — склеивать вставленное
+   сообщение в одну строку нельзя), но это одна строка настроек, а не поле для абзаца:
+   двух строк хватает, чтобы увидеть тег над текстом. */
+.ask-test textarea.set-input { min-height: 44px; }
 .ask-verdict { font-size: 12px; white-space: nowrap; color: var(--muted); }
 .ask-verdict.is-call { color: var(--waiting); }
 .ask-verdict.is-none { color: var(--ready); }

@@ -20,8 +20,24 @@ test('the default marker is the phrase the matcher ships with', () => {
 test('теги в правиле — те же, что понимает сопоставитель', () => {
   // Дублированные константы (agent-rules подключается и простым <script>, там нет
   // require), поэтому прибиты: учить тегу, которого никто не ищет, — молчащая вкладка.
+  assert.strictEqual(AR.TAG_NS, AP.TAG_NS);
   assert.strictEqual(AR.ASK_TAG, AP.ASK_TAG);
   assert.strictEqual(AR.WAIT_TAG, AP.WAIT_TAG);
+});
+
+// Правило называет МЕСТО тега, и назвать его неверно — та же молчащая вкладка, что и неверный
+// тег: агент послушается, а сопоставитель не найдёт. Проверяем не текст, а поведение: то, чему
+// правило учит буквально, должно считаться зовом.
+test('правило учит месту, с которого тег и правда считается', () => {
+  const m = AP.buildAskMatcher([]);
+  for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
+    assert.ok(/начни сообщение/.test(rule), 'правило называет начало сообщения: ' + rule.slice(0, 80));
+    assert.ok(/с начала строки/.test(rule), 'и предупреждает, что внутри фразы тег не считается');
+  }
+  // Буквально по правилу: тег отдельной строкой в начале сообщения.
+  assert.ok(AP.asksWith(m, `${AR.ASK_TAG}\n\nЧто ставим?`));
+  // И то, от чего правило предостерегает, зовом действительно не считается.
+  assert.ok(!AP.asksWith(m, `Пишу про тег ${AR.ASK_TAG} внутри фразы.`));
 });
 
 test('оба правила учат метке, которую сопоставитель считает зовом', () => {
@@ -29,7 +45,7 @@ test('оба правила учат метке, которую сопостав
   // один и работает при любом списке фраз.
   for (const phrases of [[], ['Твой ход'], ['  Нужен ответ  ', 'Твой ход']]) {
     const m = AP.buildAskMatcher(phrases);
-    const sample = `Сделал то и это.\n\nЧто ставим — заливку или точку? ${AR.ASK_TAG}`;
+    const sample = `${AR.ASK_TAG}\n\nСделал то и это.\n\nЧто ставим — заливку или точку?`;
     assert.ok(AP.asksWith(m, sample), 'зовёт при ' + JSON.stringify(phrases));
     for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
       assert.ok(rule.includes(AR.ASK_TAG), 'правило называет тег зова');
@@ -54,7 +70,7 @@ test('тег фона даёт ровно «работает в фоне», а �
   // и увидеть это можно будет только вживую: тесты по обе стороны останутся зелёными.
   for (const phrases of [[], ['Твой ход'], ['Нужен ответ', 'Твой ход']]) {
     const m = AP.buildAskMatcher(phrases);
-    const sample = `Запустил замер стенда. ${AR.WAIT_TAG}`;
+    const sample = `${AR.WAIT_TAG}\n\nЗапустил замер стенда.`;
     assert.ok(AP.waitsWith(m, sample), 'фон с ' + JSON.stringify(phrases));
     assert.ok(!AP.asksWith(m, sample), 'и это не зов: ' + JSON.stringify(phrases));
     for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
