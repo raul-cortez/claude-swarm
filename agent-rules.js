@@ -6,20 +6,21 @@
 // screen detector reads the pty. The one thing no harness can know is intent — a
 // turn that ended with a question looks exactly like a turn that ended done. That
 // part has to come from the agent, so it needs a convention, and a convention only
-// works if somebody teaches it. This module is that text, in two shapes:
+// works if somebody teaches it. This module is that text:
 //
 //   systemPromptRule() — one line for `claude --append-system-prompt`, injected by
 //     main at launch (see injectAgentRules). Costs the user nothing to set up and
 //     touches no file of theirs, but lives only inside command lines SWARM composes:
-//     injectAgentRules отступает, если человек передал свой --append-system-prompt,
-//     если лончер не распознан как Claude (свой алиас, обёртка, скрипт) — и, конечно,
-//     если человек набрал `claude` руками в чистой вкладке.
-//   claudeMdRule()     — a markdown block for the user's own CLAUDE.md, offered as
-//     a copy button in Settings. Ровно для трёх случаев выше: экран за агентом следят
-//     и там, а правило флагом до него не дошло. «Вне сворма» правило не нужно никому:
-//     снаружи нет вкладки, которую надо красить.
+//     injectAgentRules отступает, если человек передал свой --append-system-prompt
+//     или если лончер не распознан как Claude (свой алиас, обёртка, скрипт).
 //
-// Both teach the same thing: ТЕГИ (ask-phrases.js ASK_TAG / WAIT_TAG). Метку в тексте
+// Раньше рядом жила вторая форма — блок для чужого CLAUDE.md под кнопкой «скопировать
+// правило» в настройках. Она ушла вместе со всем блоком «Как агент зовёт вас»: правило
+// приложение подставляет само, а настройки, которую нельзя не выбрать правильно, быть не
+// должно. Если запасной путь понадобится снова, он вернётся не настройкой, а подсказкой в
+// том месте, где сворм УЖЕ знает, что флагом до агента не дошёл.
+//
+// Правило учит ТЕГАМ (ask-phrases.js ASK_TAG / WAIT_TAG). Метку в тексте
 // заменить нечем — событие «ход кончился» приходит одинаковым и когда дело сделано, и
 // когда задан вопрос прозой, — но метка теперь не естественная фраза, а тег, и правило
 // от этого стало короче: учить нечему, кроме «начни сообщение строкой [swarm:вопрос]».
@@ -38,33 +39,15 @@
 // PreToolUse hook an exact signal plus the question text, with no text matching at
 // all. The phrase is the fallback for questions that stay in prose.
 //
-// Dual-mode like ask-phrases.js: module.exports under Node (main, tests),
-// window.SWARM_AGENT_RULES in the renderer (the copy button).
-(function (root, factory) {
-  const api = factory();
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  root.SWARM_AGENT_RULES = api;
-})(typeof self !== 'undefined' ? self : this, function () {
+// Обычный CommonJS, без двойного режима: рендереру этот модуль больше не нужен —
+// единственным его читателем в браузере была кнопка «скопировать правило». А раз
+// require() здесь доступен, теги и фраза БЕРУТСЯ из ask-phrases.js, а не дублируются.
+// Раньше они стояли копией — модуль подключался простым <script>, — и совпадение
+// приходилось прибивать тестом; теперь учить не тому тегу, который ищет сопоставитель,
+// стало нельзя по построению.
+const { DEFAULT_ASK_PHRASES, TAG_NS, ASK_TAG, WAIT_TAG } = require('./ask-phrases');
 
-// Kept in sync with ask-phrases.js DEFAULT_ASK_PHRASES[0] by a test. Duplicated
-// rather than required, because this module is also loaded as a plain script in the
-// renderer, where there is no require().
-const DEFAULT_MARKER = 'Сейчас от тебя';
-
-// Теги — то же дублирование по той же причине: этот модуль подключается в рендерере
-// простым <script>, где require недоступен. Совпадение с ask-phrases.js сверяется тестом.
-const TAG_NS = 'swarm';
-const ASK_TAGS = ['вопрос', 'question'];
-const WAIT_TAGS = ['фон', 'background'];
-const ASK_TAG = '[' + TAG_NS + ':' + ASK_TAGS[0] + ']';
-const WAIT_TAG = '[' + TAG_NS + ':' + WAIT_TAGS[0] + ']';
-
-// The CLAUDE.md block is fenced with markers so it can be found and replaced whole
-// instead of piling up copies. The user may edit the text inside; we never write
-// this file ourselves — it's theirs — the markers are for THEM (and for a future
-// «обновить правило»).
-const MD_BEGIN = '<!-- claude-swarm-lite:begin -->';
-const MD_END = '<!-- claude-swarm-lite:end -->';
+const DEFAULT_MARKER = DEFAULT_ASK_PHRASES[0];
 
 // ONE LINE, on purpose: on the fallback path it goes inside double quotes on a shell
 // command line, where a newline would end the command.
@@ -83,38 +66,7 @@ function systemPromptRule() {
   ].join(' ');
 }
 
-// The same rule as a markdown section for the user's own CLAUDE.md. Free to be
-// multi-line and a bit more explicit — nothing here goes through a shell.
-function claudeMdRule() {
-  return [
-    MD_BEGIN,
-    '## Как звать меня',
-    '',
-    'Я смотрю на агентов через Swarm: каждая вкладка показывает статус, и я могу быть',
-    'в другой вкладке или в телефоне. Вкладка не может сама понять, закончил ты работу или задал',
-    'вопрос — со стороны это выглядит одинаково. Поэтому:',
-    '',
-    '- Нужен ответ, выбор или решение — спрашивай инструментом `AskUserQuestion`, а не только текстом:',
-    '  тогда вкладка сразу покажет, что ты ждёшь, и вопрос с вариантами дойдёт до меня в телефон.',
-    `- Если вопрос остаётся в тексте, начни сообщение отдельной строкой с тегом \`${ASK_TAG}\` —`,
-    '  по нему вкладка становится «ждёт ответа» и зовёт меня.',
-    '- Если ты запустил фоновую задачу и ждёшь её (замер, сборка, фоновый агент), а от меня ничего',
-    `  не нужно — начни сообщение строкой \`${WAIT_TAG}\`: вкладка останется занятой, а меня не позовёт.`,
-    '- Закончил и ничего не ждёшь — не ставь никакого тега. Это и значит «готов».',
-    '',
-    'Тег считается только с начала строки. Внутри фразы, в рассуждении, в примере кода и в доке',
-    'он ничего не значит — писать о нём можно свободно, себя ты этим не позовёшь.',
-    '',
-    `По-английски тоже понимаю: \`[${TAG_NS}:${ASK_TAGS[1]}]\` и \`[${TAG_NS}:${WAIT_TAGS[1]}]\` работают так же.`,
-    `Старую подпись \`${DEFAULT_MARKER}: …\` приложение тоже ещё понимает, но тег надёжнее:`,
-    'его не построишь случайно в обычной фразе.',
-    MD_END,
-  ].join('\n');
-}
-
-return {
-  DEFAULT_MARKER, TAG_NS, ASK_TAG, WAIT_TAG, MD_BEGIN, MD_END,
-  systemPromptRule, claudeMdRule,
+module.exports = {
+  DEFAULT_MARKER, TAG_NS, ASK_TAG, WAIT_TAG,
+  systemPromptRule,
 };
-
-});

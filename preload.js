@@ -78,14 +78,6 @@ contextBridge.exposeInMainWorld('swarm', {
   // (scoped to swarm sessions). Takes effect on sessions started after the change.
   setHooksEnabled: (on) => ipcRenderer.send('settings:hooks', on),
 
-  // The phrases that mean «the agent is calling me» (Settings → Запуск). Pushed on
-  // startup and on save; main feeds both the screen detector and the Stop hook.
-  setAskPhrases: (list) => ipcRenderer.send('settings:askPhrases', list),
-
-  // «Просить агента звать вас»: main appends the rule (agent-rules.js) to the launch
-  // command as --append-system-prompt. On by default; applies to new sessions.
-  setAgentRules: (on) => ipcRenderer.send('settings:agentRules', on),
-
   // «Новые вкладки стартуют в режиме»: main добавляет --permission-mode к команде запуска.
   // Пусто = не вмешиваться. Применяется к новым вкладкам, режим остаётся переключаемым.
   setPermissionMode: (mode) => ipcRenderer.send('settings:permissionMode', mode),

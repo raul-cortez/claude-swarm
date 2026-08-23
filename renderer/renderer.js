@@ -647,11 +647,6 @@ const hooksEnabled = true;
 // и он выбирал между ней и работающим приложением — полоской контекста, цифрами /usage и
 // перезапуском по контексту, которые кормятся только отсюда. Теперь наш скрипт сам зовёт его
 // команду и печатает оба куска, так что терять нечего и выбирать не из чего.
-// «Просить агента звать вас» (Settings → Запуск): main appends the rule from
-// agent-rules.js to the launch command. ON unless turned off — a fresh install has no
-// such convention in its CLAUDE.md, so without this the «ждёт ответа» status would
-// simply never fire and the user would have to go teach the agent by hand.
-let agentRules = localStorage.getItem('swarm.agentRules') !== '0';
 // Режим разрешений, с которым стартуют новые вкладки (Settings → Запуск). Пусто = не
 // вмешиваться, и это умолчание: режимы стоят по-разному, и выбирать за человека нельзя.
 // Смысл настройки в том, что «разреши уже всё» — самое частое, что делают руками сразу после
@@ -663,25 +658,6 @@ let permMode = localStorage.getItem('swarm.permMode') || '';
 // в restart.js, здесь только память о выборе.
 let restartOn = localStorage.getItem('swarm.restart') === '1';
 let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
-// The phrases that mean «the agent is calling me» — the only signal that tells a
-// finished turn («готов») from a turn that ended with a question («ждёт ответа»).
-// Taught to the agent at launch (agentRules) and/or by the user's own CLAUDE.md, so
-// it's editable (Settings → Запуск).
-// Kept as a plain list; main normalizes it and feeds both the screen detector and
-// the Stop hook. Empty list = «use the shipped default» (see ask-phrases.js).
-let askPhrases = loadAskPhrases();
-
-function loadAskPhrases() {
-  try {
-    const v = JSON.parse(localStorage.getItem('swarm.askPhrases') || '[]');
-    return Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()) : [];
-  } catch (_) { return []; }
-}
-function saveAskPhrases() {
-  localStorage.setItem('swarm.askPhrases', JSON.stringify(askPhrases));
-  window.swarm.setAskPhrases(askPhrases);
-}
-
 // Split a "cmd --flags" line into { cmd, flags }: first token = launcher, rest = flags.
 function parseAgentLine(line) {
   const t = (line || '').trim();
@@ -1423,64 +1399,6 @@ function showSettingsModal(tab) {
               </div>
             </div>
           </section>
-          <section class="set-group">
-            <div class="set-group-h">Как агент зовёт вас</div>
-            <div class="set-row">
-              <label class="set-check">
-                <input type="checkbox" id="set-agent-rules" />
-                <span class="set-check-tx">Просить агента звать вас</span>
-              </label>
-              <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Клод заканчивает ход одинаково и когда сделал дело, и когда задал
-                вопрос — со стороны это одно и то же событие. Поэтому на запуске просим агента спрашивать через
-                выбор вариантов, а вопрос в тексте помечать тегом. Выключите, если не хотите, чтобы приложение
-                дописывало что-то в промпт вашего агента: вкладка тогда не отличит «ждёт ответа» от «готов».
-                Только Claude Code, применяется к новым вкладкам.</span>
-            </div>
-            <span class="set-note">Агент начинает сообщение строкой <span class="set-mono">[swarm:вопрос]</span> —
-              и вкладка становится «ждёт ответа», — или <span class="set-mono">[swarm:фон]</span>, если ждёт свою
-              фоновую задачу и человек не нужен. По-английски то же самое:
-              <span class="set-mono">[swarm:question]</span>, <span class="set-mono">[swarm:background]</span>.
-              Ничего не поставил — значит готов. Считается только тег с начала строки: про сам тег агент
-              может писать в тексте свободно, себя он этим не позовёт.</span>
-            <div class="set-field">
-              <div class="set-head">
-                <span class="set-label">Свои фразы вызова</span>
-                <button type="button" class="set-q" aria-label="подсказка">?</button>
-                <span class="set-hint" hidden>Понадобятся, только если у вас своя подпись вместо тегов —
-                  например она уже лежит в вашем <code>CLAUDE.md</code>. Теги настраивать не нужно: они зашиты
-                  и работают всегда.
-                  <br>По одной фразе в строке. Ищем в любом месте сообщения, регистр не важен;
-                  «…: ничего, жди» вопросом не считаем, а «…: ничего, жду сборку» считаем фоновой работой —
-                  разница в лице глагола. До 12 фраз, до 60 символов каждая.
-                  Пусто — останется фраза по умолчанию <span class="set-mono">Сейчас от тебя</span>.</span>
-              </div>
-              <textarea class="set-input" id="set-ask-phrases" rows="3" spellcheck="false"
-                        autocapitalize="off" autocorrect="off"
-                        placeholder="Сейчас от тебя"></textarea>
-              <div class="ask-test">
-                <span class="ask-test-label">Проверка</span>
-                <textarea class="set-input" id="set-ask-test" rows="2" spellcheck="false"
-                          autocapitalize="off" autocorrect="off"
-                          placeholder="вставьте сообщение агента"></textarea>
-                <span class="ask-verdict" id="set-ask-verdict"></span>
-              </div>
-            </div>
-            <div class="set-field">
-              <div class="set-row is-center">
-                <button type="button" class="set-check-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
-                <button type="button" class="set-q" aria-label="подсказка">?</button>
-                <span class="set-hint" hidden>Обычно не нужна: правило приложение подставляет агенту само,
-                  на запуске. Но подставить его есть куда не всегда — если вы передали свой
-                  <span class="set-mono">--append-system-prompt</span>, если команда запуска не распознана как
-                  Claude (свой алиас, обёртка, скрипт) или если вы набрали <span class="set-mono">claude</span>
-                  руками в чистой вкладке. Агент тогда правила не получил, а вкладка за ним всё равно следит —
-                  и работает она только по правилу из файла. Вставьте его в <code>CLAUDE.md</code> проекта или
-                  в свой в <code>~/.claude</code>.</span>
-              </div>
-              <span class="set-note" id="set-copy-rule-note"></span>
-            </div>
-          </section>
         </div>
       </div>
 
@@ -1500,13 +1418,13 @@ function showSettingsModal(tab) {
             <div class="set-row">
               <label class="set-check">
                 <input type="checkbox" id="set-notify-ready" />
-                <span class="set-check-tx">Когда агент закончил — <span class="set-mono">готов</span></span>
+                <span class="set-check-tx">Когда агент закончил — <span class="set-lit">готов</span></span>
               </label>
             </div>
             <div class="set-row">
               <label class="set-check">
                 <input type="checkbox" id="set-notify-waiting" />
-                <span class="set-check-tx">Когда агент ждёт ответа — <span class="set-mono">ждёт ответа</span></span>
+                <span class="set-check-tx">Когда агент ждёт ответа — <span class="set-lit">ждёт ответа</span></span>
               </label>
             </div>
             <div class="set-row">
@@ -1749,7 +1667,7 @@ function showSettingsModal(tab) {
               <button type="button" class="set-q" aria-label="подсказка">?</button>
               <span class="set-hint" hidden>Это просьба агенту, а не обрезка его ответа: мост
                 подставляет её к первому сообщению из телеги, дальше идёт короткая метка
-                <span class="set-mono">[тлг]</span>.</span>
+                <span class="set-lit">[тлг]</span>.</span>
             </div>
             <div class="set-row">
               <label class="set-radio">
@@ -1906,8 +1824,6 @@ function showSettingsModal(tab) {
   const agentBlockEl = overlay.querySelector('#set-agent-block');
   const agentListEl = overlay.querySelector('#set-agent-list');
   const pickFieldEl = overlay.querySelector('#set-pick-field');
-  const rulesI = overlay.querySelector('#set-agent-rules');
-  rulesI.checked = agentRules;
   // Режим для новых вкладок. Список приходит из main: подписи режимов живут в screen.js,
   // рядом с их распознаванием на экране, и второй список здесь разошёлся бы с ним молча.
   const permI = overlay.querySelector('#set-perm-mode');
@@ -1955,52 +1871,6 @@ function showSettingsModal(tab) {
   restartPctI.addEventListener('input', syncRestart);
   restartI.addEventListener('change', syncRestart);
   syncRestart();
-  const askI = overlay.querySelector('#set-ask-phrases');
-  askI.value = askPhrases.join('\n');   // empty box = the default phrase (placeholder)
-  // Live «will this call me?» check. Runs the SAME matcher the detector and the hook
-  // use (window.SWARM_ASK_PHRASES), against the phrases as currently TYPED — so you
-  // can try a phrase before saving. Answers the one question the text can't: «ловится
-  // ли моя фраза вообще».
-  const askTestI = overlay.querySelector('#set-ask-test');
-  const askVerdictEl = overlay.querySelector('#set-ask-verdict');
-  const draftPhrases = () => askI.value.split('\n').map((s) => s.trim()).filter(Boolean);
-  const syncAskVerdict = () => {
-    // Поле многострочное, и это важно: тег считается с НАЧАЛА СТРОКИ, а однострочный input
-    // склеивал бы вставленное сообщение в одну строку — проверка отвечала бы «не позовёт»
-    // там, где живой агент зовёт. trim по краям безобиден: внутренние переводы строк целы.
-    const sample = askTestI.value.trim();
-    if (!sample) { askVerdictEl.textContent = ''; askVerdictEl.className = 'ask-verdict'; return; }
-    const AP = window.SWARM_ASK_PHRASES;
-    if (!AP) { askVerdictEl.textContent = ''; return; } // script missing: no check, but settings still work
-    // Три исхода, а не два: зов, «ничего, жду фон» (вкладка занята, но не зовёт) и конец
-    // работы. Средний тут особенно нужен — на глаз он от «жди результата» отличается одной
-    // буквой, и увидеть, как его понял матчер, можно только здесь.
-    const kind = AP.callKind(AP.buildAskMatcher(draftPhrases()), sample);
-    const verdict = kind === 'ask' ? ['позовёт → ждёт ответа', 'is-call']
-      : kind === 'wait' ? ['не позовёт → работает в фоне', 'is-work']
-        : ['не позовёт → готов', 'is-none'];
-    askVerdictEl.textContent = verdict[0];
-    askVerdictEl.className = 'ask-verdict ' + verdict[1];
-  };
-  askI.addEventListener('input', syncAskVerdict);
-  askTestI.addEventListener('input', syncAskVerdict);
-  syncAskVerdict();
-
-  // The same rule main injects at launch, but as a CLAUDE.md block — for agents run
-  // outside swarm, where our launch flag doesn't reach. Built from the phrases as
-  // currently TYPED (like the verdict above), so what you paste matches what you see.
-  const copyRuleB = overlay.querySelector('#set-copy-rule');
-  const copyRuleNoteEl = overlay.querySelector('#set-copy-rule-note');
-  const copyRuleNote = copyRuleNoteEl.innerHTML;   // restored after the «скопировано» flash
-  copyRuleB.addEventListener('click', () => {
-    const AR = window.SWARM_AGENT_RULES;
-    if (!AR) return;                               // script missing: settings still work
-    window.swarm.clipboardWrite(AR.claudeMdRule());
-    copyRuleNoteEl.textContent = 'Скопировано. Вставьте в CLAUDE.md — проекта или свой в ~/.claude.';
-    clearTimeout(copyRuleB._t);
-    copyRuleB._t = setTimeout(() => { copyRuleNoteEl.innerHTML = copyRuleNote; }, 4000);
-  });
-
   // --- Telegram panel -------------------------------------------------------
   // Everything here applies IMMEDIATELY (like the updates panel), not on «Сохранить»:
   // connecting a bot and binding a chat are actions, not preferences. The token field is
@@ -2776,11 +2646,6 @@ function showSettingsModal(tab) {
     saveLaunchMode();
     launchPick = overlay.querySelector('input[name="set-pick"]:checked')?.value || 'folder';
     saveLaunchPick();
-    if (rulesI.checked !== agentRules) {
-      agentRules = rulesI.checked;
-      localStorage.setItem('swarm.agentRules', agentRules ? '1' : '0');
-      window.swarm.setAgentRules(agentRules); // main adds/drops the launch flag
-    }
     if (permI.value !== permMode) {
       permMode = permI.value;
       localStorage.setItem('swarm.permMode', permMode);
@@ -2793,11 +2658,6 @@ function showSettingsModal(tab) {
       localStorage.setItem('swarm.restart', restartOn ? '1' : '0');
       localStorage.setItem('swarm.restartPct', String(restartPct));
       window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
-    }
-    const nextAsk = askI.value.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (nextAsk.join('\n') !== askPhrases.join('\n')) {
-      askPhrases = nextAsk;
-      saveAskPhrases(); // main re-arms the screen detector and rewrites the hook file
     }
     pultEnabled = pultI.checked;
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
@@ -4553,8 +4413,6 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 // Tell main the saved hooks pref BEFORE restoring sessions, so swarm-settings.json
 // carries (or omits) the hooks block before the first claude spawn.
 window.swarm.setHooksEnabled(hooksEnabled);
-window.swarm.setAskPhrases(askPhrases); // same reason: the hook file must be current
-window.swarm.setAgentRules(agentRules); // and the launch flag before the first command
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:

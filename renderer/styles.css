@@ -1,4 +1,4 @@
-/* Operator-console look: quiet, dense, mono-forward. One teal signal color for
+/* Operator-console look: quiet, dense. One teal signal color for
    the active session; status is carried by the dot + a left strip on cards. The
    restraint is deliberate — the terminals are the content, the chrome stays out
    of the way.
@@ -57,9 +57,23 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--mono);
+  /* Проза — системным шрифтом, и это касается ВСЕГО интерфейса, а не только настроек.
+     Приложение задумывалось моноширинным целиком («пульт оператора»), но интерфейс у него
+     русский, а кириллица в моно читается по буквам: «ждёт ответа» на карточке, «Отмена» на
+     кнопке, названия команд в меню — всё это проза, и моно делало её нарочито технической.
+     Моно осталось тому, где важна не читаемость фразы, а точность знака: терминалу, коду,
+     путям, диффу, логам, ветке git и плашкам-литералам (.set-mono, code, .set-code,
+     .agent-cmd, .kb-chord, .tg-code). Каждое такое место объявляет шрифт САМО — здесь
+     наследуется проза, и новый элемент по умолчанию оказывается прозой, а не кодом. */
+  font-family: var(--ui);
   overflow: hidden;
 }
+
+/* Поля ввода и кнопки шрифт не наследуют — браузер даёт им свой. Приходится сказать явно,
+   иначе половина интерфейса осталась бы мимо базового шрифта. :where() именно для того,
+   чтобы не добавлять веса: код-подобные (.set-code, .agent-cmd, .kb-chord, .pick-item)
+   перебивают это правило, а не проигрывают ему. */
+:where(button, input, select, textarea) { font-family: inherit; }
 
 body {
   display: grid;
@@ -99,6 +113,9 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* In top layout the traffic-light gap (#chrome padding-left) is the left margin;
    a brand block there just looks like awkward empty space, so drop it. */
 .layout-top  #brand { display: none; }
+/* Логотип — единственное место, где моно осталось не ради точности знака, а ради вида:
+   это словесный знак «пульта оператора», а не проза, и разрядка сделана под него. */
+.brand, .brand-sub { font-family: var(--mono); }
 .brand {
   font-size: 15px;
   font-weight: 600;
@@ -478,7 +495,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   border: 1px dashed var(--border);
   border-radius: 6px;
   color: var(--muted);
-  font-family: var(--mono);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -553,7 +569,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   border: 0;
   border-radius: 6px;
   color: var(--text);
-  font-family: var(--mono);
   font-size: 12px;
   cursor: pointer;
 }
@@ -589,7 +604,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .modal-actions button {
   padding: 8px 14px;
   border-radius: 6px;
-  font-family: var(--mono);
   font-size: 12px;
   cursor: pointer;
   border: 1px solid var(--border);
@@ -628,14 +642,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   /* Строка обязана быть ограничена, иначе она растёт по содержимому: панель
      выдавливала подвал с «Сохранить» за край, а край обрезан overflow: hidden. */
   grid-template-rows: minmax(0, 1fr);
-  font-family: var(--ui);
   font-size: 13px;
 }
-/* Поля ввода и кнопки шрифт не наследуют — приходится сказать явно, иначе внутри
-   системной модалки они остались бы моношириными. Код-подобные вернём ниже, и
-   :where() здесь именно для этого: он не добавляет веса, так что .set-code,
-   .agent-cmd и .kb-chord перебивают это правило, а не проигрывают ему. */
-.modal.settings :where(button, input, select, textarea) { font-family: inherit; }
 
 @media (max-width: 700px) {
   .modal.settings { grid-template-columns: 148px minmax(0, 1fr); }
@@ -791,6 +799,15 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   background: color-mix(in srgb, var(--bg) 70%, var(--panel));
   padding: 1px 5px; border-radius: 4px;
 }
+/* То же самое, но для литерала ПО-РУССКИ: «готов», «ждёт ответа», «[тлг]». Плашка нужна по
+   той же причине — это не часть фразы, а слово, которое человек увидит на экране, — а моно
+   для кириллицы не годится: оно растаскивает слово по буквам. Отсюда две плашки вместо
+   одной с условием: шрифт по языку в CSS не выбирается. */
+.set-lit {
+  font-size: 12px; color: var(--text);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  padding: 1px 6px; border-radius: 4px;
+}
 
 .set-field { display: flex; flex-direction: column; gap: 8px; margin: 0; }
 /* Компактное управление (селект, шаговик, ползунок) не занимает всю ширину — метка
@@ -914,36 +931,11 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
   font-variant-numeric: tabular-nums;
 }
 .set-range-num.off { color: var(--muted); font-weight: 400; }
-/* «Will this phrase call me?» — a sample line plus the verdict, in the status colors
-   the tab itself would take, so the answer reads the same way the dashboard does.
-   Подпись «Проверка» обязательна: без неё пустое поле среди настроек читалось как
-   настройка, которую забыли заполнить, — хуже, чем шум. */
-.ask-test { display: flex; align-items: center; gap: 8px; }
-.ask-test-label { flex: none; color: var(--muted); font-size: 12px; }
-.ask-test .set-input { flex: 1; min-width: 0; }
-/* Проверка стала многострочной (тег считается с начала строки — склеивать вставленное
-   сообщение в одну строку нельзя), но это одна строка настроек, а не поле для абзаца:
-   двух строк хватает, чтобы увидеть тег над текстом. */
-.ask-test textarea.set-input { min-height: 44px; }
-.ask-verdict { font-size: 12px; white-space: nowrap; color: var(--muted); }
-.ask-verdict.is-call { color: var(--waiting); }
-.ask-verdict.is-none { color: var(--ready); }
-.ask-verdict.is-work { color: var(--run); }
-.set-tip code, .set-note code, .set-preview code, .modal.settings code {
+.set-tip code, .set-note code, .modal.settings code {
   font-family: var(--mono);
   background: color-mix(in srgb, var(--bg) 70%, var(--panel));
   padding: 1px 5px; border-radius: 4px; font-size: 11.5px; color: var(--text);
 }
-.set-preview {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
-  margin: 4px 0 18px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px dashed var(--border);
-}
-.set-preview .set-preview-cmd { color: var(--accent); }
 .set-field.hidden, #set-agent-block.hidden { display: none; }
 
 /* Launch panel — editable list of agents (cmd + flags + delete). */
@@ -969,7 +961,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
   border-radius: 6px; padding: 10px 12px; font-family: var(--mono); font-size: 13px;
 }
 .pick-item:hover, .pick-item:focus { border-color: var(--accent); color: var(--accent); outline: none; }
-.pick-item.pick-blank { border-style: dashed; color: var(--muted); }
+.pick-item.pick-blank { border-style: dashed; color: var(--muted); font-family: var(--ui); }
 .pick-item.pick-blank:hover, .pick-item.pick-blank:focus { border-color: var(--accent); color: var(--accent); }
 
 /* Keybinds panel — label + chord capture button + reset. */
@@ -1711,6 +1703,7 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   /* Кегль второй строки карточки — по той же причине, что и gap выше: высота плитки
      должна совпадать с высотой карточки во всех плотностях, а не только в «обычной». */
   font-size: var(--tab-sub-size);
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 .pult-tab .pult-count[hidden] { display: none; }
@@ -1746,7 +1739,6 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 11px;
-  font-family: var(--mono);
   white-space: nowrap;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }

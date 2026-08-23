@@ -11,15 +11,12 @@ let passed = 0;
 const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 
-test('the default marker is the phrase the matcher ships with', () => {
-  // Duplicated constant (agent-rules is also loaded as a plain script, no require),
-  // so it has to be pinned: teaching a phrase nobody matches breaks the status.
+test('метка и теги в правиле — ровно те, что понимает сопоставитель', () => {
+  // Раньше эти константы стояли в agent-rules.js копией (модуль подключался в рендерере
+  // простым <script>, без require), и тест был единственной защитой от расхождения. Теперь
+  // они требуются из ask-phrases.js, так что тест сторожит уже не копию, а сам импорт:
+  // учить не тому тегу, который ищут, стало нельзя, и вот это «нельзя» и проверяется.
   assert.strictEqual(AR.DEFAULT_MARKER, AP.DEFAULT_ASK_PHRASES[0]);
-});
-
-test('теги в правиле — те же, что понимает сопоставитель', () => {
-  // Дублированные константы (agent-rules подключается и простым <script>, там нет
-  // require), поэтому прибиты: учить тегу, которого никто не ищет, — молчащая вкладка.
   assert.strictEqual(AR.TAG_NS, AP.TAG_NS);
   assert.strictEqual(AR.ASK_TAG, AP.ASK_TAG);
   assert.strictEqual(AR.WAIT_TAG, AP.WAIT_TAG);
@@ -30,27 +27,27 @@ test('теги в правиле — те же, что понимает сопо
 // правило учит буквально, должно считаться зовом.
 test('правило учит месту, с которого тег и правда считается', () => {
   const m = AP.buildAskMatcher([]);
-  for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
-    assert.ok(/начни сообщение/.test(rule), 'правило называет начало сообщения: ' + rule.slice(0, 80));
-    assert.ok(/с начала строки/.test(rule), 'и предупреждает, что внутри фразы тег не считается');
-  }
+  const rule = AR.systemPromptRule();
+  assert.ok(/начни сообщение/.test(rule), 'правило называет начало сообщения: ' + rule.slice(0, 80));
+  assert.ok(/с начала строки/.test(rule), 'и предупреждает, что внутри фразы тег не считается');
   // Буквально по правилу: тег отдельной строкой в начале сообщения.
   assert.ok(AP.asksWith(m, `${AR.ASK_TAG}\n\nЧто ставим?`));
   // И то, от чего правило предостерегает, зовом действительно не считается.
   assert.ok(!AP.asksWith(m, `Пишу про тег ${AR.ASK_TAG} внутри фразы.`));
 });
 
-test('оба правила учат метке, которую сопоставитель считает зовом', () => {
-  // Чужие фразы в настройках на это влиять не должны: тег — протокол, он в правиле всегда
-  // один и работает при любом списке фраз.
+test('правило учит метке, которую сопоставитель считает зовом', () => {
+  // Список фраз на это влиять не должен: тег — протокол, он в правиле всегда один и
+  // работает при любом списке. Списком приложение больше не крутит (настройка снята,
+  // main всегда отдаёт зашитую фразу), но матчер список принимает — и независимость тега
+  // от него проверяется здесь, чтобы её не потеряли, если список снова начнёт меняться.
   for (const phrases of [[], ['Твой ход'], ['  Нужен ответ  ', 'Твой ход']]) {
     const m = AP.buildAskMatcher(phrases);
     const sample = `${AR.ASK_TAG}\n\nСделал то и это.\n\nЧто ставим — заливку или точку?`;
     assert.ok(AP.asksWith(m, sample), 'зовёт при ' + JSON.stringify(phrases));
-    for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
-      assert.ok(rule.includes(AR.ASK_TAG), 'правило называет тег зова');
-      assert.ok(/AskUserQuestion/.test(rule), 'rule asks for the tool too');
-    }
+    const rule = AR.systemPromptRule();
+    assert.ok(rule.includes(AR.ASK_TAG), 'правило называет тег зова');
+    assert.ok(/AskUserQuestion/.test(rule), 'rule asks for the tool too');
   }
 });
 
@@ -73,9 +70,7 @@ test('тег фона даёт ровно «работает в фоне», а �
     const sample = `${AR.WAIT_TAG}\n\nЗапустил замер стенда.`;
     assert.ok(AP.waitsWith(m, sample), 'фон с ' + JSON.stringify(phrases));
     assert.ok(!AP.asksWith(m, sample), 'и это не зов: ' + JSON.stringify(phrases));
-    for (const rule of [AR.systemPromptRule(), AR.claudeMdRule()]) {
-      assert.ok(rule.includes(AR.WAIT_TAG), 'правило называет тег фона');
-    }
+    assert.ok(AR.systemPromptRule().includes(AR.WAIT_TAG), 'правило называет тег фона');
   }
 });
 
@@ -97,18 +92,11 @@ test('the system-prompt rule is one line and safe inside a shell "…"', () => {
   assert.ok(!/["'`$\\!]/.test(rule), 'no shell metacharacters');
 });
 
-test('правило не зависит от того, что человек написал в настройках', () => {
+test('правило не принимает пользовательский текст даже подсунутым', () => {
   // Раньше в правило подставлялась первая фраза из настроек, и её приходилось чистить от
-  // кавычек и `$`. Теперь это константа: пользовательский текст на командную строку не
-  // попадает вообще — проверяем, что подстановки не вернулись.
+  // кавычек и `$`: правило попадает прямо в командную строку. Теперь это константа, и
+  // аргумент игнорируется — проверяем, что подстановки не вернулись.
   assert.strictEqual(AR.systemPromptRule(), AR.systemPromptRule(['ой "кавычки" и $HOME']));
-  assert.strictEqual(AR.claudeMdRule(), AR.claudeMdRule(["it's `date`"]));
-});
-
-test('the CLAUDE.md block is fenced so it can be replaced whole', () => {
-  const md = AR.claudeMdRule();
-  assert.ok(md.startsWith(AR.MD_BEGIN), 'starts with the begin marker');
-  assert.ok(md.trimEnd().endsWith(AR.MD_END), 'ends with the end marker');
 });
 
 for (const [name, fn] of tests) {

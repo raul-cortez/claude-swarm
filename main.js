@@ -61,9 +61,10 @@ if (!app.requestSingleInstanceLock()) {
 //   • appId — то, по чему установщик Windows узнаёт прежнюю установку. Новый appId даёт
 //     вторую запись в «Установленных программах» вместо обновления.
 //
-// Пользователь ни того, ни другого не видит, так что цена нулевая. Маркеры
-// `<!-- claude-swarm-lite:begin -->` в agent-rules.js оставлены по той же причине: они
-// очерчивают блок, уже вставленный в чужие CLAUDE.md.
+// Пользователь ни того, ни другого не видит, так что цена нулевая. (Маркеры
+// `<!-- claude-swarm-lite:begin -->` жили в agent-rules.js по той же причине и ушли
+// вместе с кнопкой «скопировать правило»: у кого блок уже вставлен в CLAUDE.md, тот
+// ничего не теряет — правило внутри учит тем же тегам, а маркеры приложение и не читало.)
 //
 // Windows taskbar/Start Menu group by AppUserModelID. Must match package.json
 // `appId` (NSIS shortcuts use it); without this the shell often shows a generic
@@ -180,13 +181,6 @@ let HOOKS_ENABLED = false;
 // /usage и перезапуском по контексту — все трое кормятся только отсюда. Теперь наш скрипт
 // сам зовёт чужую команду и печатает оба куска (swarm-statusline.js, readForeign), терять
 // человеку нечего, и выбора не осталось — а значит и галки.
-// «Просить агента звать вас» — the launch-time rule (agent-rules.js) that teaches the
-// agent to ask through AskUserQuestion and to sign a prose question off with the
-// phrase. ON by default, unlike the hooks: without it the «ждёт ответа» status only
-// works for users who already have the convention in their own CLAUDE.md, and asking
-// every new user to set that up by hand is exactly what this replaces. Like the
-// statusline it's scoped to swarm launches and writes nothing into the user's config.
-let AGENT_RULES = true;
 // «Вкладки стартуют в режиме» — режим разрешений, с которым запускается вкладка, и новая, и
 // восстановленная (иначе перезапуск молча возвращал бы всех в «спрашивать разрешение»).
 // Пусто = не вмешиваемся, вкладка начинает как Claude Code сам считает нужным — это и есть
@@ -232,11 +226,15 @@ function writeSwarmSettings() {
   STATUSLINE_SETTINGS = settingsPath;
 }
 
-// The «agent is calling me» phrases (Settings → Запуск). One list, two readers: the
-// screen detector in this process, and the Stop hook — which is a separate process,
-// so it gets the COMPILED matcher through swarm-phrases.json, written next to the
-// hook script in userData. See ask-phrases.js.
-let ASK_PHRASES = DEFAULT_ASK_PHRASES.slice();
+// Как агент зовёт человека — тегом `[swarm:вопрос]` из ask-phrases.js, плюс одна
+// зашитая фраза «Сейчас от тебя» как путь совместимости. Настройкой это больше не
+// является: теги — протокол, а не вкус, и добавлять к ним свои фразы было настройкой
+// третьего порядка (нужна только тому, кто отказался от тегов И держит свою подпись в
+// CLAUDE.md), стоившей всем текстового поля с живым чекером. Список остался списком,
+// потому что читателей у него два: экранный детектор в этом процессе и Stop-хук —
+// отдельный процесс, который получает СКОМПИЛИРОВАННЫЙ матчер через swarm-phrases.json
+// рядом со скриптом хука.
+const ASK_PHRASES = DEFAULT_ASK_PHRASES.slice();
 let ASK_MATCHER = buildAskMatcher(ASK_PHRASES);     // for the transcript reader
 
 function applyAskPhrases() {
@@ -329,7 +327,7 @@ function injectStatusline(cmd, pass) {
 // start and the tab is dead. The text itself travels in the environment (envPassing),
 // which is what keeps this flag from filling the screen.
 function injectAgentRules(cmd, pass) {
-  if (!AGENT_RULES || !cmd) return cmd;
+  if (!cmd) return cmd;
   if (/(^|\s)--(append-)?system-prompt(-file)?(\s|=)/.test(cmd)) return cmd;
   if (!resume.supports(launcherOf(cmd))) return cmd;
   return `${cmd} --append-system-prompt ${pass.ref('SWARM_ASK_RULE', systemPromptRule())}`;
@@ -6296,9 +6294,6 @@ ipcMain.on('settings:hooks', (_e, enabled) => {
   HOOKS_ENABLED = !!enabled;
   try { writeSwarmSettings(); } catch (e) { reportMainError(e); }
 });
-// Same shape for «просить агента звать вас»: a pref pushed on startup and on toggle.
-// Nothing to write — the rule is a launch flag, so it applies to the next session.
-ipcMain.on('settings:agentRules', (_e, enabled) => { AGENT_RULES = !!enabled; });
 // И для «новые вкладки стартуют в режиме». Проверяем значение здесь, а не только в панели:
 // сюда приходит то, что лежало в localStorage, а там мог остаться режим из версии, где он
 // назывался иначе. Неизвестное — это пусто, то есть «не вмешиваться»; подставить с ним флаг
@@ -6333,11 +6328,6 @@ ipcMain.on('tabs:name', (_e, { id, name } = {}) => {
   // so move the topic's title along with it.
   if (!tgTopicOf(d)) tgEnsureTopics().catch(reportMainError);
   else tgRenameTopic(String(id));
-});
-
-ipcMain.on('settings:askPhrases', (_e, list) => {
-  ASK_PHRASES = normalizePhrases(list);
-  try { applyAskPhrases(); } catch (e) { reportMainError(e); }
 });
 
 ipcMain.on('update:relaunch', () => {
