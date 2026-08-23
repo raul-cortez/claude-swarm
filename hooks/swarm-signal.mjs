@@ -219,21 +219,21 @@ function markerFor(payload, matcher, override) {
   return `\x1b]777;notify;swarm;${token};${sid};${tr}\x07`;
 }
 
-// --- ночной режим ------------------------------------------------------------
-// Ночью человека у компьютера нет, и вопрос с вариантами — не просто недоступный выбор, а
-// потерянная ночь: вкладка встанет на нём до утра. Правило то же, что печатает приложение в
-// ждущую вкладку (night.js rule), и текст обязан совпадать — агент, получающий разные
+// --- работа без человека -----------------------------------------------------
+// У вкладки есть мандат («авто» на ней самой или общее «меня нет»), и вопрос с вариантами —
+// не просто недоступный выбор, а потерянные часы: вкладка встанет на нём до возвращения
+// человека. Правило то же, что печатает приложение в ждущую вкладку (night.js rule), и текст
+// обязан совпадать — агент, получающий разные
 // инструкции в зависимости от того, КАК он спросил, ведёт себя случайно. Сверяется тестом.
 const nightRule = (tag) => [
-  'Человека нет у компьютера: ночной режим, ответа не будет до утра.',
-  'Интерактивный выбор недоступен.',
+  'Эта вкладка работает без человека: он не ответит, интерактивный выбор недоступен.',
   'Реши сам, если решение обратимо или переделка дешёвая: выбери разумный вариант,',
   'назови его вслух в ходе и продолжай работу.',
   'Остановись, если ответ задаёт направление и ошибка стоит дорого: развилка, где не угадать,',
   'что именно нужно человеку; необратимое действие; ломающая совместимость правка.',
   'Тогда сформулируй вопрос обычным текстом с вариантами, а сообщение начни отдельной',
-  `строкой с тегом ${tag} — утром на него ответят.`,
-  'Не спрашивай второй раз об одном и том же: повторный вопрос ночью никто не прочитает.',
+  `строкой с тегом ${tag} — человек ответит, когда вернётся.`,
+  'Не спрашивай второй раз об одном и том же: повторный вопрос сейчас никто не прочитает.',
 ].join(' ');
 
 // Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
@@ -357,22 +357,25 @@ const denyReason = (marker) => 'Пользователь отвечает с т�
   + ` отдельной строкой с тегом ${marker}.`;
 const DENY_REASON = denyReason(FALLBACK.marker);
 
-function deniesPicker(payload, tgSessions, presence) {
+function deniesPicker(payload, tgSessions, presence, autoSessions) {
   if (!payload || payload.hook_event_name !== 'PreToolUse') return false;
   if (payload.tool_name !== 'AskUserQuestion') return false;
-  // Ночь — третий признак, и самый весомый: с телефона выбрать нельзя, а ночью НЕКОМУ
-  // выбирать вовсе, и вкладка встанет на этой рамке до утра.
+  // «Меня нет» — признак самый весомый: с телефона выбрать нельзя, а без человека выбирать
+  // НЕКОМУ вовсе, и вкладка встанет на этой рамке до его возвращения.
   if (presence === 'phone' || presence === 'night') return true;
   const sid = String((payload && payload.session_id) || '');
-  return !!sid && Array.isArray(tgSessions) && tgSessions.includes(sid);
+  if (!sid) return false;
+  // Мандат этой вкладки: человек может сидеть рядом и всё равно сказать «эту делай сам».
+  if (Array.isArray(autoSessions) && autoSessions.includes(sid)) return true;
+  return Array.isArray(tgSessions) && tgSessions.includes(sid);
 }
 
 // Почему нельзя открывать рамку — и что делать вместо этого. Два разных текста, потому что
 // это две разные обстановки: с телефона человек ОТВЕТИТ на вопрос прозой, а ночью ответа не
 // будет вовсе, и агенту надо решать самому по правилу.
-function denyReasonFor(presence, marker, nightCustom) {
+function denyReasonFor(presence, marker, nightCustom, auto) {
   const m = marker || FALLBACK.marker;
-  return presence === 'night' ? nightRuleText(nightCustom, m) : denyReason(m);
+  return (presence === 'night' || auto) ? nightRuleText(nightCustom, m) : denyReason(m);
 }
 
 // The whole stdout payload for one event. terminalSequence sits at the top level (where
@@ -382,7 +385,11 @@ function denyReasonFor(presence, marker, nightCustom) {
 function outputFor(payload, matcher, tgSessions, presence, extra) {
   const ex = extra || {};
   const nowSec = Number.isFinite(ex.nowSec) ? ex.nowSec : Math.floor(Date.now() / 1000);
-  const deny = deniesPicker(payload, tgSessions, presence);
+  const sid = String((payload && payload.session_id) || '');
+  // Мандат ИМЕННО ЭТОЙ вкладки: от него зависит не только отказ, но и его причина — правило
+  // «решай сам» вместо телефонного «ответь прозой, человек прочитает».
+  const auto = !!(sid && Array.isArray(ex.autoSessions) && ex.autoSessions.includes(sid));
+  const deny = deniesPicker(payload, tgSessions, presence, ex.autoSessions);
   // Отказ значит «ход продолжается», а не «агент ждёт». Тот же PreToolUse на
   // AskUserQuestion обычно и есть вопрос человеку — но не здесь: коробку с вариантами мы
   // только что запретили, и агент сейчас пойдёт писать вопрос прозой.
@@ -409,7 +416,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
       permissionDecision: 'deny',
       permissionDecisionReason: gate
         ? gate.reason
-        : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker, ex.nightRule),
+        : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker, ex.nightRule, auto),
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   } else if (note) {
@@ -498,6 +505,7 @@ async function main() {
   let tgSessions = [];
   let presence = '';
   let nightCustom = '';
+  let autoSessions = [];
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
     tgSessions = tg.sessions || [];
@@ -507,6 +515,9 @@ async function main() {
     // Своя формулировка ночного правила лежит там же: приложение переписывает файл при каждой
     // правке. Нет поля (файл от прежней версии) — берём заготовку.
     nightCustom = String(tg.nightRule || '');
+    // Вкладки со своим мандатом «работай без меня». Список сессий, как и у режима телефона:
+    // хук знает про вкладку только её id разговора.
+    autoSessions = Array.isArray(tg.auto) ? tg.auto.map(String) : [];
   } catch (_) { /* none */ }
   const matcher = loadMatcher(() => phrases);
   let input = '';
@@ -520,10 +531,13 @@ async function main() {
       const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
-      const out = outputFor(payload, matcher, tgSessions, presence, { usage, nightRule: nightCustom });
-      // Ночью запрещённая рамка — это принятое без человека решение. Записываем ЕГО, а не
-      // факт отказа: утром в сводке должна стоять развилка дословно.
-      if (presence === 'night' && deniesPicker(payload, tgSessions, presence)) {
+      const out = outputFor(payload, matcher, tgSessions, presence,
+        { usage, nightRule: nightCustom, autoSessions });
+      // Запрещённая рамка у автономной вкладки — это принятое без человека решение. Записываем
+      // ЕГО, а не факт отказа: в отчёте должна стоять развилка дословно.
+      const sid = String((payload && payload.session_id) || '');
+      const autoTab = presence === 'night' || (!!sid && autoSessions.includes(sid));
+      if (autoTab && deniesPicker(payload, tgSessions, presence, autoSessions)) {
         const q = askedQuestion(payload);
         logNight('deny-box', payload, { text: q.text, options: q.options });
       }

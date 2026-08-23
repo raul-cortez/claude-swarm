@@ -188,6 +188,11 @@ contextBridge.exposeInMainWorld('swarm', {
     state:    ()  => ipcRenderer.invoke('night:state'),
     dismiss:  ()  => ipcRenderer.invoke('night:dismiss'),
     setTexts: (t)  => ipcRenderer.invoke('night:setTexts', t),
+    // Мандат вкладки «работает без меня»: меню карточки (родное меню системы) и прямой
+    // переключатель — им пользуется гейт ввода, когда человек забирает вкладку себе.
+    tabMenu:  (id) => ipcRenderer.invoke('tab:menu', { id }),
+    setTab:   (id, auto) => ipcRenderer.invoke('tab:setAuto', { id, auto }),
+    onTab:    (cb) => ipcRenderer.on('tab:auto', (_e, s) => cb(s)),
     onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
   },
 

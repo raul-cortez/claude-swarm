@@ -347,16 +347,37 @@ test('end to end: the script denies the picker for a session listed on disk', ()
 
 // --- ночь и ворота на подагентов ---------------------------------------------
 
-test('ночью коробка запрещается любой вкладке, и причина — ночное правило', () => {
+test('без человека коробка запрещается любой вкладке, и причина — правило', () => {
   const ask = { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' };
   assert.strictEqual(H.deniesPicker(ask, [], 'night'), true);
   const m = H.loadMatcher(() => null);
   const out = H.outputFor(ask, m, [], 'night');
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
-  // Ночью человек не ответит вовсе — значит правило должно ГОВОРИТЬ, что решать самому, а не
-  // «спроси прозой, я отвечу с телефона».
-  assert.match(out.hookSpecificOutput.permissionDecisionReason, /ночной режим/i);
+  // Человека нет — значит правило должно ГОВОРИТЬ, что решать самому, а не «спроси прозой, я
+  // отвечу с телефона».
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /работает без человека/i);
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /Реши сам/);
+});
+
+// Мандат вкладки — второй, точечный способ сказать то же самое: человек за столом, положение
+// «за компом», но ЭТОЙ вкладке отдана задача. Раньше такого не было вовсе: ночь была одна на
+// приложение, и разделить «эту отдал» и «этой занимаюсь сам» было нечем.
+test('вкладка со своим мандатом получает то же правило и за компом', () => {
+  const ask = { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' };
+  const m = H.loadMatcher(() => null);
+  // Мандата нет — коробка разрешена, человек рядом и ответит кнопками.
+  assert.strictEqual(H.deniesPicker(ask, [], 'desk', []), false);
+  // Отказа нет — уезжает только метка статуса «вкладка открыла рамку и ждёт человека».
+  const free = H.outputFor(ask, m, [], 'desk', { autoSessions: [] });
+  assert.ok(free && free.terminalSequence, 'метка статуса должна остаться');
+  assert.ok(!free.hookSpecificOutput, 'отказа быть не должно');
+  // Мандат есть — коробка запрещена, и причина именно правило «решай сам».
+  assert.strictEqual(H.deniesPicker(ask, [], 'desk', ['s1']), true);
+  const out = H.outputFor(ask, m, [], 'desk', { autoSessions: ['s1'] });
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /Реши сам/);
+  // Чужой вкладке мандат соседа ничего не запрещает.
+  assert.strictEqual(H.deniesPicker({ ...ask, session_id: 's2' }, [], 'desk', ['s1']), false);
 });
 
 test('за телефоном причина остаётся прежней, а не ночной', () => {
@@ -462,7 +483,7 @@ test('без снимка расхода начало хода выглядит 
   assert.deepStrictEqual(Object.keys(out), ['terminalSequence']);
 });
 
-test('end to end: ночь на диске даёт ночное правило любой вкладке', () => {
+test('end to end: «меня нет» на диске даёт правило любой вкладке', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-night-')));
   const staged = path.join(dir, 'swarm-signal.mjs');
   fs.copyFileSync(SCRIPT, staged);
@@ -475,14 +496,47 @@ test('end to end: ночь на диске даёт ночное правило 
     encoding: 'utf8',
   }));
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(out.hookSpecificOutput.permissionDecisionReason, /ночной режим/i);
-  // И развилка легла в журнал — именно её утром читает сводка.
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /работает без человека/i);
+  // И развилка легла в журнал — именно её читает отчёт.
   const log = fs.readFileSync(path.join(dir, 'night.jsonl'), 'utf8').trim().split('\n');
   const e = JSON.parse(log[log.length - 1]);
   assert.strictEqual(e.kind, 'deny-box');
   assert.strictEqual(e.session, 'ночная');
   assert.strictEqual(e.text, 'Мигрировать молча?');
   assert.deepStrictEqual(e.options, ['да']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Мандат одной вкладки — через тот же файл, что и «где я»: хук отдельный процесс, и другого
+// способа узнать про вкладку у него нет. Проверяем весь путь: файл → отказ → правило → журнал.
+test('end to end: мандат одной вкладки читается с диска', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-auto-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
+    JSON.stringify({ sessions: [], auto: ['своя'], presence: 'desk' }));
+  const run = (sid) => JSON.parse(execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({
+      hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: sid,
+      tool_input: { questions: [{ question: 'Мигрировать молча?', options: [{ label: 'да' }] }] },
+    }),
+    encoding: 'utf8',
+  }) || '{}');
+  const mine = run('своя');
+  assert.strictEqual(mine.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(mine.hookSpecificOutput.permissionDecisionReason, /Реши сам/);
+  // Развилка легла в журнал — отчёт покажет её дословно.
+  const log = fs.readFileSync(path.join(dir, 'night.jsonl'), 'utf8').trim().split('\n');
+  assert.strictEqual(JSON.parse(log[log.length - 1]).session, 'своя');
+  // А соседней вкладке за компом рамку никто не запрещает: человек рядом и ответит кнопками.
+  const other = execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({
+      hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 'чужая',
+      tool_input: { questions: [{ question: 'Мигрировать молча?' }] },
+    }),
+    encoding: 'utf8',
+  });
+  assert.doesNotMatch(other || '', /permissionDecision/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

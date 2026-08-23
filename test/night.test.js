@@ -17,14 +17,14 @@ const OLD = NOW - 60 * 60_000;        // вкладка живёт час: пр�
 
 function waitCtx(over) {
   return Object.assign({
-    presence: 'night', kind: 'question', box: false,
+    auto: true, kind: 'question', box: false,
     now: NOW, bootAt: OLD, startedAt: OLD, fingerprint: 'мигрировать ли старый формат',
   }, over || {});
 }
 
 function readyCtx(over) {
   return Object.assign({
-    presence: 'night', status: 'ready', bg: false, limited: false,
+    auto: true, status: 'ready', bg: false, limited: false,
     now: NOW, bootAt: OLD, startedAt: OLD, readyAt: NOW - night.IDLE_MS - 1000,
     // Вкладка при нас поработала и замолчала — иначе спрашивать её не о чем.
     workedAt: NOW - night.IDLE_MS - 1000, turn: OLD,
@@ -38,10 +38,16 @@ test('вопрос прозой ночью получает толчок', () =>
   assert.strictEqual(d.act, 'nudge');
 });
 
-test('днём ночь не трогает вкладки вовсе', () => {
-  for (const p of ['desk', 'phone']) {
-    assert.strictEqual(night.nudgeDecision({}, waitCtx({ presence: p })).act, 'skip');
-    assert.strictEqual(night.phaseDecision({}, readyCtx({ presence: p })).act, 'skip');
+// Решает не положение всего приложения, а МАНДАТ ЭТОЙ ВКЛАДКИ: человек может сидеть рядом и
+// всё равно сказать «эту делай сам», и наоборот — уйти, оставив одну вкладку себе.
+test('вкладку без мандата не трогают вовсе', () => {
+  for (const c of [{ auto: false }, { auto: undefined }]) {
+    const d1 = night.nudgeDecision({}, waitCtx(c));
+    const d2 = night.phaseDecision({}, readyCtx(c));
+    assert.strictEqual(d1.act, 'skip');
+    assert.match(d1.why, /не автономна/);
+    assert.strictEqual(d2.act, 'skip');
+    assert.match(d2.why, /не автономна/);
   }
 });
 

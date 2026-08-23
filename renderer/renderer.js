@@ -66,7 +66,7 @@
   if (!body.children.length) {
     const e = document.createElement('div');
     e.className = 'night-empty';
-    e.textContent = 'Ночь прошла тихо: никто не встал и ничего за тебя не решали.';
+    e.textContent = 'Прошло тихо: никто не встал и ничего за тебя не решали.';
     body.appendChild(e);
   }
 // renderer.js — UI logic. Runs in the sandboxed renderer, talks to main ONLY
@@ -1125,6 +1125,7 @@ async function createSession(opts = {}) {
     command,
     tabKey,
     name: opts.name || null,      // main only needs it to title the topic
+    auto: !!opts.auto,            // восстановленная вкладка возвращается со своим мандатом
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
   });
 
@@ -1154,7 +1155,7 @@ async function createSession(opts = {}) {
       else if (ch === '\x7f' || ch === '\b') cmdBuf = cmdBuf.slice(0, -1);
       else if (ch >= ' ') cmdBuf += ch;
     }
-    window.swarm.sendInput(id, clean);
+    typeInto(id, clean);
   });
 
   // Remap configured chords → canonical bytes Claude/readline understand.
@@ -1165,7 +1166,7 @@ async function createSession(opts = {}) {
     const bytes = KEYBINDS_API.matchInputBytes(keybinds, ev);
     if (!bytes) return true;
     ev.preventDefault();
-    window.swarm.sendInput(id, bytes);
+    typeInto(id, bytes);
     return false;
   });
 
@@ -1186,6 +1187,7 @@ async function createSession(opts = {}) {
       </span>
       <span class="foot">
         <span class="sub">готов</span>
+        <span class="auto-chip" hidden title="Вкладка работает без тебя: агент решает сам, а сворм подталкивает её и будит. Правый клик — забрать себе.">авто</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
@@ -1198,6 +1200,12 @@ async function createSession(opts = {}) {
   tab.addEventListener('click', (e) => {
     if (e.target.classList.contains('close')) { requestCloseSession(id); return; }
     activate(id);
+  });
+  // Меню карточки — родное меню системы (его собирает main). Правый клик по карточке жест
+  // ожидаемый, а рисовать под один пункт свой попап значило бы вторую машинерию меню.
+  tab.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    window.swarm.night.tabMenu(id);
   });
   tab.dataset.sid = id;
   attachDragHandle(tab, tab.querySelector('.grip'), () => {
@@ -1214,6 +1222,9 @@ async function createSession(opts = {}) {
     term, fit, holder, tab, alive: true, status: null, cwd: resolvedCwd, id, sumDot: null,
     cmd, flags, blank, sessionKey: sessionKey || null, tabKey, sub: 0, rawStatus: null, rawDetail: null,
     answeredAt: 0,   // когда ты последний раз нажал Enter в этой вкладке (см. answeredHere)
+    // Мандат «работает без меня». Живёт вместе с вкладкой (persistTabs) и дублирует то, что
+    // знает main: окну он нужен для отметки на карточке и для границы владения (см. typeInto).
+    auto: !!opts.auto,
     // The conversation this tab is in. Saved with the tab; the next launch resumes it.
     claudeSessionId: claudeSessionId || null,
   });
@@ -1221,6 +1232,7 @@ async function createSession(opts = {}) {
   if (!folderOrder.includes(okey)) folderOrder.push(okey);
   if (!withinOrder.has(okey)) withinOrder.set(okey, []);
   if (!withinOrder.get(okey).includes(id)) withinOrder.get(okey).push(id);
+  if (opts.auto) applyTabAuto(id, true);
   relayoutTabs();
   persistTabs();
   setStatus(id, 'ready', 'готов');
@@ -1370,7 +1382,7 @@ function showSettingsModal(tab) {
         <button class="set-tab" data-tab="tabs">Вкладки</button>
         <button class="set-tab" data-tab="keys">Клавиши</button>
         <button class="set-tab" data-tab="telegram">Телеграм</button>
-        <button class="set-tab" data-tab="night">Ночь</button>
+        <button class="set-tab" data-tab="night">Авто</button>
         <button class="set-tab" data-tab="updates">Обновления</button>
       </nav>
 
@@ -1847,10 +1859,12 @@ function showSettingsModal(tab) {
 
       <div class="set-panel" data-panel="night">
         <header class="set-panel-h">
-          <h2 class="set-h">Ночь</h2>
-          <p class="set-intro">Включается луной в нижней панели (или <span class="set-mono">/night</span> с
-            телефона). Ночью агенты решают обратимое сами, а на дорогих развилках останавливаются
-            и ждут утра; утром сворм показывает, кто что решил.</p>
+          <h2 class="set-h">Работа без тебя</h2>
+          <p class="set-intro">Вкладка, которой отдали задачу, решает обратимое сама, а на дорогой
+            развилке останавливается и ждёт тебя. Отдать одну вкладку — правый клик по её карточке,
+            «Работает без меня» (или <span class="set-mono">/auto</span> в её теме). Отдать все
+            сразу — луна в нижней панели, положение «меня нет». Вернулся — сворм показывает, кто
+            что решил без тебя.</p>
         </header>
         <section class="set-group">
           <div class="set-group-h">
@@ -2966,6 +2980,9 @@ function persistTabs() {
         sessionKey: s.sessionKey || null,
         claudeSessionId: s.claudeSessionId || null,
         tabKey: s.tabKey || null,
+        // Мандат принадлежит вкладке, а не сеансу приложения: обновление сворма не должно
+        // забирать у отданной вкладки разрешение работать.
+        auto: !!s.auto,
       });
     }
   }
@@ -3865,6 +3882,85 @@ async function onGitPull() {
 }
 
 // Dark themed confirm dialog. Resolves true/false.
+// --- граница владения ---------------------------------------------------------------------
+// Вкладка, которую человек отдал, ему не принадлежит: печатать в неё нельзя, пока он её не
+// забрал. Это не запрет ради запрета. Во-первых, в такую вкладку печатает САМ СВОРМ (толчок
+// правилом, вопрос про фазу, будильник по лимиту), и два писателя в одну строку ввода дают
+// мусор вместо просьбы — этой ценой мы уже платили за перезапуск. Во-вторых, человек, который
+// печатает в отданную вкладку, обычно просто забыл, что отдал её, — и половина разговора
+// уезжает агенту, который в это время решает сам.
+//
+// Первая клавиша агенту не уезжает: она копится, всплывает вопрос, и после «забрать себе»
+// набранное уходит целиком. Отмена — набранное отбрасывается, вкладка остаётся отданной.
+const gateHeld = new Map();     // id → куски ввода, ждущие решения
+const gateAsking = new Set();   // у кого вопрос сейчас на экране
+
+// Работает ли вкладка без человека ПРЯМО СЕЙЧАС: своя отметка или общее «меня нет».
+function autoNow(id) {
+  const s = sessions.get(id);
+  if (!s) return false;
+  // Одно исключение, и оно про главный случай, когда человек нужен отданной вкладке: запрос
+  // разрешения. Сворм в такую вкладку не печатает НИКОГДА (одобрять чужие команды молча — не то,
+  // за что стоит платить спокойным сном), значит двух писателей тут быть не может, а нажать «1»
+  // в диалоге — ровно то, зачем человек к ней и подошёл. Гейт здесь отнимал бы у вкладки мандат
+  // за одно нажатие.
+  if (s.status === 'waiting' && s.waitKind === 'permission') return false;
+  return !!(nightNow.on || s.auto);
+}
+
+function typeInto(id, bytes) {
+  if (!bytes) return;
+  if (!autoNow(id)) { window.swarm.sendInput(id, bytes); return; }
+  const held = gateHeld.get(id) || [];
+  held.push(bytes);
+  gateHeld.set(id, held);
+  askGate(id);
+}
+
+async function askGate(id) {
+  if (gateAsking.has(id)) return;      // вопрос уже висит — остальные клавиши просто копятся
+  gateAsking.add(id);
+  const s = sessions.get(id);
+  const name = s ? s.tab.querySelector('.label').textContent : 'вкладка';
+  const away = !!nightNow.on;
+  const mine = !!(s && s.auto);
+  // Текст называет ВСЁ, что случится по кнопке: и снятие общего «меня нет», и снятие отметки
+  // вкладки. Молча трогать хоть одно из двух нельзя — человек потом гадает, кто главный.
+  const msg = away
+    ? `Включено «меня нет»: вкладки работают сами, и в «${name}» пишет сворм.`
+      + ' Ты за клавиатурой — снять «меня нет»'
+      + (mine ? ' и отметку «работает без меня» у этой вкладки?' : '?')
+      + ' Остальные вкладки с отметкой продолжат сами.'
+    : `«${name}» работает без тебя: агент решает сам, а сворм её подталкивает.`
+      + ' Забрать вкладку себе? Пока она отдана, набранное ей не уходит.';
+  const take = await confirmModal(msg, away ? 'Я вернулся' : 'Забрать себе');
+  gateAsking.delete(id);
+  if (!take) { gateHeld.delete(id); return; }
+  // Забрать значит забрать: если в силе общее положение — снимаем и его, иначе кнопка обманет.
+  if (away) { try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) {} }
+  if (mine) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
+  const held = gateHeld.get(id) || [];
+  gateHeld.delete(id);
+  // Отдаём набранное одним куском: агенту это неотличимо от быстрой печати, а порядок сохранён.
+  if (held.length) window.swarm.sendInput(id, held.join(''));
+  const sess = sessions.get(id);
+  if (sess) sess.term.focus();
+}
+
+// Мандат вкладки поменялся (меню карточки, чат, гейт) — обновляем отметку и запоминаем.
+function applyTabAuto(id, on) {
+  const s = sessions.get(String(id));
+  if (!s) return;
+  s.auto = !!on;
+  s.tab.classList.toggle('is-auto', !!on);
+  const chip = s.tab.querySelector('.auto-chip');
+  if (chip) chip.hidden = !on;
+  if (!on) gateHeld.delete(String(id));
+  persistTabs();
+}
+
+window.swarm.night.onTab(({ id, auto }) => applyTabAuto(id, auto));
+
 function confirmModal(message, okLabel = 'Выполнить') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -4351,9 +4447,11 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 const PRESENCE = [
   { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'телега молчит и в вкладки не пишет' },
   { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, мак не спит', needsBot: true },
-  // Ночь — не про телегу вовсе: человека нет до утра. Поэтому она в списке всегда, и бота для
-  // неё не нужно (спать можно и без телефона), а сводка утром ждёт в окне приложения.
-  { id: 'night', icon: 'moon', name: 'ночь', hint: 'агенты решают сами, разрешения стоят, утром сводка' },
+  // «Меня нет» — не про телегу вовсе: человека нет у компьютера. Поэтому оно в списке всегда, и
+  // бота для него не нужно (уйти можно и без телефона), а отчёт ждёт в окне приложения. Это же
+  // положение выдаёт мандат «работай без меня» СРАЗУ ВСЕМ вкладкам; одной вкладке он выдаётся
+  // отдельно, правым кликом по карточке.
+  { id: 'night', icon: 'moon', name: 'меня нет', hint: 'все вкладки решают сами, разрешения стоят, потом отчёт' },
 ];
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
@@ -4465,6 +4563,14 @@ function paintNightMarks(dg) {
   }
 }
 
+// Сколько вкладок работает без человека прямо сейчас. Считаем по своим записям, а не по числу
+// из main: карточки и значок должны говорить одно и то же в один и тот же миг.
+function autoTabsHere() {
+  let n = 0;
+  for (const s of sessions.values()) if (s && s.auto) n++;
+  return n;
+}
+
 function renderNightPill(st) {
   if (st) nightNow = st;
   const dg = nightNow.digest;
@@ -4473,14 +4579,23 @@ function renderNightPill(st) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
     nightPill.hidden = false;
-    nightPill.textContent = 'ночь включена';
-    nightPill.title = 'Ночной режим ещё включён, а ты за клавиатурой: агенты продолжают решать сами.'
-      + ' Клик — снять ночь и показать сводку.';
+    nightPill.textContent = '«меня нет» включено';
+    nightPill.title = 'Ты за клавиатурой, а положение «меня нет» ещё включено: все вкладки продолжают'
+      + ' решать сами. Клик — вернуться и показать отчёт.';
+  } else if (!nightNow.on && autoTabsHere()) {
+    // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (кромка слева), но
+    // счётчик отвечает на другой вопрос — «сколько всего сейчас работает без меня», — и даёт
+    // одну кнопку забрать всё назад: по одной вкладке через меню это десять правых кликов.
+    const n = autoTabsHere();
+    nightPill.hidden = false;
+    nightPill.textContent = `${n} ${n === 1 ? 'вкладка' : 'вкладок'} сами`;
+    nightPill.title = 'Столько вкладок работают без тебя: решают обратимое сами, на дорогом'
+      + ' останавливаются. Клик — забрать все себе.';
   } else if (!nightNow.on && rows) {
     const t = dg.totals || {};
     nightPill.hidden = false;
-    nightPill.textContent = `утро — ${t.standing || 0} стоят, ${t.decided || 0} решений`;
-    nightPill.title = `Ночь длилась ${t.night || '—'}, вкладок ${t.tabs || 0}. Клик — сводка.`;
+    nightPill.textContent = `отчёт — ${t.standing || 0} стоят, ${t.decided || 0} решений`;
+    nightPill.title = `Без тебя прошло ${t.night || '—'}, вкладок ${t.tabs || 0}. Клик — отчёт.`;
   } else {
     nightPill.hidden = true;
   }
@@ -4495,7 +4610,7 @@ function openNightModal() {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal night">
-      <div class="modal-title">Утро</div>
+      <div class="modal-title">Что было без тебя</div>
       <div class="night-sum"></div>
       <div class="night-body"></div>
       <div class="modal-actions">
@@ -4504,8 +4619,8 @@ function openNightModal() {
       </div>
     </div>`;
   overlay.querySelector('.night-sum').textContent = dg
-    ? `Ночь ${t.night || '—'}, вкладок ${t.tabs || 0}. Решений без тебя ${t.decided || 0}, стоят ${t.standing || 0}.`
-    : 'Сводки пока нет.';
+    ? `Без тебя ${t.night || '—'}, вкладок ${t.tabs || 0}. Решений без тебя ${t.decided || 0}, стоят ${t.standing || 0}.`
+    : 'Отчёта пока нет.';
   const body = overlay.querySelector('.night-body');
   for (const g of ((dg && dg.groups) || [])) {
     const box = document.createElement('div');
@@ -4557,6 +4672,15 @@ function openNightModal() {
 }
 
 nightPill.addEventListener('click', async () => {
+  // Значок говорит одно из трёх, и клик делает ровно то, что на нём написано.
+  if (!nightNow.on && autoTabsHere()) {
+    const ids = [];
+    for (const [id, s] of sessions) if (s && s.auto) ids.push(id);
+    for (const id of ids) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
+    // Отчёт соберётся сам, как только не останется ни одной автономной вкладки, — и придёт
+    // сюда обычным состоянием (night:state). Открывать окно поверх клика не нужно.
+    return;
+  }
   if (nightNow.on) {
     // Снять ночь — та же дверь, что у списка «где я»: положение одно на всё приложение.
     try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) { /* ниже всё равно спросим */ }
@@ -4616,6 +4740,7 @@ async function restoreOrStart() {
       sessionKey: (dupKey ? null : t.sessionKey) || undefined,
       claudeSessionId: (dupId ? null : t.claudeSessionId) || undefined,
       tabKey: t.tabKey || undefined,   // same tab → same Telegram topic as before
+      auto: !!t.auto,                  // отданная вкладка остаётся отданной
       resume: !!(resumeSessions && ((t.claudeSessionId && !dupId) || (t.sessionKey && !dupKey))),
     });
   }
