@@ -1216,21 +1216,9 @@ body.pult-on #git-msg { display: none; }
 .diff-open:hover { border-color: var(--accent); color: var(--accent); }
 
 /* --- settings: appearance tab -------------------------------------------- */
-.theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.theme-swatch {
-  /* stretch — не для красоты: у <button> своя UA-строка align-items: flex-start, и
-     полоска палитры (пустая, без текста внутри) сжималась в ноль ширины. Плитки тем
-     стояли пустыми. */
-  display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px;
-  background: color-mix(in srgb, var(--bg) 60%, var(--panel)); border: 1px solid var(--border); border-radius: 8px;
-  cursor: pointer; text-align: left; color: var(--text);
-}
-.theme-swatch:hover { border-color: var(--muted); }
-.theme-swatch.active { border-color: var(--accent); }
-.theme-pal { display: flex; height: 22px; border-radius: 5px; overflow: hidden; }
-.theme-pal i { flex: 1; }
-.theme-name { font-size: 12px; color: var(--muted); }
-.theme-swatch.active .theme-name { color: var(--accent); }
+/* Плитки тем (.theme-grid/.theme-swatch/.theme-pal) убраны вместе с сеткой: пять
+   полосок из палитры не отвечали на единственный вопрос — что каким цветом будет.
+   Тема выбирается селектом, а видно её в предпросмотре ниже. */
 
 .set-stepper { display: flex; align-items: center; gap: 12px; }
 
@@ -1273,10 +1261,13 @@ body.pult-on #git-msg { display: none; }
 .step-btn:hover { border-color: var(--accent); color: var(--accent); }
 .step-val { min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
 
+/* Предпросмотр терминала — несколько строк, а не полоска: он показывает роли цветов
+   (путь, ветка, успех, предупреждение, ошибка, курсор), и в одну строку они не влезают. */
 .term-preview {
-  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+  padding: 11px 13px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--bg);
-  font-family: var(--mono); line-height: 1.4; white-space: nowrap; overflow: hidden;
+  font-family: var(--mono); font-size: 12px; line-height: 1.65;
+  white-space: pre; overflow-x: auto;
 }
 .term-preview .prev-cur { font-weight: 700; }
 

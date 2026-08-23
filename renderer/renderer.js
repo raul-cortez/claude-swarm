@@ -1510,11 +1510,11 @@ function showSettingsModal(tab) {
           <p class="set-intro">Оформление терминала. Применяется ко <b>всем</b> вкладкам сразу.</p>
         </header>
         <section class="set-group">
-          <div class="set-group-h">Тема</div>
-          <div class="theme-grid" id="set-theme-grid"></div>
-        </section>
-        <section class="set-group">
-          <div class="set-group-h">Текст в терминале</div>
+          <div class="set-group-h">Терминал</div>
+          <div class="set-field is-row">
+            <div class="set-head"><span class="set-label">Тема</span></div>
+            <select class="set-input" id="set-theme"></select>
+          </div>
           <div class="set-field is-row">
             <div class="set-head"><span class="set-label">Шрифт</span></div>
             <select class="set-input" id="set-font-family"></select>
@@ -1537,10 +1537,7 @@ function showSettingsModal(tab) {
               <span class="set-check-tx">Мигание курсора</span>
             </label>
           </div>
-          <div class="set-field">
-            <div class="set-head"><span class="set-label">Предпросмотр</span></div>
-            <div class="term-preview" id="set-term-preview"></div>
-          </div>
+          <div class="term-preview" id="set-term-preview"></div>
         </section>
         <section class="set-group">
           <div class="set-group-h">Окно</div>
@@ -2393,7 +2390,7 @@ function showSettingsModal(tab) {
   // and only commit on Save — Cancel/Esc discards them. A small preview strip
   // reflects the draft immediately, before saving.
   const draft = { ...appearance };
-  const grid = overlay.querySelector('#set-theme-grid');
+  const themeSel = overlay.querySelector('#set-theme');
   const fontVal = overlay.querySelector('#set-font-val');
   const fontDec = overlay.querySelector('#set-font-dec');
   const fontInc = overlay.querySelector('#set-font-inc');
@@ -2402,27 +2399,17 @@ function showSettingsModal(tab) {
   const blinkI = overlay.querySelector('#set-cursor-blink');
   const previewEl = overlay.querySelector('#set-term-preview');
 
-  function renderThemeSwatch(t) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'theme-swatch' + (t.id === draft.theme ? ' active' : '');
-    b.dataset.theme = t.id;
-    b.title = t.name;
-    const pal = ['green', 'yellow', 'blue', 'magenta', 'cyan'];
-    b.innerHTML =
-      `<span class="theme-pal" style="background:${t.xterm.background}">` +
-      pal.map((k) => `<i style="background:${t.xterm[k]}"></i>`).join('') +
-      `</span><span class="theme-name"></span>`;
-    b.querySelector('.theme-name').textContent = t.name;
-    b.addEventListener('click', () => {
-      draft.theme = t.id;
-      grid.querySelectorAll('.theme-swatch').forEach((el) =>
-        el.classList.toggle('active', el.dataset.theme === t.id));
-      renderTermPreview();
-    });
-    return b;
-  }
-  APPEARANCE.THEMES.forEach((t) => grid.appendChild(renderThemeSwatch(t)));
+  // Тема — селектом, а не плитками. Плитки показывали пять цветных полосок из
+  // палитры темы, и по ним нельзя было понять НИЧЕГО: какой цвет чему достанется,
+  // видно только в предпросмотре. Он тут один и он же и есть выбор темы.
+  APPEARANCE.THEMES.forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name;
+    themeSel.appendChild(o);
+  });
+  themeSel.value = draft.theme;
+  themeSel.addEventListener('change', () => { draft.theme = themeSel.value; renderTermPreview(); });
 
   APPEARANCE.FONT_FAMILIES.forEach((f) => {
     const o = document.createElement('option');
@@ -2449,11 +2436,19 @@ function showSettingsModal(tab) {
     previewEl.style.fontSize = draft.fontSize + 'px';
     fontVal.textContent = draft.fontSize;
     const cur = draft.cursorStyle === 'bar' ? '▏' : draft.cursorStyle === 'underline' ? '_' : '█';
-    previewEl.innerHTML =
-      `<span style="color:${xt.green}">claude</span> ` +
-      `<span style="color:${xt.yellow}">--help</span> ` +
-      `<span style="color:${xt.blue}">✓</span> ` +
-      `<span class="prev-cur" style="color:${xt.cursor}">${cur}</span>`;
+    // Предпросмотр — не образец шрифта, а ответ на вопрос «что каким цветом будет»:
+    // путь, ветка, команда, успех, предупреждение, ошибка, курсор. Ровно то, на что
+    // человек смотрит в терминале, и в тех же ролях.
+    previewEl.innerHTML = [
+      `<span style="color:${xt.cyan}">~/project</span> ` +
+        `<span style="color:${xt.magenta}">main</span> $ ` +
+        `<span style="color:${xt.foreground}">claude --model sonnet</span>`,
+      `<span style="color:${xt.green}">✓ готово: 3 файла</span>   ` +
+        `<span style="color:${xt.yellow}">! тесты не запускались</span>`,
+      `<span style="color:${xt.red}">✗ ошибка: модуль не найден</span>`,
+      `Сейчас от тебя: выбрать вариант ` +
+        `<span class="prev-cur" style="color:${xt.cursor}">${cur}</span>`,
+    ].join('\n');
   }
   renderTermPreview();
 
