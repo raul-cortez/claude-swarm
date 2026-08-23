@@ -1450,16 +1450,23 @@ function showSettingsModal(tab) {
                         autocapitalize="off" autocorrect="off"
                         placeholder="Сейчас от тебя"></textarea>
               <div class="ask-test">
+                <span class="ask-test-label">Проверка</span>
                 <input class="set-input" type="text" id="set-ask-test" spellcheck="false"
                        autocapitalize="off" autocorrect="off"
-                       placeholder="Проверить: вставьте конец сообщения агента" />
+                       placeholder="вставьте конец сообщения агента" />
                 <span class="ask-verdict" id="set-ask-verdict"></span>
               </div>
             </div>
             <div class="set-field">
-              <button type="button" class="set-check-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
-              <span class="set-note" id="set-copy-rule-note">Если работаете с агентом и вне сворма — вставьте это
-                правило в свой <code>CLAUDE.md</code>: там оно действует всегда, а не только в наших вкладках.</span>
+              <div class="set-row is-center">
+                <button type="button" class="set-check-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>Если работаете с агентом и вне сворма — вставьте это
+                  правило в свой <code>CLAUDE.md</code>: там оно действует всегда, а не только в наших
+                  вкладках. Правило собирается из списка фраз выше, так что оно не разойдётся с тем, что
+                  ищет вкладка.</span>
+              </div>
+              <span class="set-note" id="set-copy-rule-note"></span>
             </div>
           </section>
         </div>

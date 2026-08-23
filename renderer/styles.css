@@ -740,6 +740,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* Одна настройка. Вопросик стоит СРАЗУ ЗА текстом, а не у правого края панели:
    прижатый к краю, он собирался в колонку сирот, оторванных от своих строк. */
 .set-row { display: flex; align-items: flex-start; gap: 8px; }
+/* Строка с кнопкой: вопросик по центру кнопки, а не по её верхнему краю. */
+.set-row.is-center { align-items: center; }
 .set-row > .set-check, .set-row > .set-radio { flex: 0 1 auto; min-width: 0; }
 .set-check, .set-radio {
   display: flex;
@@ -892,8 +894,11 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 }
 .set-range-num.off { color: var(--muted); font-weight: 400; }
 /* «Will this phrase call me?» — a sample line plus the verdict, in the status colors
-   the tab itself would take, so the answer reads the same way the dashboard does. */
+   the tab itself would take, so the answer reads the same way the dashboard does.
+   Подпись «Проверка» обязательна: без неё пустое поле среди настроек читалось как
+   настройка, которую забыли заполнить, — хуже, чем шум. */
 .ask-test { display: flex; align-items: center; gap: 8px; }
+.ask-test-label { flex: none; color: var(--muted); font-size: 12px; }
 .ask-test .set-input { flex: 1; min-width: 0; }
 .ask-verdict { font-size: 12px; white-space: nowrap; color: var(--muted); }
 .ask-verdict.is-call { color: var(--waiting); }
