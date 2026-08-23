@@ -32,8 +32,10 @@
         "Segoe UI", Inter, system-ui, "Helvetica Neue", sans-serif;
 
   /* Габариты карточки вкладки. Значения = "обычная" плотность; body.tabs-*
-     переопределяет их пачкой, а --tab-label-size / --tab-sub-size ставит JS
-     (applyTabStyle) из настроек. См. renderer/tabstyle.js. */
+     переопределяет их пачкой — вместе с размерами текста. Раньше размеры стояли
+     двумя шаговиками в настройках рядом с «Плотностью», и одну задачу «сделай
+     карточки мельче» приходилось решать в двух местах, согласуя вручную.
+     См. renderer/tabstyle.js. */
   --tab-pad-y:      8px;
   --tab-pad-x:      10px;
   --tab-gap:        8px;
@@ -317,7 +319,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    :where() — он не добавляет специфичности, так что id превью не выигрывает у
    body. tabs-normal объявлен явно, а не наследует :root: иначе превью с
    "обычной" плотностью внутри body.tabs-compact унаследовало бы компактные
-   значения. Размеры шрифта пресеты не трогают — их задаёт пользователь. */
+   значения. Размеры текста пресет несёт вместе с отступами: это одна задача. */
 :where(body, #set-tab-preview).tabs-compact {
   --tab-pad-y: 4px;
   --tab-pad-x: 8px;
@@ -326,6 +328,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   --tab-max-w: 150px;
   --tab-dot-size: 6px;
   --tab-ctx-h: 3px;
+  --tab-label-size: 11px;
+  --tab-sub-size: 9px;
 }
 :where(body, #set-tab-preview).tabs-normal {
   --tab-pad-y: 8px;
@@ -335,6 +339,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   --tab-max-w: 210px;
   --tab-dot-size: 8px;
   --tab-ctx-h: 4px;
+  --tab-label-size: 12px;
+  --tab-sub-size: 10px;
 }
 :where(body, #set-tab-preview).tabs-roomy {
   --tab-pad-y: 11px;
@@ -344,6 +350,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   --tab-max-w: 260px;
   --tab-dot-size: 9px;
   --tab-ctx-h: 5px;
+  --tab-label-size: 13px;
+  --tab-sub-size: 11px;
 }
 
 /* Компактный режим — однострочная карточка: имя (обрезается многоточием) слева,
@@ -365,7 +373,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 :where(body, #set-tab-preview).tab-no-dot .tab .dot { display: none; }
 :where(body, #set-tab-preview).tab-no-ctx .tab .ctx { display: none !important; }
 :where(body, #set-tab-preview).tab-no-sub .tab .sub { display: none; }
-:where(body, #set-tab-preview).tab-no-agents .tab .agents { display: none !important; }
 
 /* Заливка/бордер по статусу гасятся, но точка и акцентная рамка активной
    вкладки остаются — иначе активную нечем отличить. */

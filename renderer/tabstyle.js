@@ -4,8 +4,9 @@
 // NO DOM here — just data and validation, so it's unit-testable in Node.
 //
 // Density is applied as a CLASS (it flips a batch of CSS vars declared in
-// styles.css); sizes and colors are applied as CSS VARS. Keep that split — it's
-// why toCssVars() emits only seven names and bodyClasses() owns the rest.
+// styles.css, включая размеры текста); colors are applied as CSS VARS. Keep that
+// split — it's why toCssVars() emits only the five palette names and bodyClasses()
+// owns the rest.
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -27,19 +28,26 @@
     { key: 'danger', name: 'Ошибка' },
   ];
 
-  // `agents` — show the sub-agent badge (icon + count) on the card.
-  // `agentOrange` — keep the status «работает» (orange) while sub-agents run, even
-  //   when the main thread is idle. Unlike the others it has NO CSS class: the
-  //   renderer reads it in onStatus (see effectiveStatus), so bodyClasses skips it.
-  const SHOW_KEYS = ['dot', 'ctx', 'sub', 'statusFill', 'agents', 'agentOrange'];
+  // Как карточка показывает статус. Это ОДИН выбор, а не две галочки: точка и
+  // заливка — два способа сказать одно и то же, и парой переключателей они делали
+  // дырку «выключил оба — статуса не видно» и заставляли выбирать дважды.
+  const STATUS_STYLES = [
+    { id: 'dot', name: 'Точкой' },
+    { id: 'fill', name: 'Заливкой карточки' },
+    { id: 'both', name: 'Точкой и заливкой' },
+  ];
+
+  // Что ещё показывать на карточке. Значок сабагентов сюда НЕ входит: он и так
+  // виден только когда сабагенты работают, выключать было нечего. «Оранжевый, пока
+  // работает сабагент» тоже ушёл — это не вид карточки, а честность статуса.
+  const SHOW_KEYS = ['ctx', 'sub'];
 
   // Colors mirror the hardcoded :root palette (styles.css:10-22) — pinned by a
   // regression test, so a change there must be mirrored here.
   const DEFAULT_TABSTYLE = {
     density: 'normal',
-    show: { dot: true, ctx: true, sub: true, statusFill: true, agents: true, agentOrange: true },
-    labelSize: 12,
-    subSize: 10,
+    status: 'both',
+    show: { ctx: true, sub: true },
     colors: {
       accent: '#3fd0c9',
       run: '#e0a53f',
@@ -50,12 +58,6 @@
   };
 
   const HEX = /^#[0-9a-fA-F]{6}$/;
-
-  function clampInt(v, lo, hi, dflt) {
-    let n = parseInt(v, 10);
-    if (!Number.isFinite(n)) n = dflt;
-    return Math.max(lo, Math.min(hi, n));
-  }
 
   // Coerce any stored/garbage value into a valid tab style. Never throws.
   // Returns a deep copy, so callers can use it to fork an editable draft.
@@ -68,6 +70,16 @@
     SHOW_KEYS.forEach(function (k) {
       show[k] = typeof rShow[k] === 'boolean' ? rShow[k] : d.show[k];
     });
+    // Переезд со старой формы, где точка и заливка были двумя галочками. Читаем их
+    // из сохранённого show, чтобы у человека осталось то, что он выбирал: были обе —
+    // 'both', только заливка — 'fill', только точка — 'dot'. Ни одной — 'dot': такое
+    // сочетание раньше означало «без цвета вообще», и точка здесь тише всего.
+    let status = STATUS_STYLES.some(function (x) { return x.id === r.status; }) ? r.status : null;
+    if (!status) {
+      const oldDot = typeof rShow.dot === 'boolean' ? rShow.dot : true;
+      const oldFill = typeof rShow.statusFill === 'boolean' ? rShow.statusFill : true;
+      status = (oldDot && oldFill) ? 'both' : (oldFill ? 'fill' : 'dot');
+    }
     const colors = {};
     COLORS.forEach(function (c) {
       const v = rColors[c.key];
@@ -75,21 +87,19 @@
     });
     return {
       density: DENSITIES.some(function (x) { return x.id === r.density; }) ? r.density : d.density,
+      status: status,
       show: show,
-      labelSize: clampInt(r.labelSize, 9, 18, d.labelSize),
-      subSize: clampInt(r.subSize, 8, 14, d.subSize),
       colors: colors,
     };
   }
 
-  // Sizes + colors → CSS custom properties. Normalizes first, so a caller can
-  // pass a half-built draft without leaking garbage into the stylesheet.
+  // Colors → CSS custom properties. Normalizes first, so a caller can pass a
+  // half-built draft without leaking garbage into the stylesheet. Размеры текста
+  // сюда больше не входят: их несёт пресет плотности (styles.css), а два шаговика
+  // рядом с «Плотностью» заставляли согласовывать вручную то, что должно ехать вместе.
   function toCssVars(style) {
     const s = normalizeTabStyle(style);
-    const out = {
-      '--tab-label-size': s.labelSize + 'px',
-      '--tab-sub-size': s.subSize + 'px',
-    };
+    const out = {};
     COLORS.forEach(function (c) { out['--' + c.key] = s.colors[c.key]; });
     return out;
   }
@@ -99,14 +109,12 @@
   function bodyClasses(style) {
     const s = normalizeTabStyle(style);
     const out = ['tabs-' + s.density];
-    if (!s.show.dot) out.push('tab-no-dot');
+    if (s.status === 'fill') out.push('tab-no-dot');
+    if (s.status === 'dot') out.push('tab-no-fill');
     if (!s.show.ctx) out.push('tab-no-ctx');
     if (!s.show.sub) out.push('tab-no-sub');
-    if (!s.show.statusFill) out.push('tab-no-fill');
-    if (!s.show.agents) out.push('tab-no-agents');
-    // NB: agentOrange has no class — it drives JS status logic, not CSS.
     return out;
   }
 
-  return { DENSITIES, COLORS, DEFAULT_TABSTYLE, normalizeTabStyle, toCssVars, bodyClasses };
+  return { DENSITIES, COLORS, STATUS_STYLES, DEFAULT_TABSTYLE, normalizeTabStyle, toCssVars, bodyClasses };
 });

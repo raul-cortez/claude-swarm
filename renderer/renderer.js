@@ -202,7 +202,7 @@ function applyAppearance() {
 // state without touching layout-* / platform-* on the same element.
 const TABSTYLE_CLASSES = [
   'tabs-compact', 'tabs-normal', 'tabs-roomy',
-  'tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill', 'tab-no-agents',
+  'tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill',
 ];
 
 // Restyle every tab card at once: vars on <html>, classes on <body>. No DOM
@@ -321,7 +321,7 @@ let notifyOnReady = localStorage.getItem('swarm.notifyReady') !== '0';   // ping
 let notifyOnWaiting = localStorage.getItem('swarm.notifyWaiting') !== '0'; // ping on «ждёт ответа»
 // Off by default: normally the tab you're actively watching in a focused window
 // isn't pinged (it'd be noise). Turn on to get pings for it too.
-let notifyActive = localStorage.getItem('swarm.notifyActive') === '1';
+let notifyActive = localStorage.getItem('swarm.notifyActive') !== '0';
 let lastFolder = null;      // last folder picked, so the dialog reopens there
 const collapsedFolders = new Set(); // folders whose group is collapsed in the sidebar
 const folderOrder = [];             // cwd keys in display order (folders + loners)
@@ -337,7 +337,7 @@ function setStatus(id, status, detail) {
   const s = sessions.get(id);
   if (!s) return;
   if (status && s.status !== status) {
-    if (STATUS_DEBUG) console.debug('[status] paint', statusName(s), s.status, '→', status, '| raw:', s.rawStatus, 'agentOrange:', tabstyle.show.agentOrange, 'sub:', s.sub);
+    if (STATUS_DEBUG) console.debug('[status] paint', statusName(s), s.status, '→', status, '| raw:', s.rawStatus, 'sub:', s.sub);
     s.status = status;
     s.tab.classList.remove('status-ready', 'status-running', 'status-waiting', 'status-dead');
     s.tab.classList.add('status-' + status);
@@ -432,12 +432,16 @@ window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind,
 
 // The status a tab should SHOW = the main-thread status, except: while sub-agents
 // run in the background the main thread often sits idle («готов»/green), yet the
-// work isn't done — so if the «оранжевый пока работает сабагент» toggle is on we
-// keep it «работает». A real prompt (waiting) always wins so the user still notices.
+// work isn't done — so we keep it «работает». A real prompt (waiting) always wins
+// so the user still notices.
+//
+// Раньше это была галочка в настройках, и она ушла: зелёная вкладка означает
+// «свободна, дай задачу», так что выключить это значило договориться с собой, что
+// карточка будет врать. У настройки было одно правильное положение.
 function effectiveStatus(s) {
   const status = s.rawStatus || s.status || 'ready';
   const detail = s.rawDetail != null ? s.rawDetail : null;
-  if (tabstyle.show.agentOrange && (s.sub || 0) > 0 && status === 'ready') {
+  if ((s.sub || 0) > 0 && status === 'ready') {
     return { status: 'running', detail: 'работает' };
   }
   return { status, detail };
@@ -513,8 +517,8 @@ function applyStatus(s, opts) {
 }
 
 // The sub-agent badge (icon + count). Number shows only when >1 (a single agent is
-// just the icon). Whether the badge appears at all is the `agents` toggle, handled
-// in CSS via the tab-no-agents body class — here we only reflect the live count.
+// just the icon). Показывать значок или нет, больше не спрашиваем: он и так виден
+// только пока сабагенты работают, так что галочке было нечего выключать.
 function updateAgents(s) {
   const el = s.tab.querySelector('.agents');
   if (!el) return;
@@ -1489,10 +1493,12 @@ function showSettingsModal(tab) {
             <div class="set-row">
               <label class="set-check">
                 <input type="checkbox" id="set-notify-active" />
-                <span class="set-check-tx">Пинговать и активную вкладку в фокусе</span>
+                <span class="set-check-tx">Пинговать, даже если я смотрю на эту вкладку</span>
               </label>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Обычно её не трогаем — вы и так на неё смотрите.</span>
+              <span class="set-hint" hidden>Фокус окна не значит, что человек за столом: одна вкладка,
+                вы ушли за кофе, окно так и осталось активным — и без этого пинга итог придёт в тишине.
+                Выключите, если мешает баннер о том, что и так у вас перед глазами.</span>
             </div>
             <div class="set-row">
               <label class="set-check">
@@ -1574,11 +1580,15 @@ function showSettingsModal(tab) {
         </section>
         <section class="set-group">
           <div class="set-group-h">Что показывать на карточке</div>
-          <div class="set-row">
-            <label class="set-check">
-              <input type="checkbox" id="set-tab-dot" />
-              <span class="set-check-tx">Точка статуса</span>
-            </label>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Статус</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Точкой — цветной кружок слева, карточка остаётся спокойной.
+                Заливкой — цвет статуса заливает фон и рамку всей карточки: видно с другого конца экрана,
+                но список из десяти цветных плашек шумит. Подпись словами настраивается отдельно.</span>
+            </div>
+            <select class="set-input" id="set-tab-status"></select>
           </div>
           <div class="set-row">
             <label class="set-check">
@@ -1596,56 +1606,15 @@ function showSettingsModal(tab) {
             <button type="button" class="set-q" aria-label="подсказка">?</button>
             <span class="set-hint" hidden>Словами под заголовком: готов / работает / завис?</span>
           </div>
-          <div class="set-row">
-            <label class="set-check">
-              <input type="checkbox" id="set-tab-fill" />
-              <span class="set-check-tx">Заливка карточки по статусу</span>
-            </label>
-          </div>
-          <div class="set-row">
-            <label class="set-check">
-              <input type="checkbox" id="set-tab-agents" />
-              <span class="set-check-tx">Значок сабагентов</span>
-            </label>
-            <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Иконка и число работающих сабагентов — число показываем, если их больше одного.</span>
-          </div>
-          <div class="set-row">
-            <label class="set-check">
-              <input type="checkbox" id="set-tab-agent-orange" />
-              <span class="set-check-tx">Оранжевый, пока работает сабагент</span>
-            </label>
-            <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Держать статус «работает», пока в фоне крутятся сабагенты.</span>
-          </div>
         </section>
         <section class="set-group">
-          <div class="set-group-h">Размеры и цвета</div>
-          <div class="set-field is-row">
-            <div class="set-head"><span class="set-label">Размер заголовка</span></div>
-            <div class="set-stepper">
-              <button type="button" class="step-btn" id="set-tab-label-dec" aria-label="меньше">−</button>
-              <span class="step-val" id="set-tab-label-val"></span>
-              <button type="button" class="step-btn" id="set-tab-label-inc" aria-label="больше">+</button>
-            </div>
+          <div class="set-group-h">
+            <span>Цвета статусов</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Эти же цвета красят статус-бар и кнопки — палитра в приложении одна.</span>
           </div>
-          <div class="set-field is-row">
-            <div class="set-head"><span class="set-label">Размер подписи</span></div>
-            <div class="set-stepper">
-              <button type="button" class="step-btn" id="set-tab-sub-dec" aria-label="меньше">−</button>
-              <span class="step-val" id="set-tab-sub-val"></span>
-              <button type="button" class="step-btn" id="set-tab-sub-inc" aria-label="больше">+</button>
-            </div>
-          </div>
-          <div class="set-field">
-            <div class="set-head">
-              <span class="set-label">Цвета статусов</span>
-              <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Эти же цвета красят статус-бар и кнопки — палитра в приложении одна.</span>
-            </div>
-            <div class="color-row" id="set-tab-colors"></div>
-            <button type="button" class="set-check-btn" id="set-tab-colors-reset">Сбросить цвета</button>
-          </div>
+          <div class="color-row" id="set-tab-colors"></div>
+          <button type="button" class="set-check-btn" id="set-tab-colors-reset">Сбросить цвета</button>
         </section>
         <section class="set-group">
           <div class="set-group-h">Предпросмотр</div>
@@ -2464,16 +2433,11 @@ function showSettingsModal(tab) {
   // share the nested show/colors objects with the live tabstyle and leak edits.
   const tabDraft = TABSTYLE.normalizeTabStyle(tabstyle);
   const densitySel = overlay.querySelector('#set-tab-density');
+  const statusSel = overlay.querySelector('#set-tab-status');
   const showInputs = {
-    dot: overlay.querySelector('#set-tab-dot'),
     ctx: overlay.querySelector('#set-tab-ctx'),
     sub: overlay.querySelector('#set-tab-sub'),
-    statusFill: overlay.querySelector('#set-tab-fill'),
-    agents: overlay.querySelector('#set-tab-agents'),
-    agentOrange: overlay.querySelector('#set-tab-agent-orange'),
   };
-  const tabLabelVal = overlay.querySelector('#set-tab-label-val');
-  const tabSubVal = overlay.querySelector('#set-tab-sub-val');
   const colorRow = overlay.querySelector('#set-tab-colors');
   const tabPreviewEl = overlay.querySelector('#set-tab-preview');
 
@@ -2484,6 +2448,14 @@ function showSettingsModal(tab) {
     densitySel.appendChild(o);
   });
   densitySel.value = tabDraft.density;
+
+  TABSTYLE.STATUS_STYLES.forEach((x) => {
+    const o = document.createElement('option');
+    o.value = x.id;
+    o.textContent = x.name;
+    statusSel.appendChild(o);
+  });
+  statusSel.value = tabDraft.status;
 
   // Layout applies LIVE (like ⌘L), not on Save: layout is a body-class preference
   // with no draft/undo anywhere else, and applying on Save would fight a ⌘L press
@@ -2544,8 +2516,6 @@ function showSettingsModal(tab) {
     // Раскладка превью = фактическая раскладка приложения (top/rail), чтобы
     // предпросмотр совпадал с тем, что клиент увидит в бою.
     tabPreviewEl.className = 'tab-preview ' + currentLayout() + ' ' + TABSTYLE.bodyClasses(tabDraft).join(' ');
-    tabLabelVal.textContent = tabDraft.labelSize;
-    tabSubVal.textContent = tabDraft.subSize;
   }
 
   function renderColorPickers() {
@@ -2581,12 +2551,7 @@ function showSettingsModal(tab) {
       renderTabPreview();
     });
   });
-  const setTabLabel = (n) => { tabDraft.labelSize = Math.max(9, Math.min(18, n)); renderTabPreview(); };
-  const setTabSub = (n) => { tabDraft.subSize = Math.max(8, Math.min(14, n)); renderTabPreview(); };
-  overlay.querySelector('#set-tab-label-dec').addEventListener('click', () => setTabLabel(tabDraft.labelSize - 1));
-  overlay.querySelector('#set-tab-label-inc').addEventListener('click', () => setTabLabel(tabDraft.labelSize + 1));
-  overlay.querySelector('#set-tab-sub-dec').addEventListener('click', () => setTabSub(tabDraft.subSize - 1));
-  overlay.querySelector('#set-tab-sub-inc').addEventListener('click', () => setTabSub(tabDraft.subSize + 1));
+  statusSel.addEventListener('change', () => { tabDraft.status = statusSel.value; renderTabPreview(); });
   overlay.querySelector('#set-tab-colors-reset').addEventListener('click', () => {
     tabDraft.colors = { ...TABSTYLE.DEFAULT_TABSTYLE.colors };
     renderColorPickers();

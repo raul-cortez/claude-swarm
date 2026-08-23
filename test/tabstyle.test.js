@@ -45,11 +45,46 @@ test('normalizeTabStyle fills defaults from empty/garbage input', () => {
   for (const bad of [null, undefined, 'nope', 42, []]) {
     const s = T.normalizeTabStyle(bad);
     assert.strictEqual(s.density, 'normal', String(bad));
-    assert.strictEqual(s.labelSize, 12);
-    assert.strictEqual(s.subSize, 10);
-    assert.deepStrictEqual(s.show, { dot: true, ctx: true, sub: true, statusFill: true, agents: true, agentOrange: true });
+    assert.strictEqual(s.status, 'both', String(bad));
+    assert.deepStrictEqual(s.show, { ctx: true, sub: true });
     assert.deepStrictEqual(s.colors, T.DEFAULT_TABSTYLE.colors);
   }
+});
+
+test('STATUS_STYLES: три способа показать статус, ни одного «никак»', () => {
+  assert.deepStrictEqual(T.STATUS_STYLES.map((x) => x.id), ['dot', 'fill', 'both']);
+  for (const x of T.STATUS_STYLES) assert.ok(x.name && typeof x.name === 'string', x.id);
+});
+
+test('normalizeTabStyle keeps a known status and falls back on a bogus one', () => {
+  assert.strictEqual(T.normalizeTabStyle({ status: 'fill' }).status, 'fill');
+  assert.strictEqual(T.normalizeTabStyle({ status: 'dot' }).status, 'dot');
+  assert.strictEqual(T.normalizeTabStyle({ status: 'nope' }).status, 'both');
+});
+
+// Переезд со старой формы: точка и заливка были двумя галочками. Настройки людей
+// лежат в localStorage в ней, и потерять их выбор нельзя.
+test('normalizeTabStyle переносит старые show.dot / show.statusFill в status', () => {
+  const cases = [
+    [{ dot: true, statusFill: true }, 'both'],
+    [{ dot: false, statusFill: true }, 'fill'],
+    [{ dot: true, statusFill: false }, 'dot'],
+    [{ dot: false, statusFill: false }, 'dot'],  // «без цвета» больше нельзя — точка тише всего
+  ];
+  for (const [show, want] of cases) {
+    assert.strictEqual(T.normalizeTabStyle({ show }).status, want, JSON.stringify(show));
+  }
+});
+
+test('новое поле status побеждает старые галочки, если есть и то и то', () => {
+  assert.strictEqual(T.normalizeTabStyle({ status: 'dot', show: { dot: false, statusFill: true } }).status, 'dot');
+});
+
+test('снятые настройки больше не возвращаются из нормализации', () => {
+  const s = T.normalizeTabStyle({ show: { agents: false, agentOrange: false }, labelSize: 15, subSize: 9 });
+  assert.deepStrictEqual(Object.keys(s.show), ['ctx', 'sub'], 'значок и оранжевый сабагент сняты');
+  assert.strictEqual(s.labelSize, undefined, 'размеры несёт пресет плотности');
+  assert.strictEqual(s.subSize, undefined);
 });
 
 test('normalizeTabStyle falls back on unknown density', () => {
@@ -57,24 +92,10 @@ test('normalizeTabStyle falls back on unknown density', () => {
   assert.strictEqual(T.normalizeTabStyle({ density: 'compact' }).density, 'compact');
 });
 
-test('normalizeTabStyle clamps labelSize to 9..18 and subSize to 8..14', () => {
-  assert.strictEqual(T.normalizeTabStyle({ labelSize: 2 }).labelSize, 9);
-  assert.strictEqual(T.normalizeTabStyle({ labelSize: 99 }).labelSize, 18);
-  assert.strictEqual(T.normalizeTabStyle({ labelSize: '15' }).labelSize, 15);
-  assert.strictEqual(T.normalizeTabStyle({ labelSize: 'abc' }).labelSize, 12);
-  assert.strictEqual(T.normalizeTabStyle({ subSize: 1 }).subSize, 8);
-  assert.strictEqual(T.normalizeTabStyle({ subSize: 99 }).subSize, 14);
-  assert.strictEqual(T.normalizeTabStyle({ subSize: '11' }).subSize, 11);
-});
-
 test('normalizeTabStyle keeps valid booleans and fills missing ones', () => {
-  const s = T.normalizeTabStyle({ show: { dot: false, sub: 'yes' } });
-  assert.strictEqual(s.show.dot, false);
+  const s = T.normalizeTabStyle({ show: { ctx: false, sub: 'yes' } });
+  assert.strictEqual(s.show.ctx, false);
   assert.strictEqual(s.show.sub, true, 'non-boolean falls back to default');
-  assert.strictEqual(s.show.ctx, true);
-  assert.strictEqual(s.show.statusFill, true);
-  assert.strictEqual(s.show.agents, true);
-  assert.strictEqual(s.show.agentOrange, true);
 });
 
 test('normalizeTabStyle rejects a bad hex and lowercases a good one', () => {
@@ -87,25 +108,23 @@ test('normalizeTabStyle rejects a bad hex and lowercases a good one', () => {
 test('normalizeTabStyle deep-copies: mutating the result leaves input alone', () => {
   const input = T.normalizeTabStyle(null);
   const copy = T.normalizeTabStyle(input);
-  copy.show.dot = false;
+  copy.show.ctx = false;
   copy.colors.accent = '#000000';
-  assert.strictEqual(input.show.dot, true);
+  assert.strictEqual(input.show.ctx, true);
   assert.strictEqual(input.colors.accent, T.DEFAULT_TABSTYLE.colors.accent);
 });
 
-test('toCssVars returns exactly the seven vars, with units on sizes', () => {
+test('toCssVars returns exactly the five palette vars', () => {
   const v = T.toCssVars(T.normalizeTabStyle(null));
   assert.deepStrictEqual(Object.keys(v).sort(), [
-    '--accent', '--danger', '--ready', '--run', '--tab-label-size', '--tab-sub-size', '--waiting',
+    '--accent', '--danger', '--ready', '--run', '--waiting',
   ]);
-  assert.strictEqual(v['--tab-label-size'], '12px');
-  assert.strictEqual(v['--tab-sub-size'], '10px');
   assert.strictEqual(v['--accent'], '#3fd0c9');
+  assert.strictEqual(v['--tab-label-size'], undefined, 'размеры текста несёт пресет плотности');
 });
 
 test('toCssVars normalizes garbage instead of emitting it', () => {
-  const v = T.toCssVars({ labelSize: 999, colors: { danger: 'oops' } });
-  assert.strictEqual(v['--tab-label-size'], '18px');
+  const v = T.toCssVars({ colors: { danger: 'oops' } });
   assert.strictEqual(v['--danger'], T.DEFAULT_TABSTYLE.colors.danger);
 });
 
@@ -115,13 +134,21 @@ test('bodyClasses always names the density and nothing else by default', () => {
 });
 
 test('bodyClasses adds one tab-no-* class per hidden element', () => {
-  const all = T.bodyClasses({ show: { dot: false, ctx: false, sub: false, statusFill: false, agents: false } });
-  assert.deepStrictEqual(all, ['tabs-normal', 'tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill', 'tab-no-agents']);
+  const all = T.bodyClasses({ status: 'dot', show: { ctx: false, sub: false } });
+  assert.deepStrictEqual(all, ['tabs-normal', 'tab-no-fill', 'tab-no-ctx', 'tab-no-sub']);
   assert.deepStrictEqual(T.bodyClasses({ show: { sub: false } }), ['tabs-normal', 'tab-no-sub']);
 });
 
-test('bodyClasses emits no class for agentOrange (JS-only toggle)', () => {
-  assert.deepStrictEqual(T.bodyClasses({ show: { agentOrange: false } }), ['tabs-normal']);
+// Ни одно значение status не гасит оба канала сразу: карточка без статуса — это
+// дырка, из-за которой две галочки и превратились в один выбор.
+test('bodyClasses: каждый способ гасит ровно противоположный канал', () => {
+  assert.deepStrictEqual(T.bodyClasses({ status: 'both' }), ['tabs-normal']);
+  assert.deepStrictEqual(T.bodyClasses({ status: 'dot' }), ['tabs-normal', 'tab-no-fill']);
+  assert.deepStrictEqual(T.bodyClasses({ status: 'fill' }), ['tabs-normal', 'tab-no-dot']);
+  for (const x of T.STATUS_STYLES) {
+    const cls = T.bodyClasses({ status: x.id });
+    assert.ok(!(cls.includes('tab-no-dot') && cls.includes('tab-no-fill')), x.id);
+  }
 });
 
 (async () => {
