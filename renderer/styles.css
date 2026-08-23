@@ -361,19 +361,33 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   --tab-sub-size: 11px;
 }
 
-/* Компактный режим — однострочная карточка: имя (обрезается многоточием) слева,
-   статус + бейдж сабагентов справа на ТОЙ ЖЕ строке. Метр контекста ушёл в
-   тонкую полоску по нижнему краю (см. .tab .ctx), поэтому строка ровно одна и
-   высота детерминирована. Полное имя остаётся в title карточки. */
-:where(body, #set-tab-preview).tabs-compact .tab { align-items: center; }
-:where(body, #set-tab-preview).tabs-compact .tab .dot { margin-top: 0; }
-:where(body, #set-tab-preview).tabs-compact .tab .body {
+/* Компактная плотность: одна строка вместо двух — но ТОЛЬКО там, где карточка широкая.
+   Имя слева, статус и бейдж сабагентов справа на той же строке; метр контекста и так
+   вне потока (тонкая полоска по нижнему краю, см. .tab .ctx), поэтому строка ровно одна.
+   Полное имя остаётся в title карточки.
+   Меряно на стенде (electron + этот же файл), высота карточки:
+      слева:  23px одной строкой (как и было — плотность тут работала)
+      сверху: 45px одной строкой  →  36px двумя
+   Почему по-разному. В раскладке «слева» карточка шириной со весь сайдбар (~192px):
+   имени достаётся 94px, статусу 60px, не обрезано ни то ни другое — одна строка тут
+   чистый выигрыш. А в «сверху» ширина жёсткая, ровно --tab-min-w = 90px: за вычетом
+   паддингов, точки и зазора имени и статусу остаётся 62px НА ДВОИХ, и одного «ждёт
+   ответа» кеглем 9px (60px) хватает, чтобы съесть имя целиком — стенд на прежнем CSS
+   мерил имя в НОЛЬ пикселей. Плюс карточка всё равно выходила 45px, то есть ровно как
+   в «обычной»: плотность не давала ничего. Двумя строками те же 62px достаются каждому
+   по отдельности, и влезает и то и другое.
+   Отсюда же flex у .foot: 0 1 auto, а не 0 0 auto. С нулевым сжатием статус не уступал
+   места вообще — именно так имя и обнулялось. Теперь в тесноте сжимаются оба, и ни одно
+   не пропадает: узкий сайдбар не повторит эту историю. */
+:where(body, #set-tab-preview).tabs-compact.layout-rail .tab { align-items: center; }
+:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .dot { margin-top: 0; }
+:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .body {
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-:where(body, #set-tab-preview).tabs-compact .tab .label { flex: 1 1 auto; }
-:where(body, #set-tab-preview).tabs-compact .tab .foot { flex: 0 0 auto; }
+:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .label { flex: 1 1 auto; }
+:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .foot { flex: 0 1 auto; min-width: 0; }
 
 /* Видимость элементов. У .ctx !important обязателен: updateCtx() снимает атрибут
    hidden, а правило .tab .ctx[hidden] имеет ту же специфичность, что это. */
@@ -1670,12 +1684,18 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   gap: 7px;
   /* No own margin: spacing comes from #tabs' gap, and in the top layout an extra
      bottom margin left the Пульт box short of the stretched folder cards. */
-  padding: 7px 9px;
+  /* Отступы и кегль — по тем же переменным, что у карточек, а не своими числами.
+     Плитка лежит в #tabs рядом с ними, а у ряда align-items:stretch — значит высоту
+     ряда задаёт САМЫЙ ВЫСОКИЙ элемент, и карточки растягиваются под него. Пока здесь
+     стояли 7px и 12px, «компактная» плотность не давала ничего: карточки хотели 36px,
+     плитка требовала 45px, и ряд выходил ровно как в «обычной» — человек выбирал
+     компактность и не видел разницы. */
+  padding: var(--tab-pad-y) var(--tab-pad-x);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--tab-label-size);
   font-weight: 600;
   cursor: pointer;
 }
@@ -1688,7 +1708,9 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   border-radius: 999px;
   background: var(--waiting);
   color: #101418;
-  font-size: 10px;
+  /* Кегль второй строки карточки — по той же причине, что и gap выше: высота плитки
+     должна совпадать с высотой карточки во всех плотностях, а не только в «обычной». */
+  font-size: var(--tab-sub-size);
   text-align: center;
 }
 .pult-tab .pult-count[hidden] { display: none; }
@@ -1699,7 +1721,10 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 3px;
+  /* Ровно как у карточки между именем и статусом (.tab .body), и это не косметика:
+     плитка обязана быть той же высоты, что карточки, иначе ряд встаёт по ней. С 3px
+     она была на 3px выше и продолжала бы задавать высоту даже с общими отступами. */
+  gap: 1px;
 }
 /* Под словом каунтер выравнивается по центру вкладки, а не по её левому краю. */
 .layout-top .pult-tab .pult-count { margin-left: 0; align-self: center; }

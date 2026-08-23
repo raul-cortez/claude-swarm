@@ -2479,9 +2479,17 @@ function showSettingsModal(tab) {
   });
   statusSel.value = tabDraft.status;
 
-  // Layout applies LIVE (like ⌘L), not on Save: layout is a body-class preference
-  // with no draft/undo anywhere else, and applying on Save would fight a ⌘L press
-  // made while the modal is open (Save would revert it). So no Cancel-revert here.
+  // Раскладка — ЧЕРНОВИК, как и всё остальное в этой панели: применяется по
+  // «Сохранить», отмена её не трогает.
+  //
+  // Раньше она применялась сразу, и объяснялось это тем, что ⌘L может переключить
+  // раскладку при открытой модалке — тогда «Сохранить» вернуло бы её назад. Но цена
+  // была не та: в панели с кнопкой «Сохранить» одна настройка молча срабатывала на
+  // выбор, и отменить её было нечем — «Отмена» откатывала всё, кроме неё. Заглянуть
+  // в вариант, чтобы посмотреть, стало необратимым действием.
+  // Конфликт с ⌘L решён не порядком применения, а связью: applyLayout зовёт
+  // onLayoutApplied, и селект едет за клавиатурой (см. currentLayout выше).
+  let layoutDraft = currentLayout();
   const layoutSel = overlay.querySelector('#set-layout');
   LAYOUT_LABELS.forEach(({ id, name }) => {
     const o = document.createElement('option');
@@ -2489,10 +2497,14 @@ function showSettingsModal(tab) {
     o.textContent = name;
     layoutSel.appendChild(o);
   });
-  layoutSel.value = currentLayout();
-  // Смена раскладки применяется сразу и тут же перерисовывает предпросмотр —
-  // превью строится по currentLayout(), поэтому должно переключиться вживую.
-  layoutSel.addEventListener('change', () => { applyLayout(layoutSel.value); renderTabPreview(); });
+  layoutSel.value = layoutDraft;
+  layoutSel.addEventListener('change', () => { layoutDraft = layoutSel.value; renderTabPreview(); });
+  // ⌘L при открытой панели: раскладка в бою поехала — селект и превью едут за ней.
+  onLayoutApplied = (name) => {
+    layoutDraft = name;
+    layoutSel.value = name;
+    renderTabPreview();
+  };
 
   Object.keys(showInputs).forEach((k) => { showInputs[k].checked = tabDraft.show[k]; });
 
@@ -2549,9 +2561,10 @@ function showSettingsModal(tab) {
   function renderTabPreview() {
     const vars = TABSTYLE.toCssVars(tabDraft);
     for (const k of Object.keys(vars)) tabPreviewEl.style.setProperty(k, vars[k]);
-    // Раскладка превью = фактическая раскладка приложения (top/rail), чтобы
-    // предпросмотр совпадал с тем, что клиент увидит в бою.
-    tabPreviewEl.className = 'tab-preview ' + currentLayout() + ' ' + TABSTYLE.bodyClasses(tabDraft).join(' ');
+    // Раскладка превью = ЧЕРНОВИК, а не то, что сейчас в бою: пока раскладка
+    // применялась сразу, это было одно и то же, а теперь превью — единственное место,
+    // где выбранную раскладку видно до нажатия «Сохранить».
+    tabPreviewEl.className = 'tab-preview ' + layoutDraft + ' ' + TABSTYLE.bodyClasses(tabDraft).join(' ');
   }
 
   function renderColorPickers() {
@@ -2749,6 +2762,7 @@ function showSettingsModal(tab) {
   const close = () => {
     stopKbCapture();
     stopTgTtl();          // the pairing countdown must not outlive the panel
+    onLayoutApplied = null;   // ручка не должна пережить панель
     document.removeEventListener('keydown', onKey, true);
     overlay.remove();
   };
@@ -2804,6 +2818,9 @@ function showSettingsModal(tab) {
     tabstyle = TABSTYLE.normalizeTabStyle(tabDraft);
     saveTabStyle();
     applyTabStyle();
+    // Раскладка последней: она перекладывает хром и подгоняет терминал под новый
+    // размер сцены, а делать это стоит уже с применённым видом карточек.
+    if (layoutDraft !== currentLayout()) applyLayout(layoutDraft);
     // Re-reflect the agent badge + «оранжевый пока работает сабагент» on live tabs:
     // main.js won't re-send an unchanged status, so a toggle flip must repaint here.
     // No notify — this is a settings change, not a real status transition.
@@ -3356,11 +3373,18 @@ function currentLayout() {
   return document.body.classList.contains('layout-top') ? 'layout-top' : 'layout-rail';
 }
 
+// Пока модалка настроек открыта, она кладёт сюда свою ручку. Нужна ровно для ⌘L:
+// раскладку можно переключить с клавиатуры, не закрывая настройки, и тогда селект в
+// модалке обязан поехать за ней. Иначе «Сохранить» вернуло бы раскладку к той, что была
+// при открытии, — нажатие ⌘L выглядело бы отменённым задним числом.
+let onLayoutApplied = null;
+
 function applyLayout(name) {
   if (!LAYOUTS.includes(name)) name = 'layout-rail';
   document.body.classList.remove(...LAYOUTS);
   document.body.classList.add(name);
   localStorage.setItem('swarm.layout', name);
+  if (onLayoutApplied) onLayoutApplied(name);
   window.swarm.uiRepaint(); // the relayout repaints terminals — don't count it as activity
   // Chrome changed size => the stage did too; refit the visible terminal.
   requestAnimationFrame(() => {
