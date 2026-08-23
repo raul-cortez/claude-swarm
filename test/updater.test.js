@@ -60,6 +60,22 @@ test('decideUpdate: installer when newer but runtimeId differs', () => {
   assert.ok(d.installers.dmg);
 });
 
+// Указатель payload/ пишут ПРОШЛЫЕ версии приложения, поэтому вход тут — что угодно, и
+// каждая порча должна давать «ничего не ждёт», а не падение: на этом ответе висит плашка,
+// которая иначе предложила бы качать уже скачанное.
+test('pendingFrom: ждёт только то, что новее работающего', () => {
+  const ptr = (v) => JSON.stringify({ version: v, file: v + '.asar' });
+  assert.strictEqual(core.pendingFrom(ptr('0.40.0'), '0.36.4'), '0.40.0');
+  assert.strictEqual(core.pendingFrom(ptr('0.36.4'), '0.36.4'), '');
+  assert.strictEqual(core.pendingFrom(ptr('0.9.0'), '0.40.0'), '');
+});
+
+test('pendingFrom: любой мусор в указателе — это «ничего не ждёт»', () => {
+  for (const raw of ['', 'not json', '{}', '{"version":""}', '{"version":"latest"}', 'null', undefined]) {
+    assert.strictEqual(core.pendingFrom(raw, '0.36.4'), '', 'на входе: ' + String(raw));
+  }
+});
+
 // owner/repo из package.json — одно место на всё приложение. Тест на все три формы записи
 // сразу: переименование аккаунта должно править одну строку, а не четыре файла.
 test('ghSlug понимает все формы поля repository', () => {

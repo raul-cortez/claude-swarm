@@ -166,6 +166,19 @@ async function applyPayload({ url, sha256, version }, onProgress) {
   return { ok: true };
 }
 
+// Версия, которая УЖЕ скачана и ждёт запуска: указатель в payload/ показывает на что-то
+// новее работающего кода. Так плашка отличает «надо скачать» от «уже готово, применится при
+// перезапуске» — и после перезапуска сама гаснет, потому что версии сравняются.
+//
+// Читаем указатель, а не список файлов: рядом лежат и прошлые asar (страховка загрузчика),
+// и «новее всех» из них — не то же самое, что «то, что поднимется».
+function pendingVersion() {
+  try {
+    const raw = fs.readFileSync(path.join(payloadDir(), boot.POINTER), 'utf8');
+    return core.pendingFrom(raw, runningVersion());
+  } catch (_) { return ''; }  // указателя нет вовсе — обновление никто не ставил
+}
+
 async function downloadInstaller(url, filename, onProgress) {
   if (!enabled()) throw new Error('updater disabled');
   const dest = path.join(app.getPath('downloads'), filename);
@@ -215,6 +228,7 @@ module.exports = {
   checkForUpdate,
   isNetworkError: core.isNetworkError,
   applyPayload,
+  pendingVersion,
   downloadInstaller,
   maybeRelocate,
   enabled,

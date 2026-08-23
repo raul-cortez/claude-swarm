@@ -85,6 +85,21 @@ function decideUpdate(installedVersion, installedRuntimeId, manifest) {
   return { kind, version: m.version, notes: m.notes, asar: m.asar, installers: m.installers };
 }
 
+// Обновление, которое УЖЕ лежит рядом и ждёт запуска. На входе — сырое содержимое
+// указателя payload/current.json (что угодно, включая мусор и пустоту) и версия, которая
+// сейчас выполняется; на выходе — версия, которая поднимется в следующий раз, или ''.
+//
+// Решение здесь, а не в updater.js, ровно потому что оно решение: «новее работающей» —
+// то же сравнение, что у decideUpdate, и указатель приходит из файла, который писали
+// прошлые версии приложения (а значит, мог быть написан иначе).
+function pendingFrom(pointerRaw, installedVersion) {
+  let version = '';
+  try { version = String((JSON.parse(String(pointerRaw)) || {}).version || ''); }
+  catch (_) { return ''; }
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return '';
+  return compareVersions(version, installedVersion) > 0 ? version : '';
+}
+
 // «Не дозвонились» против «что-то сломано». Проверка обновлений ходит в сеть по
 // таймеру, в том числе когда ноутбук только проснулся или вайфая нет вовсе, — и такой
 // обрыв не событие для человека: следующая проверка пройдёт сама. А вот битый манифест
@@ -103,6 +118,6 @@ function isNetworkError(err) {
 }
 
 module.exports = {
-  compareVersions, computeRuntimeId, validateManifest, decideUpdate, nextHop, MAX_REDIRECTS,
+  compareVersions, computeRuntimeId, validateManifest, decideUpdate, pendingFrom, nextHop, MAX_REDIRECTS,
   ghSlug, isNetworkError,
 };

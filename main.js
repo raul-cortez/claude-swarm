@@ -6282,6 +6282,12 @@ ipcMain.handle('update:apply', async (_e, { url, sha256, version }) => {
     return res && typeof res === 'object' ? res : { ok: true };
   } catch (e) { reportMainError(e); return { ok: false, error: String(e && e.message || e) }; }
 });
+// «Что уже скачано и ждёт запуска» — чтобы плашка после перезапуска приложения не
+// предлагала качать то, что лежит рядом готовым.
+ipcMain.handle('update:pending', () => {
+  try { return updater.pendingVersion(); }
+  catch (e) { reportMainError(e); return ''; }
+});
 ipcMain.handle('update:installer', async (_e, { url, filename }) => {
   try {
     return await updater.downloadInstaller(url, filename, (pct) => safeSend('update:progress', pct));

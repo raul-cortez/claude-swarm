@@ -264,6 +264,7 @@ contextBridge.exposeInMainWorld('swarm', {
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateApply: (url, sha256, version) => ipcRenderer.invoke('update:apply', { url, sha256, version }),
   updateDownloadInstaller: (url, filename) => ipcRenderer.invoke('update:installer', { url, filename }),
+  updatePending: () => ipcRenderer.invoke('update:pending'),
   updateRelaunch: () => ipcRenderer.send('update:relaunch'),
   onUpdateProgress: (cb) => {
     const handler = (_e, pct) => cb(pct);
