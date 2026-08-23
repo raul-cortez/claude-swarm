@@ -161,6 +161,38 @@ test('bodyClasses: каждый способ гасит ровно против�
   }
 });
 
+// --- превью не должно жить по бою -------------------------------------------
+// Живой промах: применено «заливкой» (на body стоит tab-no-dot), человек выбирает в настройках
+// «точкой» — заливка в превью гаснет, а точка не появляется. Причина не в логике, а в CSS:
+// правило висело на `:where(body, #set-tab-preview)`, то есть боевое и превьюшное совпадали до
+// буквы, и решал не близость к карточке, а то, какой предок нашёлся. Превью лежит внутри body,
+// поэтому бой всегда и выигрывал. Тест держит развод этих двух адресов: правило от body внутрь
+// превью не лезет (`:not(#set-tab-preview *)`), у превью своё.
+const fs = require('fs');
+const path = require('path');
+const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+
+test('вид карточки: боевое правило не достаёт до превью в настройках', () => {
+  // Один селектор на оба адреса — ровно та форма, которая ломала предпросмотр. Запрещена она
+  // только там, где правило целится в ПОТОМКА (` .tab …`): в блоках, задающих переменные на
+  // самом элементе, `:where(body, #set-tab-preview)` безопасен — своё правило на элементе
+  // всегда сильнее унаследованного значения.
+  for (const line of css.split('\n')) {
+    if (!line.includes(':where(body, #set-tab-preview)')) continue;
+    assert.doesNotMatch(line, /:where\(body,\s*#set-tab-preview\)[^,{]*\s\.[\w-]/,
+      'превью снова живёт по бою, а не по черновику: ' + line.trim());
+  }
+  for (const cls of ['tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill']) {
+    assert.ok(css.includes(`body.${cls} `), cls + ': нет боевого правила');
+    assert.ok(css.includes(`#set-tab-preview.${cls} `), cls + ': нет правила для превью');
+    // Боевое правило обязано исключать превью — иначе черновик снова нечем перебить.
+    const live = css.split('\n').filter((l) => l.includes(`body.${cls} `));
+    for (const l of live) {
+      assert.match(l, /:not\(#set-tab-preview \*\)/, cls + ': боевое правило лезет в превью — ' + l.trim());
+    }
+  }
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('  ok  ' + name); }

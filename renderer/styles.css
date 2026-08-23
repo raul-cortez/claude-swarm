@@ -343,7 +343,12 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    :where() — он не добавляет специфичности, так что id превью не выигрывает у
    body. tabs-normal объявлен явно, а не наследует :root: иначе превью с
    "обычной" плотностью внутри body.tabs-compact унаследовало бы компактные
-   значения. Размеры текста пресет несёт вместе с отступами: это одна задача. */
+   значения. Размеры текста пресет несёт вместе с отступами: это одна задача.
+
+   Здесь `:where(body, #set-tab-preview)` безопасен, и это важное отличие от правил ниже:
+   переменные ставятся на САМ элемент, а своё значение на элементе всегда сильнее
+   унаследованного от body. Как только правило целится в потомка (` .tab .dot`), тот же
+   селектор превращается в ловушку — см. развод адресов ниже. */
 :where(body, #set-tab-preview).tabs-compact {
   --tab-pad-y: 4px;
   --tab-pad-x: 8px;
@@ -396,28 +401,51 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    Отсюда же flex у .foot: 0 1 auto, а не 0 0 auto. С нулевым сжатием статус не уступал
    места вообще — именно так имя и обнулялось. Теперь в тесноте сжимаются оба, и ни одно
    не пропадает: узкий сайдбар не повторит эту историю. */
-:where(body, #set-tab-preview).tabs-compact.layout-rail .tab { align-items: center; }
-:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .dot { margin-top: 0; }
-:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .body {
+/* Дальше — правила, которые касаются вида карточки, и у каждого ДВА адреса: бой (класс на
+   body) и предпросмотр в настройках (класс на самом превью). Разведены они не для красоты.
+   Превью лежит внутри body, поэтому боевое правило доставало до него — и черновик, который
+   превью и должно показывать, перебить боевое состояние не мог. Живьём это выглядело так:
+   применено «заливкой», человек выбирает «точкой» — заливка в превью гаснет, а точка не
+   появляется, потому что её гасит правило от body. Настройка выглядела сломанной, хотя
+   сохранялась верно. Отсюда `:not(#set-tab-preview *)`: боевое правило внутрь превью не лезет.
+
+   Раньше здесь стоял `:where(body, #set-tab-preview)` — один селектор на оба адреса. Он и был
+   источником беды: правило от body и правило от превью совпадали до буквы, и «кто победит»
+   решала не близость к карточке, а то, какой предок нашёлся. */
+body.tabs-compact.layout-rail .tab:not(#set-tab-preview *),
+#set-tab-preview.tabs-compact.layout-rail .tab { align-items: center; }
+body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .dot,
+#set-tab-preview.tabs-compact.layout-rail .tab .dot { margin-top: 0; }
+body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .body,
+#set-tab-preview.tabs-compact.layout-rail .tab .body {
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .label { flex: 1 1 auto; }
-:where(body, #set-tab-preview).tabs-compact.layout-rail .tab .foot { flex: 0 1 auto; min-width: 0; }
+body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .label,
+#set-tab-preview.tabs-compact.layout-rail .tab .label { flex: 1 1 auto; }
+body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .foot,
+#set-tab-preview.tabs-compact.layout-rail .tab .foot { flex: 0 1 auto; min-width: 0; }
 
 /* Видимость элементов. У .ctx !important обязателен: updateCtx() снимает атрибут
    hidden, а правило .tab .ctx[hidden] имеет ту же специфичность, что это. */
-:where(body, #set-tab-preview).tab-no-dot .tab .dot { display: none; }
-:where(body, #set-tab-preview).tab-no-ctx .tab .ctx { display: none !important; }
-:where(body, #set-tab-preview).tab-no-sub .tab .sub { display: none; }
+body.tab-no-dot .tab:not(#set-tab-preview *) .dot,
+#set-tab-preview.tab-no-dot .tab .dot { display: none; }
+body.tab-no-ctx .tab:not(#set-tab-preview *) .ctx,
+#set-tab-preview.tab-no-ctx .tab .ctx { display: none !important; }
+body.tab-no-sub .tab:not(#set-tab-preview *) .sub,
+#set-tab-preview.tab-no-sub .tab .sub { display: none; }
 
 /* Заливка/бордер по статусу гасятся, но точка и рамка активной вкладки остаются —
    иначе активную нечем отличить. Рамка при этом всё равно цвета её статуса (--tab-c). */
-:where(body, #set-tab-preview).tab-no-fill .tab.status-ready,
-:where(body, #set-tab-preview).tab-no-fill .tab.status-running,
-:where(body, #set-tab-preview).tab-no-fill .tab.status-waiting,
-:where(body, #set-tab-preview).tab-no-fill .tab.status-dead {
+body.tab-no-fill .tab.status-ready:not(#set-tab-preview *),
+body.tab-no-fill .tab.status-running:not(#set-tab-preview *),
+body.tab-no-fill .tab.status-waiting:not(#set-tab-preview *),
+body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
+#set-tab-preview.tab-no-fill .tab.status-ready,
+#set-tab-preview.tab-no-fill .tab.status-running,
+#set-tab-preview.tab-no-fill .tab.status-waiting,
+#set-tab-preview.tab-no-fill .tab.status-dead {
   background: var(--panel-2);
   border-color: var(--border);
 }
