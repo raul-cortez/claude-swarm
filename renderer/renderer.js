@@ -1629,7 +1629,7 @@ function showSettingsModal(tab) {
           <div class="set-group-h">
             <span>Цвета статусов</span>
             <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Эти же цвета красят статус-бар и кнопки — палитра в приложении одна.</span>
+            <span class="set-hint" hidden>Красят не только карточки: точку свёрнутой группы, чипы Пульта, строки статуса. Открытую вкладку обводит цвет её же статуса — отдельного цвета у неё нет.</span>
           </div>
           <div class="color-row" id="set-tab-colors"></div>
           <button type="button" class="set-check-btn" id="set-tab-colors-reset">Сбросить цвета</button>
@@ -2492,8 +2492,10 @@ function showSettingsModal(tab) {
 
   Object.keys(showInputs).forEach((k) => { showInputs[k].checked = tabDraft.show[k]; });
 
-  // Two sample cards cover the whole surface: an active/running one (accent ring
-  // + run fill) and an idle one. Written once — renderTabPreview only restyles.
+  // Три карточки, потому что меньше не показывает главного: открытая и работающая
+  // (кольцо теперь цвета её статуса, а не бирюзовое), спокойная готовая и зовущая
+  // «ждёт ввода» — рядом видно, что открытая и зовущая больше не близнецы.
+  // Written once — renderTabPreview only restyles.
   // Превью 1:1 с боем: та же разметка, что строит createSession/relayoutTabs —
   // включая вкладку Пульта с каунтером и угловой крестик. Ширина/высота ведут
   // себя как реальные (см. renderTabPreview: класс раскладки берётся из боя).
@@ -2523,6 +2525,18 @@ function showSettingsModal(tab) {
          <span class="ctx ctx-lo"><span class="ctx-track"><span class="ctx-fill" style="width:14%"></span></span><span class="ctx-num">14%</span></span>
          <span class="foot">
            <span class="sub">готов</span>
+         </span>
+       </span>
+       <span class="close" title="Close">×</span>
+     </div>
+     <div class="tab status-waiting">
+       <span class="grip">${ICONS.grip}</span>
+       <span class="dot"></span>
+       <span class="body">
+         <span class="label">docs</span>
+         <span class="ctx ctx-lo"><span class="ctx-track"><span class="ctx-fill" style="width:31%"></span></span><span class="ctx-num">31%</span></span>
+         <span class="foot">
+           <span class="sub">ждёт ответа</span>
          </span>
        </span>
        <span class="close" title="Close">×</span>

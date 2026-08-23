@@ -5,7 +5,7 @@
 //
 // Density is applied as a CLASS (it flips a batch of CSS vars declared in
 // styles.css, включая размеры текста); colors are applied as CSS VARS. Keep that
-// split — it's why toCssVars() emits only the five palette names and bodyClasses()
+// split — it's why toCssVars() emits only the four status colors and bodyClasses()
 // owns the rest.
 (function (root, factory) {
   const api = factory();
@@ -18,10 +18,13 @@
     { id: 'roomy', name: 'Просторная' },
   ];
 
-  // Status colors double as the app-wide palette (statusbar, buttons read the
-  // same vars). Deliberate: the alternative is duplicating five variables.
+  // Четыре состояния работы — и всё. Цвета «активной вкладки» здесь нет: открытая
+  // вкладка обводится цветом СВОЕГО статуса (styles.css, --tab-c), поэтому отдельный
+  // цвет ей не нужен. Пока он был пятой пипеткой, он ещё и совпадал с ожиданием — в
+  // ряду это читалось как баг, а по смыслу он вообще не статус: тем же --accent
+  // покрашены кнопки, рамка фокуса и ползунки. Акцент интерфейса остался
+  // фиксированным в styles.css: это оформление, а не состояние сессии.
   const COLORS = [
-    { key: 'accent', name: 'Активная' },
     { key: 'run', name: 'Работает' },
     { key: 'ready', name: 'Готова' },
     { key: 'waiting', name: 'Ждёт ввода' },
@@ -49,7 +52,6 @@
     status: 'both',
     show: { ctx: true, sub: true },
     colors: {
-      accent: '#3fd0c9',
       run: '#e0a53f',
       ready: '#4ade80',
       waiting: '#3fd0c9',

@@ -14,13 +14,16 @@
   --border:    #232a31;
   --text:      #c9d1d9;
   --muted:     #6b757e;
-  --accent:    #3fd0c9;  /* active session */
+  /* Акцент интерфейса: кнопки, рамка фокуса, ползунки, наведение. НЕ статус и не
+     настройка — оформление. Открытая вкладка обводится цветом своего статуса
+     (--tab-c ниже), поэтому «цвета активной вкладки» больше не существует. */
+  --accent:    #3fd0c9;
   --run:       #e0a53f;  /* session busy */
   --ready:     #4ade80;  /* session idle / ready */
   --waiting:   #3fd0c9;  /* session waiting for my input */
   --permission:#f0b232;  /* waiting on a permission prompt (vs a plain question) */
   /* Ночной режим. Холодная часть круга — единственная свободная (янтарный занят работой,
-     разрешениями и «за телефоном», бирюзовый — активной вкладкой и ожиданием) и
+     разрешениями и «за телефоном», бирюзовый — акцентом интерфейса и ожиданием) и
      единственная, которая читается как «ночь» без подписи. */
   --night:     #6f7bd6;
   --danger:    #e05a5a;
@@ -300,17 +303,21 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   text-overflow: clip;
 }
 
-/* status → dot color + full border + faint fill; active = teal ring */
+/* status → dot color + full border + faint fill. Каждый статус объявляет свой цвет
+   в --tab-c, и обводка открытой вкладки берёт его же: у открытой вкладки нет
+   собственного цвета, она подсвечена тем, в каком она состоянии. Раньше кольцо было
+   бирюзовым от --accent, и открытая вкладка выглядела ровно как зовущая. */
+.tab { --tab-c: var(--accent); }                     /* до первого статуса — акцент */
 .tab.status-ready   .dot { background: var(--ready); }
 .tab.status-running .dot { background: var(--run); }
 .tab.status-waiting .dot { background: var(--waiting); }
 .tab.status-dead    .dot { background: var(--danger); }
-.tab.status-ready   { border-color: var(--ready);   background: color-mix(in srgb, var(--ready)   10%, var(--panel-2)); }
-.tab.status-running { border-color: var(--run);     background: color-mix(in srgb, var(--run)     16%, var(--panel-2)); }
-.tab.status-waiting { border-color: var(--waiting); background: color-mix(in srgb, var(--waiting) 16%, var(--panel-2)); }
-.tab.status-dead    { border-color: var(--danger);  background: color-mix(in srgb, var(--danger)  16%, var(--panel-2)); }
+.tab.status-ready   { --tab-c: var(--ready);   border-color: var(--ready);   background: color-mix(in srgb, var(--ready)   10%, var(--panel-2)); }
+.tab.status-running { --tab-c: var(--run);     border-color: var(--run);     background: color-mix(in srgb, var(--run)     16%, var(--panel-2)); }
+.tab.status-waiting { --tab-c: var(--waiting); border-color: var(--waiting); background: color-mix(in srgb, var(--waiting) 16%, var(--panel-2)); }
+.tab.status-dead    { --tab-c: var(--danger);  border-color: var(--danger);  background: color-mix(in srgb, var(--danger)  16%, var(--panel-2)); }
 .tab:not(.active) { opacity: 0.68; }                 /* inactive tabs sit back */
-.tab.active { box-shadow: 0 0 0 1px var(--accent), 0 0 10px -3px var(--accent); }
+.tab.active { box-shadow: 0 0 0 1px var(--tab-c), 0 0 10px -3px var(--tab-c); }
 .tab:hover  { filter: brightness(1.12); opacity: 1; } /* hovering un-dims */
 
 /* --- настраиваемый вид карточек (см. renderer/tabstyle.js) ---------------- */
@@ -374,8 +381,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 :where(body, #set-tab-preview).tab-no-ctx .tab .ctx { display: none !important; }
 :where(body, #set-tab-preview).tab-no-sub .tab .sub { display: none; }
 
-/* Заливка/бордер по статусу гасятся, но точка и акцентная рамка активной
-   вкладки остаются — иначе активную нечем отличить. */
+/* Заливка/бордер по статусу гасятся, но точка и рамка активной вкладки остаются —
+   иначе активную нечем отличить. Рамка при этом всё равно цвета её статуса (--tab-c). */
 :where(body, #set-tab-preview).tab-no-fill .tab.status-ready,
 :where(body, #set-tab-preview).tab-no-fill .tab.status-running,
 :where(body, #set-tab-preview).tab-no-fill .tab.status-waiting,

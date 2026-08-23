@@ -27,7 +27,6 @@ test('COLORS describes exactly the keys of DEFAULT_TABSTYLE.colors', () => {
 test('default colors mirror the hardcoded :root palette (regression)', () => {
   // styles.css:10-22 — если правишь палитру там, правь и здесь.
   assert.deepStrictEqual(T.DEFAULT_TABSTYLE.colors, {
-    accent:  '#3fd0c9',
     run:     '#e0a53f',
     ready:   '#4ade80',
     waiting: '#3fd0c9',
@@ -99,27 +98,38 @@ test('normalizeTabStyle keeps valid booleans and fills missing ones', () => {
 });
 
 test('normalizeTabStyle rejects a bad hex and lowercases a good one', () => {
-  const s = T.normalizeTabStyle({ colors: { accent: 'red', run: '#ABCDEF' } });
-  assert.strictEqual(s.accent, undefined, 'colors live under .colors');
-  assert.strictEqual(s.colors.accent, T.DEFAULT_TABSTYLE.colors.accent);
+  const s = T.normalizeTabStyle({ colors: { ready: 'red', run: '#ABCDEF' } });
+  assert.strictEqual(s.ready, undefined, 'colors live under .colors');
+  assert.strictEqual(s.colors.ready, T.DEFAULT_TABSTYLE.colors.ready);
   assert.strictEqual(s.colors.run, '#abcdef');
+});
+
+// Акцент интерфейса ушёл из настроек: он не статус, им покрашены кнопки и фокус,
+// а открытую вкладку обводит цвет её собственного статуса (--tab-c в styles.css).
+// Тест держит границу: пипетки красят только состояния работы.
+test('accent is no longer a настраиваемый цвет — ни в списке, ни в хранимом', () => {
+  assert.ok(!T.COLORS.some((c) => c.key === 'accent'), 'нет пипетки «активная»');
+  assert.strictEqual(T.DEFAULT_TABSTYLE.colors.accent, undefined);
+  const s = T.normalizeTabStyle({ colors: { accent: '#ff0000', run: '#e0a53f' } });
+  assert.strictEqual(s.colors.accent, undefined, 'старое значение из localStorage отбрасывается');
+  assert.strictEqual(T.toCssVars(s)['--accent'], undefined, 'хром не перекрашивается настройкой');
 });
 
 test('normalizeTabStyle deep-copies: mutating the result leaves input alone', () => {
   const input = T.normalizeTabStyle(null);
   const copy = T.normalizeTabStyle(input);
   copy.show.ctx = false;
-  copy.colors.accent = '#000000';
+  copy.colors.ready = '#000000';
   assert.strictEqual(input.show.ctx, true);
-  assert.strictEqual(input.colors.accent, T.DEFAULT_TABSTYLE.colors.accent);
+  assert.strictEqual(input.colors.ready, T.DEFAULT_TABSTYLE.colors.ready);
 });
 
-test('toCssVars returns exactly the five palette vars', () => {
+test('toCssVars returns exactly the four status vars', () => {
   const v = T.toCssVars(T.normalizeTabStyle(null));
   assert.deepStrictEqual(Object.keys(v).sort(), [
-    '--accent', '--danger', '--ready', '--run', '--waiting',
+    '--danger', '--ready', '--run', '--waiting',
   ]);
-  assert.strictEqual(v['--accent'], '#3fd0c9');
+  assert.strictEqual(v['--waiting'], '#3fd0c9');
   assert.strictEqual(v['--tab-label-size'], undefined, 'размеры текста несёт пресет плотности');
 });
 
