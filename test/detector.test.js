@@ -462,11 +462,15 @@ test('arbitrate: рамка на отлистанном экране «рабо�
   assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUESTION).status, 'running');
 });
 
-test('arbitrate: проза на экране «работает» не отменяет даже по несвежему сигналу', () => {
+test('arbitrate: проза на экране никогда не делает из «работает» — «ждёт»', () => {
   const d = mkD();
   D.applyHook(d, 'busy', NOW);
-  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, ASK).status, 'running',
-    'строка зова живёт на экране и после ответа — рамка нет');
+  // Строка зова живёт на экране и ПОСЛЕ ответа, рамки за ней нет — верить ей против
+  // сигнала хука нельзя. Само «работает» при этом уже не держится (см. hookRunStuck:
+  // сигнал несвежий, спиннера нет, байты не идут), так что вкладка свободна, но не зовёт.
+  const eff = D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, ASK);
+  assert.notStrictEqual(eff.status, 'waiting', 'зов прозой тут не голосует');
+  assert.strictEqual(eff.status, 'ready');
 });
 
 test('arbitrate: «ждёт» от хука спиннером не сбивается', () => {
@@ -572,6 +576,82 @@ test('arbitrate: with a transcript bound, the screen phrase no longer upgrades r
   D.applyTranscript(d, tr({ status: 'ready', at: NOW }));    // the file saw no question
   // The line on screen is scrollback from an earlier turn; both real channels say ready.
   assert.strictEqual(D.tickStatus(d, NOW + 600, ASK).status, 'ready');
+});
+
+// --- замолчавшее «работает» от хука ---------------------------------------------
+// «Работает» у хука не стареет: пришёл busy — держится до следующего маркера. Оборвался
+// канал посреди хода — вкладка оранжевая навсегда. См. hookRunStuck.
+
+test('arbitrate: «работает» от оборвавшегося хука снимается чистым экраном', () => {
+  const d = mkD();
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + 1000, QUIET).status, 'running', 'свежему верим');
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUIET).status, 'ready');
+});
+
+test('arbitrate: спиннер на экране держит «работает» сколько угодно', () => {
+  const d = mkD();
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS * 10, SPINNER).status, 'running');
+});
+
+test('arbitrate: свежие байты держат «работает» — агент печатает прямо сейчас', () => {
+  const d = mkD({ lastDataAt: NOW + D.HOOK_STALE_MS });
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUIET).status, 'running');
+});
+
+test('arbitrate: «работает в фоне» экраном не отменяется — так сказал сам агент', () => {
+  const d = mkD();
+  D.applyHook(d, 'bgw', NOW);
+  const eff = D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUIET);
+  assert.strictEqual(eff.status, 'running');
+  assert.strictEqual(eff.detail, D.BG_DETAIL);
+});
+
+test('arbitrate: отлистанному экрану снимать «работает» нельзя', () => {
+  const d = mkD({ scrolledBack: true });
+  D.applyHook(d, 'busy', NOW);
+  assert.strictEqual(D.tickStatus(d, NOW + D.HOOK_STALE_MS + 1, QUIET).status, 'running');
+});
+
+// --- замолчавшее «работает» из стенограммы --------------------------------------
+// Файл, в который перестали писать на «инструмент пошёл», держал вкладку оранжевой вечно:
+// перечитывать нечего, а экран в этой ветке не спрашивают. Так выглядит вкладка, привязанная
+// к чужому (или брошенному) разговору. См. trRunStale.
+
+const STALE = D.TR_RUN_STALE_MS + 1;
+
+test('transcript: «работает» из файла, в который давно не писали, больше не голосует', () => {
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'running', at: NOW }));
+  assert.strictEqual(D.tickStatus(d, NOW + 1000, QUIET).status, 'running', 'свежему верим');
+  // Экран чист: спиннера нет, рамки нет, зова нет — значит вкладка свободна.
+  assert.strictEqual(D.tickStatus(d, NOW + STALE, QUIET).status, 'ready');
+});
+
+test('transcript: долгий инструмент остаётся «работает» — по спиннеру на экране', () => {
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'running', at: NOW }));
+  const eff = D.tickStatus(d, NOW + STALE, SPINNER);
+  assert.strictEqual(eff.status, 'running', 'голос потерял файл, а не вкладка');
+});
+
+test('transcript: протухает только «работает» — вопрос живёт сколько угодно', () => {
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'waiting', kind: 'question', at: NOW }));
+  const eff = D.tickStatus(d, NOW + STALE, QUIET);
+  assert.strictEqual(eff.status, 'waiting');
+  assert.strictEqual(eff.kind, 'question');
+});
+
+test('arbitrate: протухшее «работает» из файла не перебивает «готов» от хука', () => {
+  const d = mkD();
+  D.applyHook(d, 'idle', NOW);
+  // Запись в файле СВЕЖЕЕ сигнала хука по времени, но с тех пор прошёл час: по одной
+  // свежести она выигрывала спор и красила законченную вкладку оранжевым.
+  D.applyTranscript(d, tr({ status: 'running', at: NOW + 500 }));
+  assert.strictEqual(D.tickStatus(d, NOW + 500 + STALE, QUIET).status, 'ready');
 });
 
 // --- что человек сделал на клавиатуре -----------------------------------------

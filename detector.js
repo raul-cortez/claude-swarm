@@ -209,6 +209,37 @@ function applyTranscript(d, v) {
     : null;
 }
 
+// --- стенограмма, которая замолчала на «работает» ------------------------------
+// Файл сказал «инструмент пошёл» (tool_use) или «модель думает» (tool_result) — и БОЛЬШЕ НЕ
+// МЕНЯЛСЯ. Такой вердикт не истекает сам: новых записей нет, пересчитывать нечего, а экран
+// в этой ветке никто не спрашивает — и вкладка остаётся оранжевой навсегда.
+//
+// Именно так выглядит вкладка, привязанная к ЧУЖОМУ разговору (или к своему, но брошенному:
+// `--resume` форкнул файл, сессию сменил /clear). Живьём это была вкладка, которая закончила
+// ход словами «Сейчас от тебя: ничего» и всё равно час горела «работает»: её вердикт пришёл
+// из файла, в который последний раз писали до обеда. Ни хук, ни экран этого не чинили — до
+// них дело не доходило.
+//
+// Настоящий долгий инструмент (сборка на десять минут) от проверки не страдает: он теряет
+// только ГОЛОС СТЕНОГРАММЫ, а вкладка тут же переходит на экран, где всё это время крутится
+// спиннер с бегущим таймером (RE_RUNNING), — то есть остаётся «работает» по более надёжному
+// признаку. А вот брошенный файл экран не подтвердит ничем, и вкладка честно позеленеет.
+//
+// Срок тот же, каким main меряет молчание файла (TR_STALE_MS): «полторы минуты без единой
+// записи» там уже значит «этот разговор, возможно, кончился».
+const TR_RUN_STALE_MS = 90_000;
+
+function trRunStale(tr, now) {
+  return !!tr && tr.status === 'running' && now - (tr.at || 0) > TR_RUN_STALE_MS;
+}
+
+// Голос стенограммы на этот такт: сам вердикт или ничего, если он протух (см. выше).
+// Протухает ТОЛЬКО «работает». «Ждёт» живёт сколько угодно — вопрос, заданный час назад,
+// остаётся заданным, — и «готов» тоже: молчащий файл готовности не отменяет.
+function trVoice(d, now) {
+  return trRunStale(d.trState, now) ? null : d.trState;
+}
+
 // Рамки здесь нет и быть не может: файл видит СОБЫТИЯ, а рамка — состояние экрана. Вкладку,
 // которая ждёт по стенограмме, распознаём как зов прозой, и это верно — открытую рамку в этом
 // же тике добавит либо хук, либо скрёб (см. decideFromTranscript).
@@ -437,9 +468,49 @@ function detailFor(status, bg) {
 // open permission can't be cancelled by the tool_use entry of that same moment.
 // The screen may still add the one thing an unbound session can't get anywhere else:
 // a prose question after the turn ended. It never overrides running / ready / perm.
+// Сигнал хука «работает», который перестал подтверждаться ничем.
+//
+// «Работает» у хука не стареет вовсе: пришёл busy — и держится, пока не придёт следующий
+// маркер. Обычно так и надо (маркер приходит на каждом инструменте), но если канал оборвался
+// посреди хода — вкладка остаётся оранжевой НАВСЕГДА. Оранжевая значит «занята, не подходи»:
+// человек проходит мимо вкладки, которая на самом деле давно всё сказала. Сама она из этого
+// состояния не выйдет никогда, и это худший вид ошибки — тот, что не лечится ожиданием.
+//
+// Ограничения ровно те же, что у двух соседних подстраховок, и по тем же причинам:
+//   • только по НЕСВЕЖЕМУ сигналу — исправный канал подтверждает ход на каждом инструменте;
+//   • только по живому экрану — отлистанный показывает прошлое;
+//   • только когда экран ПОДТВЕРЖДАЕТ конец: нет спиннера с бегущим таймером, нет рамки и
+//     байты не идут. Работающий Клод рисует спиннер всегда — на нём стоит и обратная
+//     подстраховка («канал молчит на готов, а спиннер крутится»), так что доверие тут
+//     симметричное.
+//   • кроме фона: «ничего, жду замер стенда» — это законное «работает» БЕЗ спиннера, агент
+//     сказал о нём словами, и отменять его экраном значит спорить с тем, кто знает лучше.
+//
+// Не выносим приговор сами, а лишь понижаем сигнал до «готов»: дальше по arbitrate этот
+// «готов» разбирают все, кто умеет его поднять, — зов прозой, фразу про фон, живого
+// подагента. Иначе вкладка с открытым вопросом на экране позеленела бы вместо «ждёт».
+function hookRunStuck(d, hs, now, snap) {
+  return hs.status === 'running' && !hs.bg
+    && now - (hs.at || 0) > HOOK_STALE_MS
+    && !d.scrolledBack
+    && now - (d.lastDataAt || 0) > ACTIVE_MS
+    && !RE_RUNNING.test(snap)
+    && !hasPromptBox(snap);
+}
+
 function arbitrate(d, now, snap) {
-  const hs = d.hookState || { status: 'ready', kind: null, at: 0 };
-  const tr = d.trState;
+  const raw = d.hookState || { status: 'ready', kind: null, at: 0 };
+  // «Работает», которое больше ничем не подтверждается, снимаем — но только ДО «готов».
+  // Дальше по функции экран умеет поднимать «готов» обратно своими словами (зов прозой,
+  // фраза про фон), и вот их-то здесь слушать нельзя: обе живут в переписке и после того,
+  // как всё случилось, а мы и так уже отняли у канала его слово. Так что снятое «работает»
+  // означает ровно «вкладка свободна» — не «зовёт».
+  const stuck = hookRunStuck(d, raw, now, snap);
+  const hs = stuck ? { ...raw, status: 'ready' } : raw;
+  // Замолчавшее «работает» из файла здесь не голосует вовсе — ни свежестью (trNewer), ни
+  // пометкой фона. См. trRunStale: иначе брошенный файл держал бы вкладку оранжевой мимо
+  // хука, который давно сказал «готов».
+  const tr = trVoice(d, now);
   const trNewer = !!tr && tr.at > (hs.at || 0);
   if (hs.status === 'waiting' && !trNewer) {
     return { status: 'waiting', detail: 'ждёт ответа', kind: hs.kind || null, box: !!hs.box };
@@ -481,7 +552,7 @@ function arbitrate(d, now, snap) {
     return mkWaiting(snap, true);
   }
   // Зов прозой: строка на экране, рамки нет — печатать в такую вкладку можно.
-  if (!tr && hs.status === 'ready' && asksNow(d, snap)) {
+  if (!tr && !stuck && hs.status === 'ready' && asksNow(d, snap)) {
     return { status: 'waiting', detail: 'ждёт ответа', kind: 'question', box: false };
   }
   // Та же дырка, что и у зова прозой, только с другим ответом: ход закончился словами
@@ -498,7 +569,7 @@ function arbitrate(d, now, snap) {
   // Стенограмма важнее экрана, когда она есть: `tr.bg` — это последняя запись файла прямо
   // сейчас (заговорил агент — признака нет), а строка на экране живёт и после того, как
   // фон досчитал. Без файла остаётся экран — он и держал этот случай до сих пор.
-  if (hs.status === 'ready' && (tr ? tr.bg : waitsForWork(snap))) {
+  if (hs.status === 'ready' && (tr ? tr.bg : (!stuck && waitsForWork(snap)))) {
     return mkBackground();
   }
   // Тот же фон, только замеченный не по словам агента, а по живому подагенту: ход кончился,
@@ -519,13 +590,14 @@ function arbitrate(d, now, snap) {
 // still guards the one screen read that survives: the live prompt box.
 function tickStatus(d, now, snap) {
   if (d.hooksActive) return arbitrate(d, now, snap);
-  if (d.trState) return applyLatch(d, now, snap, decideFromTranscript(d.trState, snap));
+  const tr = trVoice(d, now);
+  if (tr) return applyLatch(d, now, snap, decideFromTranscript(tr, snap));
   return applyLatch(d, now, snap, decide(d, now, snap));
 }
 
 module.exports = {
-  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS, SUB_STALE_MS, BG_DETAIL,
+  ACTIVE_MS, LATCH_RELEASE_MS, ANSWER_HINT_MS, HOOK_STALE_MS, SUB_STALE_MS, TR_RUN_STALE_MS, BG_DETAIL,
   RE_WAIT, RE_WAIT_NOW, RE_RUNNING,
-  decide, hasWaitChrome, hasPromptBox, asksNow, applyLatch, keyboardEvent,
+  decide, hasWaitChrome, hasPromptBox, asksNow, applyLatch, keyboardEvent, trRunStale,
   applyHook, applyTranscript, fromTranscript, decideFromTranscript, arbitrate, tickStatus,
 };
