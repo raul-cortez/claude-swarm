@@ -1469,10 +1469,13 @@ function showSettingsModal(tab) {
               <div class="set-row is-center">
                 <button type="button" class="set-check-btn" id="set-copy-rule">Скопировать правило для CLAUDE.md</button>
                 <button type="button" class="set-q" aria-label="подсказка">?</button>
-                <span class="set-hint" hidden>Если работаете с агентом и вне сворма — вставьте это
-                  правило в свой <code>CLAUDE.md</code>: там оно действует всегда, а не только в наших
-                  вкладках. Правило собирается из списка фраз выше, так что оно не разойдётся с тем, что
-                  ищет вкладка.</span>
+                <span class="set-hint" hidden>Обычно не нужна: правило приложение подставляет агенту само,
+                  на запуске. Но подставить его есть куда не всегда — если вы передали свой
+                  <span class="set-mono">--append-system-prompt</span>, если команда запуска не распознана как
+                  Claude (свой алиас, обёртка, скрипт) или если вы набрали <span class="set-mono">claude</span>
+                  руками в чистой вкладке. Агент тогда правила не получил, а вкладка за ним всё равно следит —
+                  и работает она только по правилу из файла. Вставьте его в <code>CLAUDE.md</code> проекта или
+                  в свой в <code>~/.claude</code>.</span>
               </div>
               <span class="set-note" id="set-copy-rule-note"></span>
             </div>
