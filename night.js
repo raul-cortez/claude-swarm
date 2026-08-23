@@ -305,7 +305,7 @@ function digest(entries, tabs, now, opts) {
       if (key && !c.id) { c.id = key; byId.set(key, c); }
       return c;
     }
-    const c = { id: key, name: nm, state: 'quiet', badge: '', wait: '', since: 0, mark: false, need: [], did: [], note: '' };
+    const c = { id: key, name: nm, state: 'quiet', badge: '', wait: '', since: 0, live: false, mark: false, need: [], did: [], note: '' };
     cards.push(c);
     if (key) byId.set(key, c);
     byName.set(nm, c);
@@ -316,6 +316,7 @@ function digest(entries, tabs, now, opts) {
   // выше журнальных.
   for (const t of live) {
     const c = card(t && t.id, t && t.name);
+    c.live = true;
     if (!t || t.status !== 'waiting') continue;
     const perm = t.waitingKind === 'permission';
     c.state = perm ? 'perm' : 'wait';
@@ -368,6 +369,10 @@ function digest(entries, tabs, now, opts) {
       const old = c.did.findIndex((r) => r.done);
       if (old >= 0) c.did[old] = row; else c.did.push(row);
     } else if (e.kind === 'died') {
+      // Вкладка, которая ЖИВА СЕЙЧАС, не закрылась — что бы ни лежало в журнале. Запись про
+      // смерть переживает и перезапуск приложения, и повторное открытие вкладки с тем же именем,
+      // а сводка описывает то, что верно утром, а не что случалось ночью.
+      if (c.live) continue;
       // Время смерти — в самой строке, а не сроком стояния: «закрылась, 8м» читается как
       // «стоит восемь минут», хотя стоять там больше нечему.
       c.state = 'died';
