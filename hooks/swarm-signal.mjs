@@ -13,17 +13,25 @@
 import { pathToFileURL } from 'node:url';
 import { realpathSync, readFileSync, readdirSync, appendFileSync } from 'node:fs';
 
-// --- the «agent is calling you» phrases --------------------------------------
+// --- «агент зовёт тебя»: теги и фразы ----------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
 // swarm-phrases.json, because the user can edit the phrase list in Settings. We only
-// APPLY the two regexes — no phrase logic here, so there's nothing to drift. If the
+// APPLY the regexes — no phrase logic here, so there's nothing to drift. If the
 // file is missing or broken we fall back to the shipped default (pinned by a test
 // against ask-phrases.js DEFAULT_SOURCES).
+//
+// Основной канал — ТЕГ в конце сообщения: [вопрос] / [question] значит «жду человека»,
+// [фон] / [background] — «жду свою фоновую задачу». Фразы («Сейчас от тебя …») понимаются
+// наравне, но это путь совместимости: естественную речь приходилось разбирать тремя
+// регулярками с русской морфологией, и разница между «жди результата» и «жду замер»
+// держалась на лице глагола.
 const FALLBACK = {
-  mark: '(?:Сейчас от тебя)',
+  mark: '(?:(?:\\[\\s*вопрос\\s*\\]|\\[\\s*question\\s*\\]|\\[\\s*фон\\s*\\]|\\[\\s*background\\s*\\])|Сейчас от тебя)',
+  tagAsk: '^(?:\\[\\s*вопрос\\s*\\]|\\[\\s*question\\s*\\])',
+  tagWait: '^(?:\\[\\s*фон\\s*\\]|\\[\\s*background\\s*\\])',
   none: '(?:Сейчас от тебя)[\\s:.\\u2014*_`~-]*(?:ничего|жд[иёе]|ждать|ждите|подожди(?:те)?|дождись|дождитесь|не\\s+(?:нужно|требуется|надо))',
   wait: '(?:Сейчас от тебя)[\\s:.,\\u2014*_`~-]*(?:ничего[\\s:.,\\u2014*_`~-]*)?(?:жду|ждём|ждем|дождусь|дожидаюсь|ожидаю)(?![а-яёА-ЯЁa-zA-Z])',
-  marker: 'Сейчас от тебя',   // phrases[0], for the deny reason below
+  marker: '[вопрос]',   // то, чем метку НАЗЫВАЮТ агенту (отказ от коробки, ночное правило)
 };
 
 function loadMatcher(readJson) {
@@ -36,15 +44,31 @@ function loadMatcher(readJson) {
   // потерять из-за отсутствующего `wait` пользовательские фразы в `mark` — значит
   // перестать узнавать зов вообще.
   const wait = (src && typeof src.wait === 'string' && src.wait) || FALLBACK.wait;
-  // The plain first phrase, carried in the same file: we don't just MATCH the marker
-  // here, we sometimes have to name it back to the agent (see denyReason).
-  const first = src && Array.isArray(src.phrases) ? src.phrases[0] : null;
-  const marker = (typeof first === 'string' && first.trim()) || FALLBACK.marker;
+  // Теги — своя заглушка по той же причине, но с обратным смыслом: файл рядом мог быть
+  // записан версией приложения, которая про теги не знала, и тогда в нём НЕТ ни tagAsk,
+  // ни тегов внутри mark. Заглушка вернёт и то и другое, так что тег понимается всегда —
+  // он протокол, а не пользовательская настройка.
+  const tagAsk = (src && typeof src.tagAsk === 'string' && src.tagAsk) || FALLBACK.tagAsk;
+  const tagWait = (src && typeof src.tagWait === 'string' && src.tagWait) || FALLBACK.tagWait;
+  // Старый файл не знает про теги и в mark их не перечисляет — тогда берём заглушку
+  // целиком: потерять тег хуже, чем потерять чужую фразу, потому что тегам мы УЧИМ.
+  const markSrc = (src && typeof src.tagAsk === 'string') ? mark : FALLBACK.mark;
+  // Метка, которую иногда приходится называть агенту обратно (см. denyReason).
+  const marker = FALLBACK.marker;
   try {
-    return { mark: new RegExp(mark, 'i'), none: new RegExp(none, 'i'), wait: new RegExp(wait, 'i'), marker };
+    return {
+      mark: new RegExp(markSrc, 'i'),
+      tagAsk: new RegExp(tagAsk, 'i'),
+      tagWait: new RegExp(tagWait, 'i'),
+      none: new RegExp(none, 'i'),
+      wait: new RegExp(wait, 'i'),
+      marker,
+    };
   } catch (_) {
     return {
       mark: new RegExp(FALLBACK.mark, 'i'),
+      tagAsk: new RegExp(FALLBACK.tagAsk, 'i'),
+      tagWait: new RegExp(FALLBACK.tagWait, 'i'),
       none: new RegExp(FALLBACK.none, 'i'),
       wait: new RegExp(FALLBACK.wait, 'i'),
       marker,
@@ -84,6 +108,11 @@ function closingKind(matcher, text) {
   }
   if (idx < 0) return null;
   const tail = t.slice(idx);
+  // Тег стоит в НАЧАЛЕ хвоста: хвост и начинается с последней метки. Он отвечает сам за
+  // себя, разбирать после него нечего — в этом вся его польза против естественной фразы.
+  // Порядок и смысл повторяют ask-phrases.js callKind, совпадение сверяется тестом.
+  if (matcher.tagAsk && matcher.tagAsk.test(tail)) return 'ask';
+  if (matcher.tagWait && matcher.tagWait.test(tail)) return 'wait';
   if (matcher.wait && matcher.wait.test(tail)) return 'wait';
   if (matcher.none && matcher.none.test(tail)) return null;
   return 'ask';
@@ -192,15 +221,15 @@ function markerFor(payload, matcher, override) {
 // потерянная ночь: вкладка встанет на нём до утра. Правило то же, что печатает приложение в
 // ждущую вкладку (night.js rule), и текст обязан совпадать — агент, получающий разные
 // инструкции в зависимости от того, КАК он спросил, ведёт себя случайно. Сверяется тестом.
-const nightRule = (marker) => [
+const nightRule = (tag) => [
   'Человека нет у компьютера: ночной режим, ответа не будет до утра.',
   'Интерактивный выбор недоступен.',
   'Реши сам, если решение обратимо или переделка дешёвая: выбери разумный вариант,',
   'назови его вслух в ходе и продолжай работу.',
   'Остановись, если ответ задаёт направление и ошибка стоит дорого: развилка, где не угадать,',
   'что именно нужно человеку; необратимое действие; ломающая совместимость правка.',
-  'Тогда сформулируй вопрос обычным текстом с вариантами и закончи ход строкой',
-  `«${marker}: …» — утром на него ответят.`,
+  'Тогда сформулируй вопрос обычным текстом с вариантами и закончи ход тегом',
+  `${tag} в самом конце сообщения — утром на него ответят.`,
   'Не спрашивай второй раз об одном и том же: повторный вопрос ночью никто не прочитает.',
 ].join(' ');
 
@@ -311,7 +340,7 @@ function usageNote(usage, nowSec) {
 // переключил «где я» сам и тем самым согласился, что интерактивный выбор ему сейчас не нужен.
 const denyReason = (marker) => 'Пользователь отвечает с телефона: интерактивный выбор ему недоступен.'
   + ' Задай тот же вопрос обычным текстом (варианты — списком в тексте) и заверши ход,'
-  + ` закончив сообщение строкой «${marker}: …».`;
+  + ` поставив в самом конце сообщения тег ${marker}.`;
 const DENY_REASON = denyReason(FALLBACK.marker);
 
 function deniesPicker(payload, tgSessions, presence) {

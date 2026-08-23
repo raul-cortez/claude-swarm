@@ -159,7 +159,7 @@ function defaultWorkdir() {
 // provisioning failed (then we simply skip injection and behave as before).
 let STATUSLINE_SETTINGS = null;
 const { hookSettings } = require('./hook-config');
-const { DEFAULT_ASK_PHRASES, normalizePhrases, phraseSources, buildAskMatcher, callKind, saysNone, askExcerpt } = require('./ask-phrases');
+const { DEFAULT_ASK_PHRASES, ASK_TAG, normalizePhrases, phraseSources, buildAskMatcher, callKind, saysNone, askExcerpt } = require('./ask-phrases');
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
@@ -332,7 +332,7 @@ function injectAgentRules(cmd, pass) {
   if (!AGENT_RULES || !cmd) return cmd;
   if (/(^|\s)--(append-)?system-prompt(-file)?(\s|=)/.test(cmd)) return cmd;
   if (!resume.supports(launcherOf(cmd))) return cmd;
-  return `${cmd} --append-system-prompt ${pass.ref('SWARM_ASK_RULE', systemPromptRule(ASK_PHRASES))}`;
+  return `${cmd} --append-system-prompt ${pass.ref('SWARM_ASK_RULE', systemPromptRule())}`;
 }
 
 // Append `--permission-mode <mode>` so a new tab starts in the mode the user picked
@@ -412,10 +412,10 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, asksForInput, waitsForWork } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
-const { tickStatus, applyHook, applyTranscript, keyboardEvent } = require('./detector');
+const { tickStatus, applyHook, applyTranscript, keyboardEvent, hasPromptBox, trRunStale, RE_RUNNING } = require('./detector');
 const { extractHookSignals } = require('./osc');
 
 const TICK_MS = 300;
@@ -700,6 +700,7 @@ setInterval(() => {
           || statusline !== d.statusline || question !== d.question || sub !== d.sub
           || kind !== d.waitingKind) {
         const prev = d.status;
+        const prevDetail = d.detail;
         // «Работает» и «работает в фоне» — один статус, но разные новости, а статус между
         // ними не меняется. Помним прошлое значение отдельно: по переходу в фон мост
         // докладывает итог (ход-то кончился), по выходу из него начинается новый ход.
@@ -713,6 +714,10 @@ setInterval(() => {
         d.sub = sub;
         d.waitingKind = kind;
         safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure });
+        // Смена цвета — в журнал, вместе с показаниями всех каналов (см. statusWhy).
+        if (next.status !== prev || next.detail !== prevDetail) {
+          statusLog(`tab=${id}${d.name ? ' (' + d.name + ')' : ''} ${prev || '—'}/${prevDetail || '—'} → ${next.status}/${next.detail} | ${statusWhy(d, now, snap, sub)}`);
+        }
         // Вкладка кончила ход — а перезапуск как раз этого и ждал: ответ агента ложится на диск в
         // конце хода, и гасить прежнего агента можно с того же мига. Без этого толчка круг упирался
         // в такт раз в полминуты и стоял на глазах у человека (см. restartKick).
@@ -885,6 +890,66 @@ function trLog(line) {
     } catch (_) { /* файла ещё нет */ }
     fs.appendFileSync(file, logStamp(null, true) + ' ' + line + '\n');
   } catch (_) { /* diagnostics must never break the app */ }
+}
+
+// --- журнал статуса: ПОЧЕМУ вкладка такого цвета -------------------------------
+// Цвет вкладки складывают три канала (хуки, стенограмма, экран), и наружу выходит одно
+// слово: «работает». Когда оно неверно — а неверное «работает» означает «занята, не
+// подходи», то есть человек проходит мимо вкладки, которая его ждёт, — по этому слову
+// нельзя понять ровным счётом ничего.
+//
+// Цена известна: разбор одного такого случая («агент написал „Сейчас от тебя: ничего“, а
+// вкладка час горела оранжевым») занял вечер раскопок по чужим журналам, стенограммам и
+// скриншоту, и всё равно упёрся в вопрос «а что в тот миг говорил каждый канал». Ответ на
+// него стоит одной строки в файле — вот она.
+//
+// Пишем ТОЛЬКО смену статуса или подписи: остальное шевеление (строка статуса, текст
+// вопроса) идёт по нескольку раз в секунду и утопило бы журнал. Как и два соседних
+// журнала, включён всегда: тот, что «за переменной окружения», в нужный миг оказывается
+// выключенным, а включить его у запущенного приложения нельзя.
+const STATUS_LOG_MAX = 512 * 1024;
+
+function statusLog(line) {
+  try {
+    const file = path.join(app.getPath('userData'), 'status.log');
+    try {
+      if (fs.statSync(file).size > STATUS_LOG_MAX) fs.renameSync(file, file + '.1');
+    } catch (_) { /* файла ещё нет */ }
+    fs.appendFileSync(file, logStamp(null, true) + ' ' + line + '\n');
+  } catch (_) { /* diagnostics must never break the app */ }
+}
+
+// Возраст в человеческом виде: «3с», «2м», «1ч14м». Секунды в часовом возрасте не нужны,
+// а вот отличить «минуту назад» от «полтора часа назад» — это здесь вся суть.
+function agoText(at, now) {
+  if (!at) return 'никогда';
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 90) return s + 'с';
+  const m = Math.round(s / 60);
+  if (m < 90) return m + 'м';
+  return Math.floor(m / 60) + 'ч' + (m % 60) + 'м';
+}
+
+// Показания всех трёх каналов на этот такт — по порядку старшинства (см. tickStatus).
+// Читается как ответ на «почему»: у кого спросили, что каждый ответил и когда говорил.
+function statusWhy(d, now, snap, sub) {
+  const hs = d.hookState;
+  const hook = d.hooksActive
+    ? `хук=${hs ? hs.status + (hs.bg ? ':фон' : '') + (hs.box ? ':рамка' : '') : 'нет'} ${agoText(hs && hs.at, now)}`
+    : 'хук=не подключён';
+  const tr = d.trState;
+  const file = tr
+    ? `файл=${tr.status}${tr.bg ? ':фон' : ''} (${d.trWhy || '?'}) ${agoText(tr.at, now)}`
+      + `${trRunStale(tr, now) ? ' — протух, не голосует' : ''} [${d.trFile ? path.basename(d.trFile) : '?'}]`
+    : 'файл=не привязан';
+  const screen = `экран: спиннер=${RE_RUNNING.test(snap) ? 'да' : 'нет'}`
+    + ` рамка=${hasPromptBox(snap) ? 'да' : 'нет'}`
+    + ` зов=${asksForInput(snap) ? 'да' : 'нет'}`
+    + ` фон=${waitsForWork(snap) ? 'да' : 'нет'}`
+    + ` саб=${sub || 0}`
+    + ` байты=${agoText(d.lastDataAt, now)}`
+    + (d.scrolledBack ? ' ОТЛИСТАН' : '');
+  return `${hook} · ${file} · ${screen}`;
 }
 
 // Отвязаться от файла — ОДНОЙ функцией, вместе с текстами, которые из него взяты. Раньше
@@ -1253,6 +1318,28 @@ setInterval(() => {
         // тут же привязалась бы к нему обратно. Новый адрес хук пришлёт с первым же событием.
         d.trHint = '';
         applyTranscript(d, null);
+      }
+      // Клод назвал адрес СВОЕГО разговора, а мы держим другой файл. Раньше подсказку хука
+      // спрашивали только у вкладки без файла — и ошибка, сделанная сканом папки до первого
+      // хука, оставалась навсегда: перепривязка бывает лишь по молчанию файла, а молчащий
+      // файл — это ровно то, чем чужой (или брошенный) разговор и выглядит.
+      //
+      // Живьём: две вкладки держали ОДНУ стенограмму, дописанную в последний раз до обеда, а
+      // разговор одной из них не держал никто. Такая вкладка показывает статус чужого агента
+      // и шлёт в телегу чужой текст — это худшее, что этот канал умеет делать.
+      //
+      // Адрес от Клода сильнее любых догадок по свежести и экрану (см. bindTranscript), так
+      // что при расхождении просто отпускаем чужое: привязка ниже возьмёт названный файл.
+      if (d.trFile && d.trHint && d.trHint !== d.trFile && !taken.has(d.trHint)) {
+        let real = false;
+        try { real = fs.statSync(d.trHint).isFile(); } catch (_) { /* ещё не создан */ }
+        if (real) {
+          trLog(`tab=${id} держали чужой файл ${path.basename(d.trFile)}, хук назвал ${path.basename(d.trHint)} — перепривязка`);
+          taken.delete(d.trFile);
+          trForget(d);
+          applyTranscript(d, null);
+          d.trTryAt = 0;                 // взять названный файл прямо сейчас, а не через такт
+        }
       }
       if (!d.trFile) {
         if (now - (d.trTryAt || 0) < TR_BIND_EVERY_MS) continue;
@@ -4286,8 +4373,11 @@ function nightType(id, text) {
   return true;
 }
 
+// Метка, которую ночь называет агенту. Это ТЕГ, а не первая фраза из настроек: тег зашит
+// в протокол и понимается всегда, а фраза у человека может быть своя — и тогда ночной текст
+// учил бы одному, а хук искал бы другое.
 function nightMarker() {
-  return (normalizePhrases(ASK_PHRASES)[0]) || DEFAULT_ASK_PHRASES[0];
+  return ASK_TAG;
 }
 
 // Отпечаток вопроса, на который мы толкали. Не хеш, а начало текста: журнал читают глазами,

@@ -24,6 +24,48 @@
   root.SWARM_ASK_PHRASES = api;
 })(typeof self !== 'undefined' ? self : this, function () {
 
+// --- ТЕГИ: основной канал ------------------------------------------------------
+// Метка в тексте нужна потому, что событие «ход кончился» приходит одинаковым во всех
+// трёх случаях: сделал дело, спросил прозой, ждёт свою фоновую задачу. Различить их
+// можно только по тому, что агент написал.
+//
+// Теги, а не фраза, потому что фраза — естественная речь, и понимать её приходилось
+// тремя регулярками с русской морфологией: сама метка, хвост «ничего/жди» («мне от тебя
+// ничего не надо») и хвост «жду» в первом лице («ждёт агент, работа идёт»). Разница
+// между «жди результата» и «жду замер» — в лице глагола, и это единственный признак.
+// Тег снимает всю эту морфологию: он либо есть, либо нет.
+//
+// Обе формы, русская и английская, зашиты и НЕ настраиваются: это протокол, а не вкус,
+// и человеку, который пишет агенту по-английски, не нужно за этим идти в настройки.
+//
+// Невидимые символы тут не годятся, хотя хук читает строку и ему всё равно: модель должна
+// каждый раз воспроизвести точный невидимый кодпоинт, и ни markdown-рендер, ни обрезка
+// пробелов, ни копипаста, ни телега не должны его нормализовать — а когда это ломается,
+// никто не видит, ПОЧЕМУ: сообщение выглядит правильным, вкладка молчит. Видимый тег
+// отлаживается глазами.
+const ASK_TAGS = ['вопрос', 'question'];        // жду человека
+const WAIT_TAGS = ['фон', 'background'];        // жду свою фоновую задачу; человек не нужен
+
+// Чему УЧИМ агента — одна форма из каждой пары. Понимаем все, но в правиле называем одну:
+// выбор из двух написаний в инструкции — это не свобода, а лишнее решение на каждом ходу.
+// Отсюда же их берут ночное правило и отказ от коробки с вариантами: текст, который агент
+// получает, обязан называть ту самую метку, которую мы потом ищем.
+const ASK_TAG = '[' + ASK_TAGS[0] + ']';
+const WAIT_TAG = '[' + WAIT_TAGS[0] + ']';
+
+// Внутри скобок терпим пробелы и любой регистр: [вопрос], [ Вопрос ], [QUESTION].
+function tagAlt(words) {
+  return '(?:' + words.map(function (w) { return '\\[\\s*' + w + '\\s*\\]'; }).join('|') + ')';
+}
+const ASK_TAG_SRC = tagAlt(ASK_TAGS);
+const WAIT_TAG_SRC = tagAlt(WAIT_TAGS);
+const ANY_TAG_SRC = tagAlt(ASK_TAGS.concat(WAIT_TAGS));
+
+// --- ФРАЗЫ: путь совместимости --------------------------------------------------
+// Соглашение, которое было до тегов. Оставлено и поддерживается наравне: у людей эта
+// фраза лежит в своих CLAUDE.md и в привычках, и молча перестать её понимать значит
+// сломать вкладки у тех, кто ничего не менял.
+//
 // What ships out of the box. Matches the sign-off the task skills use.
 const DEFAULT_ASK_PHRASES = ['Сейчас от тебя'];
 
@@ -85,11 +127,22 @@ function normalizePhrases(list) {
 }
 
 // The regex SOURCES (strings, so they survive JSON on the way to the hook):
-//   mark — any of the phrases;  none — a phrase followed by a «ничего/жди» tail;
-//   wait — a phrase followed by a first-person «жду …» tail (see WAIT_TAIL).
+//   mark    — ЛЮБАЯ метка: тег или фраза. По ней ищется последнее вхождение;
+//   tagAsk  — тег зова, привязанный к началу хвоста;
+//   tagWait — тег фоновой работы, там же;
+//   none    — фраза с хвостом «ничего/жди»;
+//   wait    — фраза с хвостом «жду …» в первом лице (см. WAIT_TAIL).
+// Теги идут в mark вместе с фразами: иначе последним вхождением оказалась бы фраза из
+// позапрошлого хода, а свежий тег остался бы незамеченным.
 function phraseSources(list) {
   const alt = normalizePhrases(list).map(escapeRe).join('|');
-  return { mark: `(?:${alt})`, none: `(?:${alt})${NONE_TAIL}`, wait: `(?:${alt})${WAIT_TAIL}` };
+  return {
+    mark: `(?:${ANY_TAG_SRC}|${alt})`,
+    tagAsk: `^${ASK_TAG_SRC}`,
+    tagWait: `^${WAIT_TAG_SRC}`,
+    none: `(?:${alt})${NONE_TAIL}`,
+    wait: `(?:${alt})${WAIT_TAIL}`,
+  };
 }
 
 // Compiled form for in-process use.
@@ -97,6 +150,8 @@ function buildAskMatcher(list) {
   const src = phraseSources(list);
   return {
     mark: new RegExp(src.mark, 'i'),
+    tagAsk: new RegExp(src.tagAsk, 'i'),
+    tagWait: new RegExp(src.tagWait, 'i'),
     none: new RegExp(src.none, 'i'),
     wait: new RegExp(src.wait, 'i'),
   };
@@ -129,6 +184,10 @@ function tailFrom(matcher, text) {
 function callKind(matcher, text) {
   const tail = tailFrom(matcher, text);
   if (tail == null) return null;
+  // Тег стоит В НАЧАЛЕ хвоста — хвост и начинается с последней метки. Тег отвечает сам
+  // за себя и разбора хвоста не требует: в этом вся его польза.
+  if (matcher.tagAsk && matcher.tagAsk.test(tail)) return 'ask';
+  if (matcher.tagWait && matcher.tagWait.test(tail)) return 'wait';
   if (matcher.wait && matcher.wait.test(tail)) return 'wait';
   if (matcher.none && matcher.none.test(tail)) return null;
   return 'ask';
@@ -163,7 +222,11 @@ function saysNone(matcher, text) {
 // waiting agent still has to show something. Collapses blank lines and caps the
 // length — a chip tooltip is not a place for a page of text.
 function askExcerpt(matcher, text, max) {
-  const t = String(text == null ? '' : text).trim();
+  // Тег из выжимки вычищаем: человеку в подсказке, уведомлении и телеге нужен вопрос, а
+  // не служебная метка. После вычистки работает та же логика, что и раньше: с фразы, если
+  // она есть, иначе с конца сообщения — а вопрос стоит как раз в конце.
+  const t = String(text == null ? '' : text).replace(new RegExp(ANY_TAG_SRC, 'gi'), ' ')
+    .replace(/[ \t]{2,}/g, ' ').trim();
   if (!t) return '';
   const cap = max || 500;
   const hit = matcher && matcher.mark ? t.match(matcher.mark) : null;
@@ -177,6 +240,7 @@ const DEFAULT_SOURCES = phraseSources(DEFAULT_ASK_PHRASES);
 
 return {
   DEFAULT_ASK_PHRASES, DEFAULT_SOURCES, MAX_PHRASES, MAX_LEN,
+  ASK_TAGS, WAIT_TAGS, ASK_TAG, WAIT_TAG,
   normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, saysNone, askExcerpt,
 };
 

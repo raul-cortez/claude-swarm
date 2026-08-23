@@ -8,7 +8,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 const { extractHookSignals } = require('../osc');
-const { DEFAULT_SOURCES, DEFAULT_ASK_PHRASES, phraseSources } = require('../ask-phrases');
+const { DEFAULT_SOURCES, DEFAULT_ASK_PHRASES, ASK_TAG, phraseSources } = require('../ask-phrases');
 
 let passed = 0;
 const tests = [];
@@ -133,10 +133,12 @@ test('the hook fallback phrases are exactly ask-phrases.js defaults', () => {
   const code = `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then((m) => console.log(JSON.stringify(m.FALLBACK)))`;
   const out = execFileSync(process.execPath, ['-e', code], { encoding: 'utf8' });
   const fb = JSON.parse(out);
-  assert.deepStrictEqual({ mark: fb.mark, none: fb.none, wait: fb.wait }, DEFAULT_SOURCES);
-  // The plain marker is a THIRD copy of the default phrase (app, hook regexes, hook
-  // text) — it's the one the deny reason names back to the agent, so pin it too.
-  assert.strictEqual(fb.marker, DEFAULT_ASK_PHRASES[0]);
+  assert.deepStrictEqual(
+    { mark: fb.mark, tagAsk: fb.tagAsk, tagWait: fb.tagWait, none: fb.none, wait: fb.wait },
+    DEFAULT_SOURCES);
+  // Метка, которую отказ называет агенту обратно, — третья копия тега (приложение,
+  // регулярки хука, текст хука), поэтому прибита тоже.
+  assert.strictEqual(fb.marker, ASK_TAG);
 });
 
 test('a custom phrase file replaces the default marker', () => {
@@ -283,16 +285,21 @@ test('a denied picker reports «работает», not «ждёт»', () => {
   assert.match(allowed.terminalSequence, /;box;/);
 });
 
-test('the deny reason names the marker, in the user\'s own wording', () => {
+test('отказ называет тег — и ровно тот, который потом сам и признаёт', () => {
   // Otherwise the agent re-asks in prose with no sign-off: the turn reads as «готов»,
   // the bridge stays silent, and the question waits in a terminal nobody is watching.
+  //
+  // Именно тег, а не фразу из настроек: тег понимается всегда, а чужая фраза могла бы
+  // остаться в файле от прошлой версии — тогда отказ учил бы одному, а хук искал другое.
   const phrases = ['Твой ход'];
   const m = H.loadMatcher(() => Object.assign({ phrases }, phraseSources(phrases)));
   const out = H.outputFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' }, m, ['s1']);
   const reason = out.hookSpecificOutput.permissionDecisionReason;
-  assert.ok(reason.includes('Твой ход'), 'reason names the configured phrase: ' + reason);
+  assert.ok(reason.includes(ASK_TAG), 'отказ называет тег: ' + reason);
   // And what it tells the agent to write must be what the matcher then accepts.
-  assert.ok(H.callsUser(m, 'Сделал.\n\nТвой ход: что дальше'), 'the taught sign-off calls');
+  assert.ok(H.callsUser(m, 'Сделал. Что дальше? ' + ASK_TAG), 'таким тегом зов признаётся');
+  // Своя фраза при этом продолжает работать — переход на теги её не отменяет.
+  assert.ok(H.callsUser(m, 'Сделал.\n\nТвой ход: что дальше'), 'чужая фраза тоже зовёт');
 });
 
 test('without Telegram mode the payload is exactly what it was before', () => {

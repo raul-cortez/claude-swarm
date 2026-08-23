@@ -1431,20 +1431,28 @@ function showSettingsModal(tab) {
                 <span class="set-check-tx">Просить агента звать вас</span>
               </label>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>На запуске просим спрашивать через выбор вариантов, а вопрос в тексте
-                заканчивать фразой из списка ниже — иначе вкладка не отличит «ждёт ответа» от «готов».
+              <span class="set-hint" hidden>Клод заканчивает ход одинаково и когда сделал дело, и когда задал
+                вопрос — со стороны это одно и то же событие. Поэтому на запуске просим агента спрашивать через
+                выбор вариантов, а вопрос в тексте помечать тегом. Выключите, если не хотите, чтобы приложение
+                дописывало что-то в промпт вашего агента: вкладка тогда не отличит «ждёт ответа» от «готов».
                 Только Claude Code, применяется к новым вкладкам.</span>
             </div>
+            <span class="set-note">Агент ставит в самом конце сообщения <span class="set-mono">[вопрос]</span> —
+              и вкладка становится «ждёт ответа», — или <span class="set-mono">[фон]</span>, если ждёт свою
+              фоновую задачу и человек не нужен. По-английски то же самое:
+              <span class="set-mono">[question]</span>, <span class="set-mono">[background]</span>.
+              Ничего не поставил — значит готов.</span>
             <div class="set-field">
               <div class="set-head">
-                <span class="set-label">Фразы, которыми агент зовёт вас</span>
+                <span class="set-label">Свои фразы вызова</span>
                 <button type="button" class="set-q" aria-label="подсказка">?</button>
-                <span class="set-hint" hidden>Клод заканчивает ход одинаково и когда сделал дело, и когда задал
-                  вопрос. Отличить их можно только по тому, как агент заканчивает сообщение — поэтому вкладка
-                  становится <span class="set-mono">ждёт ответа</span> по фразе.
-                  <br>По одной в строке. Просить агента об этом не нужно — галочка выше делает это сама, той же
-                  фразой. Ищем в любом месте сообщения, регистр не важен; «…: ничего, жди» вопросом не считаем.
-                  До 12 фраз, до 60 символов каждая. Пусто — вернётся фраза по умолчанию.</span>
+                <span class="set-hint" hidden>Понадобятся, только если у вас своя подпись вместо тегов —
+                  например она уже лежит в вашем <code>CLAUDE.md</code>. Теги настраивать не нужно: они зашиты
+                  и работают всегда.
+                  <br>По одной фразе в строке. Ищем в любом месте сообщения, регистр не важен;
+                  «…: ничего, жди» вопросом не считаем, а «…: ничего, жду сборку» считаем фоновой работой —
+                  разница в лице глагола. До 12 фраз, до 60 символов каждая.
+                  Пусто — останется фраза по умолчанию <span class="set-mono">Сейчас от тебя</span>.</span>
               </div>
               <textarea class="set-input" id="set-ask-phrases" rows="3" spellcheck="false"
                         autocapitalize="off" autocorrect="off"
@@ -1980,7 +1988,7 @@ function showSettingsModal(tab) {
   copyRuleB.addEventListener('click', () => {
     const AR = window.SWARM_AGENT_RULES;
     if (!AR) return;                               // script missing: settings still work
-    window.swarm.clipboardWrite(AR.claudeMdRule(draftPhrases()));
+    window.swarm.clipboardWrite(AR.claudeMdRule());
     copyRuleNoteEl.textContent = 'Скопировано. Вставьте в CLAUDE.md — проекта или свой в ~/.claude.';
     clearTimeout(copyRuleB._t);
     copyRuleB._t = setTimeout(() => { copyRuleNoteEl.innerHTML = copyRuleNote; }, 4000);

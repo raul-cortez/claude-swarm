@@ -10,15 +10,24 @@
 //
 //   systemPromptRule() — one line for `claude --append-system-prompt`, injected by
 //     main at launch (see injectAgentRules). Costs the user nothing to set up and
-//     touches no file of theirs, but lives only inside swarm-launched tabs.
+//     touches no file of theirs, but lives only inside command lines SWARM composes:
+//     injectAgentRules отступает, если человек передал свой --append-system-prompt,
+//     если лончер не распознан как Claude (свой алиас, обёртка, скрипт) — и, конечно,
+//     если человек набрал `claude` руками в чистой вкладке.
 //   claudeMdRule()     — a markdown block for the user's own CLAUDE.md, offered as
-//     a copy button in Settings. For people who also run the agent outside swarm.
+//     a copy button in Settings. Ровно для трёх случаев выше: экран за агентом следят
+//     и там, а правило флагом до него не дошло. «Вне сворма» правило не нужно никому:
+//     снаружи нет вкладки, которую надо красить.
 //
-// Both say the same two things, and both are generated from the phrase list the user
-// edits in Settings (ask-phrases.js) — so the rule we teach and the marker we match
-// can never drift apart. That's the whole point of generating instead of shipping a
-// static paragraph: an example phrase hardcoded here would silently stop matching the
-// moment somebody edits the box.
+// Both teach the same thing: ТЕГИ (ask-phrases.js ASK_TAG / WAIT_TAG). Метку в тексте
+// заменить нечем — событие «ход кончился» приходит одинаковым и когда дело сделано, и
+// когда задан вопрос прозой, — но метка теперь не естественная фраза, а тег, и правило
+// от этого стало короче: учить нечему, кроме «поставь в конце [вопрос]».
+//
+// Побочно и важно: в правиле больше НЕТ пользовательского текста. Раньше в него
+// подставлялась первая фраза из настроек, и её приходилось чистить от кавычек, `$` и
+// бэктиков — на запасном пути правило попадает прямо в командную строку. Теперь это
+// константа, и чистить нечего.
 //
 // The FIRST rule (ask via AskUserQuestion) is the better one: a tool call gives the
 // PreToolUse hook an exact signal plus the question text, with no text matching at
@@ -37,6 +46,13 @@
 // renderer, where there is no require().
 const DEFAULT_MARKER = 'Сейчас от тебя';
 
+// Теги — то же дублирование по той же причине: этот модуль подключается в рендерере
+// простым <script>, где require недоступен. Совпадение с ask-phrases.js сверяется тестом.
+const ASK_TAGS = ['вопрос', 'question'];
+const WAIT_TAGS = ['фон', 'background'];
+const ASK_TAG = '[' + ASK_TAGS[0] + ']';
+const WAIT_TAG = '[' + WAIT_TAGS[0] + ']';
+
 // The CLAUDE.md block is fenced with markers so it can be found and replaced whole
 // instead of piling up copies. The user may edit the text inside; we never write
 // this file ourselves — it's theirs — the markers are for THEM (and for a future
@@ -44,49 +60,26 @@ const DEFAULT_MARKER = 'Сейчас от тебя';
 const MD_BEGIN = '<!-- claude-swarm-lite:begin -->';
 const MD_END = '<!-- claude-swarm-lite:end -->';
 
-// The marker phrase, made safe to embed in a shell command line. The launch command
-// is typed into an interactive shell (main writes it to the pty), so a stray quote,
-// `$`, backtick or `!` in a user-typed phrase would not just break the flag — it
-// could swallow the rest of the line. Phrases are markers like «Сейчас от тебя»;
-// none of these characters belong in one, so dropping them loses nothing.
-//
-// Main normally hands this text to claude through the environment, where none of that
-// would matter — but for a shell whose syntax it doesn't recognise it falls back to
-// spelling the value inline (launch-line.js envPassing), and that path has to stay safe.
-function markerOf(phrases) {
-  const list = Array.isArray(phrases) ? phrases : [];
-  for (const raw of list) {
-    const safe = String(raw == null ? '' : raw)
-      .replace(/["'`$\\!<>]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 60);
-    if (safe) return safe;
-  }
-  return DEFAULT_MARKER;
-}
-
 // ONE LINE, on purpose: on the fallback path it goes inside double quotes on a shell
 // command line, where a newline would end the command.
-function systemPromptRule(phrases) {
-  const m = markerOf(phrases);
+function systemPromptRule() {
   return [
     'Ты работаешь внутри Swarm: пользователь видит статус этой вкладки со стороны',
     'и может смотреть на неё из другой вкладки или с телефона, поэтому момент, когда ты ждёшь его,',
     'должен быть виден. Когда тебе нужен ответ, выбор или решение пользователя — задавай вопрос',
     'инструментом AskUserQuestion, а не только текстом. Если вопрос всё-таки остаётся в тексте,',
-    `заканчивай сообщение отдельной строкой: ${m}: и дальше то, что от него нужно.`,
-    `Если от пользователя ничего не нужно и ты закончил, эту строку не пиши, либо напиши ${m}: ничего.`,
-    'А если ты запустил фоновую задачу и ждёшь её (замер, сборку, фонового агента) — от пользователя',
-    `тоже ничего, но работа не кончилась, и это другая строка: ${m}: ничего, жду и дальше чего именно.`,
-    'Слово «жду» здесь обязательно и означает ждёшь ТЫ: по нему вкладка остаётся занятой, а не зовёт.',
+    `поставь в самом конце сообщения тег ${ASK_TAG} — по нему вкладка становится «ждёт ответа».`,
+    'Если ты запустил фоновую задачу и ждёшь её (замер, сборку, фонового агента), а от пользователя',
+    `ничего не нужно — поставь в конце тег ${WAIT_TAG}: вкладка останется занятой и звать не будет.`,
+    'Закончил и ничего не ждёшь — не ставь никакого тега, это и значит «готов».',
+    'Теги нужны в конце сообщения, отдельным словом, и только там: внутри рассуждений и примеров',
+    'кода они ничего не значат.',
   ].join(' ');
 }
 
 // The same rule as a markdown section for the user's own CLAUDE.md. Free to be
 // multi-line and a bit more explicit — nothing here goes through a shell.
-function claudeMdRule(phrases) {
-  const m = markerOf(phrases);
+function claudeMdRule() {
   return [
     MD_BEGIN,
     '## Как звать меня',
@@ -97,20 +90,22 @@ function claudeMdRule(phrases) {
     '',
     '- Нужен ответ, выбор или решение — спрашивай инструментом `AskUserQuestion`, а не только текстом:',
     '  тогда вкладка сразу покажет, что ты ждёшь, и вопрос с вариантами дойдёт до меня в телефон.',
-    `- Если вопрос остаётся в тексте, заканчивай сообщение отдельной строкой: \`${m}: …\` и дальше то,`,
-    '  что от меня нужно.',
-    `- Если от меня ничего не нужно и ты закончил, эту строку не пиши — или напиши \`${m}: ничего\`,`,
-    '  это считается «не зовёт», вкладка становится зелёной.',
-    '- Если ты запустил фоновую задачу и ждёшь её (замер, сборка, фоновый агент), от меня тоже ничего,',
-    `  но работа не кончилась. Тогда пиши \`${m}: ничего, жду …\` и чего именно ждёшь —`,
-    '  вкладка останется занятой, а меня не позовёт. «Жду» — про тебя: ждёшь ты, а не я.',
+    `- Если вопрос остаётся в тексте, поставь в самом конце сообщения тег \`${ASK_TAG}\` —`,
+    '  по нему вкладка становится «ждёт ответа» и зовёт меня.',
+    '- Если ты запустил фоновую задачу и ждёшь её (замер, сборка, фоновый агент), а от меня ничего',
+    `  не нужно — поставь в конце тег \`${WAIT_TAG}\`: вкладка останется занятой, а меня не позовёт.`,
+    '- Закончил и ничего не ждёшь — не ставь никакого тега. Это и значит «готов».',
+    '',
+    `По-английски тоже понимаю: \`[${ASK_TAGS[1]}]\` и \`[${WAIT_TAGS[1]}]\` работают так же.`,
+    `Старую подпись \`${DEFAULT_MARKER}: …\` приложение тоже ещё понимает, но тег надёжнее:`,
+    'его не построишь случайно в обычной фразе.',
     MD_END,
   ].join('\n');
 }
 
 return {
-  DEFAULT_MARKER, MD_BEGIN, MD_END,
-  markerOf, systemPromptRule, claudeMdRule,
+  DEFAULT_MARKER, ASK_TAG, WAIT_TAG, MD_BEGIN, MD_END,
+  systemPromptRule, claudeMdRule,
 };
 
 });

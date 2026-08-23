@@ -1,7 +1,9 @@
-// Plain-node tests for the user-editable «agent is calling me» phrases. This list is
-// the ONLY signal separating «готов» from «ждёт ответа» at the end of a turn, and it
-// feeds two very different consumers (screen scraping + the Stop hook), so its
-// normalisation and matching are pinned here.
+// Plain-node tests for the «agent is calling me» markers. Это ЕДИНСТВЕННЫЙ признак,
+// отличающий «готов» от «ждёт ответа» в конце хода, и его читают два очень разных
+// потребителя (скрёб экрана и хук на Stop), поэтому разбор прибит здесь.
+//
+// Два канала: ТЕГИ ([вопрос] / [фон]) — основной, им учит правило; ФРАЗЫ — путь
+// совместимости для тех, у кого подпись уже лежит в своём CLAUDE.md и в привычках.
 const assert = require('assert');
 const A = require('../ask-phrases');
 
@@ -10,6 +12,68 @@ const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 
 const asks = (text, list) => A.asksWith(A.buildAskMatcher(list), text);
+const waits = (text, list) => A.waitsWith(A.buildAskMatcher(list), text || '');
+const kind = (text, list) => A.callKind(A.buildAskMatcher(list), text);
+
+// --- теги ---------------------------------------------------------------------
+
+test('тег зова — это зов, на обоих языках и в любом регистре', () => {
+  for (const t of ['Что ставим? [вопрос]', 'Which one? [question]', 'Ну? [ ВОПРОС ]', 'So? [Question]']) {
+    assert.strictEqual(asks(t, []), true, t);
+  }
+});
+
+test('тег фона — работа идёт, человек не нужен', () => {
+  for (const t of ['Запустил замер. [фон]', 'Started the build. [background]', 'Жду. [ Фон ]']) {
+    assert.strictEqual(kind(t, []), 'wait', t);
+    assert.strictEqual(asks(t, []), false, t);
+  }
+});
+
+test('без тега и без фразы ход означает «готов»', () => {
+  assert.strictEqual(kind('Готово: три файла, тесты зелёные.', []), null);
+  assert.strictEqual(kind('Собрал стенд, отчёт выше.', []), null);
+});
+
+// Хвост считается от ПОСЛЕДНЕЙ метки: экран — это переписка целиком, и над свежим ходом
+// висит позапрошлый. Тег из прошлого хода не должен отвечать за нынешний.
+test('последняя метка побеждает, тег или фраза', () => {
+  assert.strictEqual(kind('Что ставим? [вопрос]\n\nГотово. Сейчас от тебя: ничего', []), null);
+  assert.strictEqual(kind('Сейчас от тебя: ничего\n\nА теперь что ставим? [вопрос]', []), 'ask');
+  assert.strictEqual(kind('Собираю. [фон]\n\nЧто ставим? [вопрос]', []), 'ask');
+  assert.strictEqual(kind('Что ставим? [вопрос]\n\nЛадно, сам. Собираю. [фон]', []), 'wait');
+});
+
+test('тег работает при любом списке фраз: он протокол, а не настройка', () => {
+  for (const list of [[], ['Твой ход'], ['Now from you', 'Твой ход']]) {
+    assert.strictEqual(asks('Что ставим? [вопрос]', list), true, JSON.stringify(list));
+    assert.strictEqual(waits('Собираю. [фон]', list), true, JSON.stringify(list));
+  }
+});
+
+test('тег в конце виден, а внутри слова — нет', () => {
+  // Скобки в обычном тексте встречаются: ссылки, сноски, примеры кода. Метка — отдельное
+  // слово в скобках, и совпадать должна именно она.
+  assert.strictEqual(asks('см. массив items[вопрос] в коде', []), true, 'это совпадение мы принимаем осознанно');
+  assert.strictEqual(asks('вопрос без скобок ничего не значит', []), false);
+  assert.strictEqual(asks('[вопросы] в множественном числе — не метка', []), false);
+});
+
+test('выжимка не тащит тег в подсказку и уведомление', () => {
+  const m = A.buildAskMatcher([]);
+  assert.strictEqual(A.askExcerpt(m, 'Собрал стенд.\nЧто ставим: заливку или точку? [вопрос]'),
+    'Собрал стенд. Что ставим: заливку или точку?');
+  assert.ok(!A.askExcerpt(m, 'Жду сборку. [фон]').includes('['));
+});
+
+test('«от тебя ничего» — и тег фона тоже это говорит', () => {
+  const m = A.buildAskMatcher([]);
+  assert.strictEqual(A.saysNone(m, 'Собираю. [фон]'), true);
+  assert.strictEqual(A.saysNone(m, 'Что ставим? [вопрос]'), false);
+  assert.strictEqual(A.saysNone(m, 'Готово.'), false, 'молчание подписью не считается');
+});
+
+// --- фразы: путь совместимости -------------------------------------------------
 
 test('the default phrase calls the user', () => {
   assert.strictEqual(asks('Готово. Сейчас от тебя: путь к схеме', []), true);
@@ -93,7 +157,6 @@ test('phraseSources are JSON-safe strings the hook can recompile', () => {
 // Третий исход конца хода. Он существует, потому что до него вкладка с живой фоновой
 // задачей была неотличима от свободной — зелёной, «дай ей работу».
 
-const kind = (text, list) => A.callKind(A.buildAskMatcher(list), text);
 
 test('«ничего, жду …» — работа идёт, но человека не зовут', () => {
   assert.strictEqual(kind('Сейчас от тебя: ничего, жду замер стенда'), 'wait');
