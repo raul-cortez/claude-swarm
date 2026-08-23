@@ -262,114 +262,151 @@ function short(text, max) {
 // Сводка на утро. `entries` — журнал за ночь, `tabs` — как вкладки выглядят СЕЙЧАС (стоящую
 // вкладку описывает её текущее состояние, а не запись в журнале: вопрос мог дописаться).
 //
-// Порядок групп — не хронологический и не алфавитный, а по тому, что нужно от человека.
-// Журнал у нас уже есть; сводка — список дел на утро, и первым в ней идёт то, что блокирует
-// работу, а последним то, о чём можно не думать.
+// Один пункт на ВКЛАДКУ, и это главное решение здесь. Раньше сводка была разложена по роду
+// события — «ждут тебя», «решено без тебя», «не трогали», «умерли», — и одна вкладка попадала в
+// три раздела разом, в каждом под своим именем и со своим статусом. Утром это читалось как
+// бардак: чтобы понять, что вообще было с вкладкой «миграция», человек собирал её судьбу из
+// трёх мест и сам сводил концы. Вопрос, с которым садятся за стол, звучит по-другому: «что было
+// с этой вкладкой?» — и ответ у него из двух половин: что она решила БЕЗ тебя и что оставила НА
+// тебя.
+//
+// Порядок вкладок — по тому, что от человека нужно: сперва те, что стоят и ждут (они блокируют
+// работу), потом те, что просто работали, последними тихие. Внутри одного вида — кто стоит
+// дольше.
+const STATE_ORDER = ['wait', 'perm', 'limit', 'died', 'went', 'quiet'];
+const STATE_BADGE = {
+  wait: 'ждёт тебя',
+  perm: 'стоит на разрешении',
+  limit: 'стоит на лимите',
+  died: 'закрылась',
+  went: 'работала без тебя',
+  quiet: 'тихо',
+};
+
 function digest(entries, tabs, now, opts) {
   const list = Array.isArray(entries) ? entries.slice().sort((a, b) => a.at - b.at) : [];
   const live = Array.isArray(tabs) ? tabs : [];
   const at = Number.isFinite(now) ? now : Date.now();
   const from = Number.isFinite(opts && opts.from) ? opts.from : (list.length ? list[0].at : at);
-  const byName = (t) => String((t && t.name) || 'вкладка');
 
-  // Имя вкладки у записи хука появляется не всегда: он знает только id разговора Клода, а
-  // приложение подставляет имя, только если такая вкладка ещё жива (после самоперезапуска id
-  // другой). Без этой заглушки `/morning` печатал «• undefined — …»: в окне рендерер это
-  // прикрывал своим `|| 'вкладка'`, а текст для чата — нет.
-  const nm = (e) => (e && e.tab) || 'вкладка';
+  // Одну и ту же вкладку журнал зовёт по-разному: у записи приложения есть id, у записи хука
+  // сперва только имя (он знает лишь id разговора Клода, а имя подставляет приложение — и
+  // только если такая вкладка ещё жива). Поэтому склеиваем и по id, и по имени: иначе вкладка
+  // разъезжается на две карточки, а это ровно та беда, от которой мы уходим.
+  const cards = [];
+  const byId = new Map();
+  const byName = new Map();
+  function card(id, name) {
+    const key = id == null ? '' : String(id);
+    if (key && byId.has(key)) return byId.get(key);
+    const nm = String(name == null ? '' : name) || 'вкладка';
+    if (byName.has(nm)) {
+      const c = byName.get(nm);
+      if (key && !c.id) { c.id = key; byId.set(key, c); }
+      return c;
+    }
+    const c = { id: key, name: nm, state: 'quiet', badge: '', wait: '', since: 0, mark: false, need: [], did: [], note: '' };
+    cards.push(c);
+    if (key) byId.set(key, c);
+    byName.set(nm, c);
+    return c;
+  }
 
-  const groups = [];
-  const push = (id, title, rows) => { if (rows.length) groups.push({ id, title, rows }); };
-
-  // 1. Ждут тебя. Живое состояние, а не журнал: вопрос дописывается после того, как вкладка
-  // встала, и запись двухчасовой давности показала бы половину.
-  const waits = live
-    .filter((t) => t.status === 'waiting' && t.waitingKind !== 'permission')
-    .map((t) => ({
-      tab: byName(t), id: t.id,
-      text: short(t.question, 400) || 'вопрос на экране вкладки',
+  // Живые вкладки заводят карточки первыми: у них есть и id, и имя, и они же идут в сводке
+  // выше журнальных.
+  for (const t of live) {
+    const c = card(t && t.id, t && t.name);
+    if (!t || t.status !== 'waiting') continue;
+    const perm = t.waitingKind === 'permission';
+    c.state = perm ? 'perm' : 'wait';
+    c.since = t.since || 0;
+    c.need.push({
+      text: short(t.question, 400) || (perm ? 'запрос разрешения на экране вкладки' : 'вопрос на экране вкладки'),
       meta: t.since ? `стоит ${eta(at - t.since)}` : '',
-    }));
-  push('wait', 'Ждут тебя', waits);
-
-  // 2. Разрешения. Отдельной группой, а не вместе с вопросами: у них другая цена — вкладка
-  // не думала, а просто не смела, и потерянное время здесь чистая потеря.
-  const perms = live
-    .filter((t) => t.status === 'waiting' && t.waitingKind === 'permission')
-    .map((t) => ({
-      tab: byName(t), id: t.id,
-      text: short(t.question, 400) || 'запрос разрешения на экране вкладки',
-      meta: t.since ? `стоит ${eta(at - t.since)}` : '',
-    }));
-  push('perm', 'Стоят на разрешении', perms);
-
-  // 3. Лимиты. Пара «упёрлась» + «разбудили»: вторая запись может и не прийти (сброс позже
-  // утра), и тогда так и говорим — иначе выходит, что вкладку кто-то поднял.
-  const limited = [];
-  for (const e of list) {
-    if (e.kind !== 'limit') continue;
-    const woke = list.find((w) => w.kind === 'wake' && w.tab === e.tab && w.at > e.at);
-    limited.push({
-      tab: nm(e), id: e.id,
-      text: woke
-        ? `стояла на лимите с ${clock(e.at)} до ${clock(woke.at)} — разбудили сами`
-        : `упёрлась в лимит в ${clock(e.at)}` + (e.until ? `, сброс в ${clock(e.until)}` : ''),
-      meta: woke ? `потеряно ${eta(woke.at - e.at)}` : `стоит ${eta(at - e.at)}`,
     });
   }
-  push('limit', 'Лимиты', limited);
 
-  // 4. Решено без тебя. Дословная развилка из отказа хука — самая ценная группа: это очередь
-  // на ревью, и другого места, где виден точный вопрос, у нас нет.
-  const decided = list.filter((e) => e.kind === 'deny-box').map((e) => ({
-    tab: nm(e), id: e.id,
-    text: short(e.text, 400) || 'вопрос без текста',
-    meta: [clock(e.at), Array.isArray(e.options) && e.options.length
-      ? 'варианты: ' + e.options.map((o) => short(o, 40)).join(' / ') : ''].filter(Boolean).join(' · '),
-  }));
-  push('decided', 'Решено без тебя', decided);
+  const pairs = list.map((e) => [e, card(e.id, e.tab)]);
+  for (const [e, c] of pairs) {
+    if (e.kind === 'deny-box') {
+      // Дословная развилка из отказа хука — самое ценное, что есть в сводке: другого места, где
+      // виден точный вопрос, у нас нет. `review` помечает то, за чем утром стоит посмотреть.
+      c.did.push({
+        // «Решила сама» словами: без этих слов дословная развилка в разделе «без тебя» читается
+        // как вопрос, заданный ТЕБЕ, — а он уже решён, и утром его только вычитывают.
+        text: 'решила сама: ' + (short(e.text, 400) || 'вопрос без текста'),
+        meta: [clock(e.at), Array.isArray(e.options) && e.options.length
+          ? 'варианты: ' + e.options.map((o) => short(o, 40)).join(' / ') : ''].filter(Boolean).join(' · '),
+        review: true,
+      });
+    } else if (e.kind === 'continue') {
+      c.did.push({
+        text: short(e.text, 400) || 'закрыла этап и пошла дальше',
+        meta: `${clock(e.at)} · продолжение №${e.n || 1}`,
+        review: true,
+      });
+    } else if (e.kind === 'limit') {
+      // Пара «упёрлась» + «разбудили»: вторая запись может и не прийти (сброс позже утра), и
+      // тогда лимит — не рассказ о ночи, а дело на утро.
+      const woke = pairs.find(([w, wc]) => wc === c && w.kind === 'wake' && w.at > e.at);
+      if (woke) {
+        c.did.push({
+          text: `стояла на лимите с ${clock(e.at)} до ${clock(woke[0].at)} — разбудили сами`,
+          meta: `потеряно ${eta(woke[0].at - e.at)}`,
+        });
+      } else {
+        if (c.state === 'quiet') { c.state = 'limit'; c.since = e.at; }
+        c.need.push({
+          text: `упёрлась в лимит в ${clock(e.at)}` + (e.until ? `, сброс в ${clock(e.until)}` : ''),
+          meta: `стоит ${eta(at - e.at)}`,
+        });
+      }
+    } else if (e.kind === 'done') {
+      // Только ПОСЛЕДНЕЕ «закончила и молчит»: за ночь их бывает несколько, и все, кроме
+      // последнего, уже неправда.
+      const row = { text: short(e.text, 400) || 'ход закончен', meta: clock(e.at), done: true };
+      const old = c.did.findIndex((r) => r.done);
+      if (old >= 0) c.did[old] = row; else c.did.push(row);
+    } else if (e.kind === 'died') {
+      // Время смерти — в самой строке, а не сроком стояния: «закрылась, 8м» читается как
+      // «стоит восемь минут», хотя стоять там больше нечему.
+      c.state = 'died';
+      c.since = 0;
+      c.need.push({ text: `вкладка закрылась в ${clock(e.at)}`, meta: '' });
+    } else if (e.kind === 'stand') {
+      // Почему ночь эту вкладку не тронула. Не дело, а объяснение: строкой внизу карточки, а не
+      // отдельным разделом — в разделе оно выглядело как ещё одно дело.
+      c.note = short(e.why, 200) || 'оставили стоять';
+    }
+  }
 
-  // 5. Продолжили сами. Второе место, где агент ушёл дальше, чем ему разрешали словами.
-  const went = list.filter((e) => e.kind === 'continue').map((e) => ({
-    tab: nm(e), id: e.id,
-    text: short(e.text, 400) || 'закрыла этап и пошла дальше',
-    meta: `${clock(e.at)} · продолжение №${e.n || 1}`,
-  }));
-  push('went', 'Продолжили сами', went);
-
-  // 6. Вкладки, которых ночь решила НЕ трогать, с причиной. Не дела, а объяснение: почему ночь
-  // прошла тише, чем ожидалось. Самих толчков и вопросов здесь нет намеренно — в сводке важен
-  // их исход (он уже в группах выше или в живом состоянии вкладки), а не число попыток.
-  const stood = list.filter((e) => e.kind === 'stand').map((e) => ({
-    tab: nm(e), id: e.id,
-    text: short(e.why, 200) || 'оставили стоять',
-    meta: clock(e.at),
-  }));
-  push('stood', 'Не трогали', stood);
-
-  // 7. Тихие. Отдельно мёртвые: вкладка, которой нет, — не «закончила».
-  const done = list.filter((e) => e.kind === 'done').map((e) => ({
-    tab: nm(e), id: e.id, text: short(e.text, 300) || 'ход закончен', meta: clock(e.at),
-  }));
-  push('done', 'Закончили и молчат', done);
-  const died = list.filter((e) => e.kind === 'died').map((e) => ({
-    tab: nm(e), id: e.id, text: 'вкладка закрылась', meta: clock(e.at),
-  }));
-  push('died', 'Умерли', died);
-
-  const names = new Set();
-  for (const e of list) if (e.tab) names.add(e.tab);
-  for (const t of live) names.add(byName(t));
+  for (const c of cards) {
+    // «Тихо» значит РОВНО тихо: ни дел, ни рассказа. Вкладку, которую ночью будили по лимиту,
+    // тихой не назовёшь, хотя вычитывать за ней нечего.
+    if (c.state === 'quiet' && c.did.length) c.state = 'went';
+    c.badge = STATE_BADGE[c.state] || '';
+    c.wait = c.since ? eta(at - c.since) : '';
+    // Метка на карточке вкладки в полосе: утром видно, с кем разбираться, ещё до открытия
+    // сводки. Ставится ровно там, где от человека что-то нужно или где есть что вычитать.
+    c.mark = c.need.length > 0 || c.did.some((r) => r.review);
+  }
+  cards.sort((a, b) => {
+    const wa = STATE_ORDER.indexOf(a.state);
+    const wb = STATE_ORDER.indexOf(b.state);
+    if (wa !== wb) return wa - wb;
+    if ((a.since || 0) !== (b.since || 0)) return (a.since || 0) - (b.since || 0);
+    return a.name.localeCompare(b.name);
+  });
 
   return {
     from, to: at,
     totals: {
-      tabs: names.size,
-      decided: decided.length + went.length,
-      standing: waits.length + perms.length,
+      tabs: cards.length,
+      decided: cards.reduce((n, c) => n + c.did.filter((r) => r.review).length, 0),
+      standing: cards.filter((c) => c.state === 'wait' || c.state === 'perm').length,
       night: eta(at - from),
     },
-    groups,
+    tabs: cards,
   };
 }
 
@@ -380,15 +417,26 @@ function digestText(dg) {
   const t = d.totals || {};
   const out = [`🌅 Ночь: ${t.night || '—'}, вкладок ${t.tabs || 0}.`
     + ` Решений без тебя ${t.decided || 0}, стоят ${t.standing || 0}.`];
-  for (const g of (d.groups || [])) {
+  const quiet = [];
+  for (const c of (d.tabs || [])) {
+    // Тихая вкладка не стоит абзаца — она попадёт в одну строку в конце (см. окно сводки).
+    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name); continue; }
     out.push('');
-    out.push(`${g.title}:`);
-    for (const r of g.rows) {
-      out.push(`• ${r.tab} — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
+    out.push(`▸ ${c.name} — ${c.badge}${c.wait ? `, ${c.wait}` : ''}`);
+    if (c.need.length) {
+      out.push('  на тебе:');
+      for (const r of c.need) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
     }
+    if (c.did.length) {
+      out.push('  без тебя:');
+      for (const r of c.did) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
+    }
+    if (c.note) out.push(`  не трогали: ${c.note}`);
   }
+  if (quiet.length) { out.push(''); out.push('Тихо всю ночь: ' + quiet.join(', ')); }
   return out.join('\n');
 }
+
 
 return {
   NIGHT, IDLE_MS, NUDGE_DELAY_MS, WARMUP_MS, BOOT_MS, WAKE_LAG_MS, MAX_CONTINUES, MAX_NUDGES,

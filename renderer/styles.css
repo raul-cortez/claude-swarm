@@ -1411,25 +1411,68 @@ body.presence-night .presence-item.is-now .ic { color: var(--night); }
 .night-pill[hidden] { display: none; }
 .night-pill:hover { background: color-mix(in srgb, var(--night) 26%, transparent); }
 
-/* Окно сводки. Группы одна под другой, в каждой — строка на вкладку; подробности в строке, а
-   не карточкой: восемь развёрнутых карточек в семь утра читать невозможно. */
-.modal.night { width: min(680px, 94vw); }
-.modal.night .night-sum { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
-.modal.night .night-body { max-height: min(60vh, 520px); overflow-y: auto; }
-.modal.night .night-group { margin-bottom: 14px; }
-.modal.night .night-title {
-  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--night); margin-bottom: 6px;
+/* Окно сводки. Карточка на вкладку, в карточке две половины: «на тебе» и «без тебя». Раньше
+   здесь были разделы по роду события и строки в них — и одна вкладка попадала в три раздела,
+   а читать это в семь утра значило собирать её судьбу из трёх мест.
+
+   Воздуха больше, чем хочется экономить: карточки разделены полем, а не линией, имя вкладки
+   заметно крупнее подробностей, и внутри карточки есть отступ. Плотный список тут проигрывает
+   не по красоте — по скорости чтения: утром взгляд ищет ИМЕНА, а не строки. */
+.modal.night { width: min(700px, 94vw); }
+.modal.night .night-sum { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+.modal.night .night-body {
+  max-height: min(64vh, 560px); overflow-y: auto;
+  /* Полоса прокрутки не должна лежать на кромке карточки: место под неё держим всегда. */
+  scrollbar-gutter: stable; padding-right: 2px;
+  display: flex; flex-direction: column; gap: 10px;
 }
-.modal.night .night-row {
-  display: block; width: 100%; text-align: left;
-  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
-  padding: 6px 8px; margin-bottom: 4px; cursor: pointer; color: var(--text); font: inherit;
+.modal.night .night-card {
+  display: block; width: 100%; text-align: left; font: inherit; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; cursor: pointer;
 }
-.modal.night .night-row:hover { border-color: var(--night); }
-.modal.night .night-row .nr-tab { font-weight: 600; }
-.modal.night .night-row .nr-text { display: block; font-size: 12px; }
-.modal.night .night-row .nr-meta { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.modal.night .night-card:hover { border-color: var(--night); }
+.modal.night .night-card:disabled { cursor: default; opacity: .75; }
+/* Цветная кромка слева — то же, чем полоса вкладок говорит о статусе: ждут тебя видно, не
+   читая. Тихие остаются серыми намеренно. */
+.modal.night .night-card.st-wait { border-left-color: var(--waiting); }
+.modal.night .night-card.st-perm { border-left-color: var(--waiting); }
+.modal.night .night-card.st-limit { border-left-color: var(--night); }
+.modal.night .night-card.st-died { border-left-color: var(--danger); }
+.modal.night .night-card.st-went { border-left-color: var(--ready); }
+.modal.night .nc-head {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+}
+.modal.night .nc-name {
+  font-size: 14px; font-weight: 600; letter-spacing: .01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.modal.night .nc-badge {
+  margin-left: auto; flex: none;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+}
+.modal.night .nc-sec { margin-top: 8px; }
+.modal.night .nc-sec-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin-bottom: 3px;
+}
+.modal.night .nc-sec.need .nc-sec-title { color: color-mix(in srgb, var(--night) 60%, var(--muted)); }
+.modal.night .nc-row { font-size: 12px; line-height: 1.45; padding-left: 16px; position: relative; }
+.modal.night .nc-row + .nc-row { margin-top: 4px; }
+.modal.night .nc-row::before {
+  content: '—'; position: absolute; left: 0; color: var(--muted);
+}
+.modal.night .nc-text { display: block; }
+.modal.night .nc-meta { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+.modal.night .nc-note {
+  margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
+  font-size: 10px; color: var(--muted);
+}
+/* Вкладки, о которых сказать нечего, — одной строкой в конце. Карточка на каждую превращала
+   сводку в стену «тихо»: у человека их бывает двадцать, и все они про то, что ночь их не
+   касалась. */
+.modal.night .night-quiet { color: var(--muted); font-size: 11px; padding: 2px 2px 0; }
 .modal.night .night-empty { color: var(--muted); font-size: 12px; }
 
 /* Пункт списка: иконка, название, пояснение под ними. */

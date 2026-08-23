@@ -255,27 +255,42 @@ function sampleDigest() {
     night.entry('wake', 'тесты', { at: NOW - 3600_000 + 120_000, id: '3' }),
     night.entry('done', 'док', { at: NOW - 600_000, id: '2', text: 'всё зелёное' }),
     night.entry('died', 'старая', { at: NOW - 500_000, id: '9' }),
+    night.entry('stand', 'сборка', { at: NOW - 6 * 3600_000, id: '4', why: 'разрешение' }),
   ];
   const tabs = [
     { id: '1', name: 'миграция', status: 'waiting', waitingKind: 'question', question: 'выбрать формат настроек?', since: NOW - 3600_000 },
     { id: '4', name: 'сборка', status: 'waiting', waitingKind: 'permission', question: 'rm -rf build?', since: NOW - 7 * 3600_000 },
     { id: '2', name: 'док', status: 'ready', waitingKind: null, question: '', since: 0 },
+    { id: '3', name: 'тесты', status: 'ready', waitingKind: null, question: '', since: 0 },
+    // Вкладка, о которой ночи сказать нечего: такая уходит одной строкой в конец сводки.
+    { id: '5', name: 'молчун', status: 'ready', waitingKind: null, question: '', since: 0 },
   ];
   return night.digest(entries, tabs, NOW, { from: NOW - 8 * 3600_000 });
 }
 
-test('сводка ставит первым то, что блокирует работу', () => {
-  const ids = sampleDigest().groups.map((g) => g.id);
-  assert.strictEqual(ids[0], 'wait');
-  assert.strictEqual(ids[1], 'perm');
-  // «Решено без тебя» обязано быть в сводке: это очередь на ревью.
-  assert.ok(ids.includes('decided'), ids.join(','));
-  assert.ok(ids.indexOf('done') > ids.indexOf('decided'), ids.join(','));
+// Один пункт на ВКЛАДКУ. Раньше сводка была разложена по роду события, и одна вкладка попадала
+// в три раздела разом — «ждёт тебя» тут, «решено без тебя» там, «не трогали» ещё ниже. Утром это
+// читалось как бардак: судьба вкладки собиралась из трёх мест.
+test('вкладка в сводке одна, и в ней обе половины', () => {
+  const dg = sampleDigest();
+  const names = dg.tabs.map((c) => c.name);
+  assert.strictEqual(new Set(names).size, names.length, names.join(','));
+  const mig = dg.tabs.find((c) => c.name === 'миграция');
+  assert.strictEqual(mig.need.length, 1);                  // вопрос на экране — на тебе
+  assert.strictEqual(mig.did.length, 1);                   // развилка хука — без тебя
 });
 
-test('пустые группы в сводку не попадают', () => {
+test('сводка ставит первыми тех, кто блокирует работу', () => {
+  const states = sampleDigest().tabs.map((c) => c.state);
+  assert.strictEqual(states[0], 'wait');
+  assert.strictEqual(states[1], 'perm');
+  // Тихие — последние: они ни о чём не просят.
+  assert.strictEqual(states[states.length - 1], 'quiet');
+});
+
+test('пустая ночь — пустая сводка', () => {
   const dg = night.digest([], [], NOW, { from: NOW - 1000 });
-  assert.deepStrictEqual(dg.groups, []);
+  assert.deepStrictEqual(dg.tabs, []);
   assert.strictEqual(dg.totals.standing, 0);
 });
 
@@ -286,58 +301,92 @@ test('итог считает решения и стоящих, а не стро
   assert.match(t.night, /^8ч/);
 });
 
-test('разрешение и вопрос разведены по группам', () => {
+test('разрешение и вопрос — разные состояния вкладки', () => {
   const dg = sampleDigest();
-  const wait = dg.groups.find((g) => g.id === 'wait');
-  const perm = dg.groups.find((g) => g.id === 'perm');
-  assert.strictEqual(wait.rows.length, 1);
-  assert.strictEqual(perm.rows.length, 1);
-  assert.match(perm.rows[0].text, /rm -rf/);
+  const perm = dg.tabs.find((c) => c.name === 'сборка');
+  assert.strictEqual(perm.state, 'perm');
+  assert.match(perm.need[0].text, /rm -rf/);
   // «Стоит семь часов» — это и есть цена решения «разрешения ночью не трогаем».
-  assert.match(perm.rows[0].meta, /7ч/);
+  assert.match(perm.need[0].meta, /7ч/);
+  assert.strictEqual(perm.wait, '7ч');
+  // Почему ночь её не тронула — строкой внизу карточки, а не отдельным разделом.
+  assert.match(perm.note, /разрешение/);
 });
 
-test('развилка в сводке — дословная, с вариантами', () => {
-  const row = sampleDigest().groups.find((g) => g.id === 'decided').rows[0];
+// Дословная развилка в разделе «без тебя» обязана говорить, что она УЖЕ решена: иначе утром
+// читается как вопрос, заданный человеку.
+test('развилка в сводке — дословная, с вариантами и словами «решила сама»', () => {
+  const row = sampleDigest().tabs.find((c) => c.name === 'миграция').did[0];
+  assert.match(row.text, /^решила сама: /);
   assert.match(row.text, /мигрировать молча или спросить/);
   assert.match(row.meta, /варианты: молча \/ спросить/);
 });
 
-test('лимит рассказывает и про сон, и про подъём', () => {
-  const row = sampleDigest().groups.find((g) => g.id === 'limit').rows[0];
-  assert.match(row.text, /разбудили сами/);
-  assert.match(row.meta, /потеряно/);
-});
+test('лимит, который отпустил, — рассказ; лимит, который стоит, — дело', () => {
+  const woken = sampleDigest().tabs.find((c) => c.name === 'тесты');
+  assert.strictEqual(woken.need.length, 0);
+  assert.match(woken.did[0].text, /разбудили сами/);
+  assert.match(woken.did[0].meta, /потеряно/);
 
-test('незакрытый лимит не выдаёт себя за разбуженный', () => {
   const dg = night.digest([night.entry('limit', 'тесты', { at: NOW - 3600_000, until: NOW + 3600_000 })], [], NOW, {});
-  const row = dg.groups.find((g) => g.id === 'limit').rows[0];
-  assert.match(row.text, /упёрлась в лимит/);
-  assert.doesNotMatch(row.text, /разбудили/);
+  const c = dg.tabs[0];
+  assert.strictEqual(c.state, 'limit');
+  assert.match(c.need[0].text, /упёрлась в лимит/);
+  assert.doesNotMatch(c.need[0].text, /разбудили/);
 });
 
 test('вопрос в сводке берётся из живого состояния, а не из журнала', () => {
   // В журнале лежит «какой формат» (текст на момент толчка), а на экране уже дописанный вопрос.
-  const row = sampleDigest().groups.find((g) => g.id === 'wait').rows[0];
-  assert.match(row.text, /выбрать формат настроек/);
+  const mig = sampleDigest().tabs.find((c) => c.name === 'миграция');
+  assert.match(mig.need[0].text, /выбрать формат настроек/);
+});
+
+// Метку на карточке вкладки в полосе ставит сводка, а не рендерер: правило одно на окно, чат и
+// полосу. «Закончила и молчит» — не дело, продолжение и развилка — дело.
+test('метку получает та вкладка, с которой утром разбираться', () => {
+  const dg = sampleDigest();
+  assert.strictEqual(dg.tabs.find((c) => c.name === 'миграция').mark, true);
+  assert.strictEqual(dg.tabs.find((c) => c.name === 'док').mark, true);
+  const quiet = night.digest([night.entry('done', 'тихая', { at: NOW, id: '7', text: 'готово' })], [], NOW, {});
+  assert.strictEqual(quiet.tabs[0].mark, false);
+});
+
+// Одну вкладку журнал зовёт по-разному: у записи приложения есть id, у записи хука сперва
+// только имя. Без склейки вкладка разъезжается на две карточки — ровно та беда, от которой
+// сводку и переделывали.
+test('запись без id склеивается с живой вкладкой по имени', () => {
+  const dg = night.digest(
+    [night.entry('deny-box', 'миграция', { at: NOW - 1000, text: 'молча или спросить?' })],
+    [{ id: '1', name: 'миграция', status: 'ready', question: '', since: 0 }], NOW, {});
+  assert.strictEqual(dg.tabs.length, 1);
+  assert.strictEqual(dg.tabs[0].id, '1');
+  assert.strictEqual(dg.tabs[0].did.length, 1);
 });
 
 // Записи хука знают только id разговора Клода; имя подставляет приложение, и только если такая
 // вкладка ещё жива (после самоперезапуска id другой). В окне рендерер прикрывал дыру своим
 // умолчанием, а текст для /morning печатал «• undefined — …».
 test('запись без имени вкладки не превращается в undefined', () => {
-  const e = night.entry('deny-box', '', { at: NOW, text: 'мигрировать молча?' });
+  const e = night.entry('deny-box', '', { at: NOW - 1000, text: 'мигрировать?' });
   const dg = night.digest([e], [], NOW, { from: NOW - 1000 });
-  assert.strictEqual(dg.groups[0].rows[0].tab, 'вкладка');
+  assert.strictEqual(dg.tabs[0].name, 'вкладка');
   assert.doesNotMatch(night.digestText(dg), /undefined/);
 });
 
-test('сводка словами повторяет те же числа, что и окно', () => {
+test('сводка словами повторяет те же числа и те же половины, что и окно', () => {
   const dg = sampleDigest();
   const text = night.digestText(dg);
   assert.match(text, /Решений без тебя 2, стоят 2/);
-  for (const g of dg.groups) assert.ok(text.includes(g.title), g.title);
+  for (const c of dg.tabs) {
+    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) continue;
+    assert.ok(text.includes(c.name), c.name);
+  }
+  assert.match(text, /на тебе:/);
+  assert.match(text, /без тебя:/);
+  // Тихие вкладки — одной строкой в конце, а не абзацем на каждую: их бывает двадцать.
+  assert.match(text, /Тихо всю ночь: молчун/);
 });
+
 
 // --- дубликаты в хуке ---------------------------------------------------------
 // Хук запускается сам по себе, модулей приложения ему не видно, поэтому правило и пороги там

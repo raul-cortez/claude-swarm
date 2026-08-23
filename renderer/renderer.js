@@ -1,3 +1,74 @@
+  const body = overlay.querySelector('.night-body');
+  const quiet = [];
+  for (const c of ((dg && dg.tabs) || [])) {
+    // Вкладка, о которой ночи сказать нечего, карточки не заслуживает: их бывает двадцать, и
+    // сводка из них превращается в стену «тихо». Такие уходят одной строкой в конец.
+    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name || 'вкладка'); continue; }
+    // Карточка целиком — одна кнопка: утром почти всё, что здесь написано, кончается словами
+    // «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
+    const box = document.createElement('button');
+    box.className = 'night-card' + (c.state ? ' st-' + c.state : '');
+    const head = document.createElement('div');
+    head.className = 'nc-head';
+    const name = document.createElement('span');
+    name.className = 'nc-name';
+    name.textContent = c.name || 'вкладка';
+    const badge = document.createElement('span');
+    badge.className = 'nc-badge';
+    badge.textContent = c.badge + (c.wait ? ` · ${c.wait}` : '');
+    head.append(name, badge);
+    box.appendChild(head);
+    // «На тебе» — выше «без тебя»: садясь за стол, человек сперва разбирает то, что стоит.
+    for (const [rows, title, cls] of [[c.need, 'На тебе', 'need'], [c.did, 'Без тебя', 'did']]) {
+      if (!rows || !rows.length) continue;
+      const sec = document.createElement('div');
+      sec.className = 'nc-sec ' + cls;
+      const h = document.createElement('div');
+      h.className = 'nc-sec-title';
+      h.textContent = title;
+      sec.appendChild(h);
+      for (const r of rows) {
+        const line = document.createElement('div');
+        line.className = 'nc-row';
+        const text = document.createElement('span');
+        text.className = 'nc-text';
+        text.textContent = r.text || '';
+        line.appendChild(text);
+        if (r.meta) {
+          const meta = document.createElement('span');
+          meta.className = 'nc-meta';
+          meta.textContent = r.meta;
+          line.appendChild(meta);
+        }
+        sec.appendChild(line);
+      }
+      box.appendChild(sec);
+    }
+    if (c.note) {
+      const note = document.createElement('div');
+      note.className = 'nc-note';
+      note.textContent = 'не трогали: ' + c.note;
+      box.appendChild(note);
+    }
+    if (c.id && sessions.has(String(c.id))) {
+      box.addEventListener('click', () => { overlay.remove(); activate(String(c.id)); });
+    } else {
+      box.disabled = true;
+    }
+    body.appendChild(box);
+  }
+  if (quiet.length) {
+    const q = document.createElement('div');
+    q.className = 'night-quiet';
+    q.textContent = 'Тихо всю ночь: ' + quiet.join(', ');
+    body.appendChild(q);
+  }
+  if (!body.children.length) {
+    const e = document.createElement('div');
+    e.className = 'night-empty';
+    e.textContent = 'Ночь прошла тихо: никто не встал и ничего за тебя не решали.';
+    body.appendChild(e);
+  }
 // renderer.js — UI logic. Runs in the sandboxed renderer, talks to main ONLY
 // through window.swarm (see preload.js). No Node here.
 //
@@ -4301,8 +4372,9 @@ window.swarm.telegram.state().then(renderPresencePill).catch(() => {});
 // --- утренняя сводка --------------------------------------------------------------------
 // Ночь кончилась — и первое, что нужно человеку, это не «всё хорошо», а список дел: кто стоит,
 // что решили без него, кто потерял часы на лимите. Значок в той же панели, что и обновление,
-// цветом ночи; окно — группы по тому, что от человека нужно (порядок задаёт night.js digest,
-// рендерер его не пересортировывает).
+// цветом ночи; окно — КАРТОЧКА НА ВКЛАДКУ, две половины в каждой: что она решила без тебя и
+// что оставила на тебя. Порядок вкладок задаёт night.js digest, рендерер его не
+// пересортировывает.
 const nightPill = document.getElementById('night-pill');
 let nightNow = { on: false, digest: null, typed: false };
 
@@ -4310,10 +4382,9 @@ let nightNow = { on: false, digest: null, typed: false };
 // сводки закрывают, а дела остаются: утром по полосе вкладок видно, с кем разбираться.
 function paintNightMarks(dg) {
   const marked = new Set();
-  for (const g of ((dg && dg.groups) || [])) {
-    if (g.id === 'done') continue;              // «закончили и молчат» — не дело
-    for (const r of g.rows) if (r.id) marked.add(String(r.id));
-  }
+  // Кого метить, решает night.js (поле mark): «закончила и молчит» — не дело, а вкладка с
+  // развилкой или продолжением — дело, и правило это одно на окно, чат и полосу вкладок.
+  for (const c of ((dg && dg.tabs) || [])) if (c.mark && c.id) marked.add(String(c.id));
   for (const [id, s] of sessions) {
     if (s && s.tab) s.tab.classList.toggle('night-mark', marked.has(String(id)));
   }
@@ -4322,7 +4393,7 @@ function paintNightMarks(dg) {
 function renderNightPill(st) {
   if (st) nightNow = st;
   const dg = nightNow.digest;
-  const rows = ((dg && dg.groups) || []).reduce((n, g) => n + g.rows.length, 0);
+  const rows = ((dg && dg.tabs) || []).length;
   if (nightNow.on && nightNow.typed) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
