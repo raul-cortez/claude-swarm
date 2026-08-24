@@ -1172,7 +1172,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 /* Was #stage:empty — the pult strip lives inside the stage now, so :empty never
    matches. relayoutTabs() toggles .no-sessions instead. */
 body.no-sessions #stage::after {
-  content: "no sessions — press  + new session";
+  content: "Сессий нет — нажмите ＋, чтобы начать";
   position: absolute;
   inset: 0;
   display: flex;
