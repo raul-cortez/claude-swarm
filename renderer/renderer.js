@@ -1,74 +1,3 @@
-  const body = overlay.querySelector('.night-body');
-  const quiet = [];
-  for (const c of ((dg && dg.tabs) || [])) {
-    // Вкладка, о которой ночи сказать нечего, карточки не заслуживает: их бывает двадцать, и
-    // сводка из них превращается в стену «тихо». Такие уходят одной строкой в конец.
-    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name || 'вкладка'); continue; }
-    // Карточка целиком — одна кнопка: утром почти всё, что здесь написано, кончается словами
-    // «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
-    const box = document.createElement('button');
-    box.className = 'night-card' + (c.state ? ' st-' + c.state : '');
-    const head = document.createElement('div');
-    head.className = 'nc-head';
-    const name = document.createElement('span');
-    name.className = 'nc-name';
-    name.textContent = c.name || 'вкладка';
-    const badge = document.createElement('span');
-    badge.className = 'nc-badge';
-    badge.textContent = c.badge + (c.wait ? ` · ${c.wait}` : '');
-    head.append(name, badge);
-    box.appendChild(head);
-    // «На тебе» — выше «без тебя»: садясь за стол, человек сперва разбирает то, что стоит.
-    for (const [rows, title, cls] of [[c.need, 'На тебе', 'need'], [c.did, 'Без тебя', 'did']]) {
-      if (!rows || !rows.length) continue;
-      const sec = document.createElement('div');
-      sec.className = 'nc-sec ' + cls;
-      const h = document.createElement('div');
-      h.className = 'nc-sec-title';
-      h.textContent = title;
-      sec.appendChild(h);
-      for (const r of rows) {
-        const line = document.createElement('div');
-        line.className = 'nc-row';
-        const text = document.createElement('span');
-        text.className = 'nc-text';
-        text.textContent = r.text || '';
-        line.appendChild(text);
-        if (r.meta) {
-          const meta = document.createElement('span');
-          meta.className = 'nc-meta';
-          meta.textContent = r.meta;
-          line.appendChild(meta);
-        }
-        sec.appendChild(line);
-      }
-      box.appendChild(sec);
-    }
-    if (c.note) {
-      const note = document.createElement('div');
-      note.className = 'nc-note';
-      note.textContent = 'не трогали: ' + c.note;
-      box.appendChild(note);
-    }
-    if (c.id && sessions.has(String(c.id))) {
-      box.addEventListener('click', () => { overlay.remove(); activate(String(c.id)); });
-    } else {
-      box.disabled = true;
-    }
-    body.appendChild(box);
-  }
-  if (quiet.length) {
-    const q = document.createElement('div');
-    q.className = 'night-quiet';
-    q.textContent = 'Тихо всю ночь: ' + quiet.join(', ');
-    body.appendChild(q);
-  }
-  if (!body.children.length) {
-    const e = document.createElement('div');
-    e.className = 'night-empty';
-    e.textContent = 'Прошло тихо: никто не встал и ничего за тебя не решали.';
-    body.appendChild(e);
-  }
 // renderer.js — UI logic. Runs in the sandboxed renderer, talks to main ONLY
 // through window.swarm (see preload.js). No Node here.
 //
@@ -620,6 +549,10 @@ window.swarm.onExit(({ id }) => {
   const s = sessions.get(id);
   if (!s) return;
   s.alive = false;
+  // Мандат умер вместе с агентом: main его уже снял (tgOnTabGone), и держать отметку здесь
+  // значило бы считать мёртвую вкладку работающей — значок «N вкладок сами» висел бы, а клик по
+  // нему ничего не менял (main вернул бы «и так снято»).
+  if (s.auto) applyTabAuto(id, false);
   if (s.runTimer) { clearTimeout(s.runTimer); s.runTimer = null; }
   if (s.leaveWaitTimer) { clearTimeout(s.leaveWaitTimer); s.leaveWaitTimer = null; }
   setStatus(id, 'dead', 'завершён');
@@ -1139,9 +1072,11 @@ async function createSession(opts = {}) {
   // rememberStartCommand. inEsc persists across chunks (a seq can split).
   let cmdBuf = '';
   let inEsc = false;
-  term.onData((data) => {
-    const clean = data.replace(/\x1b\[[IO]/g, '');
-    if (!clean) return;
+  // Разбор набранного — ОТДЕЛЬНО от отправки, и вызывается он только для того, что реально
+  // доехало до pty. Иначе выходила ложь: гейт задержал клавиши (или человек нажал «отмена», и
+  // они пропали), а приложение уже считало, что в вкладке ответили руками — буферизация
+  // уведомления снималась, а в память о лончерах ложилась команда, которой никто не отправлял.
+  const scanTyped = (clean) => {
     for (const ch of clean) {
       if (inEsc) { if (/[a-zA-Z~]/.test(ch)) inEsc = false; continue; }
       if (ch === '\x1b') { inEsc = true; cmdBuf = ''; }
@@ -1155,6 +1090,10 @@ async function createSession(opts = {}) {
       else if (ch === '\x7f' || ch === '\b') cmdBuf = cmdBuf.slice(0, -1);
       else if (ch >= ' ') cmdBuf += ch;
     }
+  };
+  term.onData((data) => {
+    const clean = data.replace(/\x1b\[[IO]/g, '');
+    if (!clean) return;
     typeInto(id, clean);
   });
 
@@ -1187,7 +1126,6 @@ async function createSession(opts = {}) {
       </span>
       <span class="foot">
         <span class="sub">готов</span>
-        <span class="auto-chip" hidden title="Вкладка работает без тебя: агент решает сам, а сворм подталкивает её и будит. Правый клик — забрать себе.">авто</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
@@ -1222,6 +1160,9 @@ async function createSession(opts = {}) {
     term, fit, holder, tab, alive: true, status: null, cwd: resolvedCwd, id, sumDot: null,
     cmd, flags, blank, sessionKey: sessionKey || null, tabKey, sub: 0, rawStatus: null, rawDetail: null,
     answeredAt: 0,   // когда ты последний раз нажал Enter в этой вкладке (см. answeredHere)
+    // Разбор набранного (см. scanTyped): зовётся ровно там, где ввод доехал до pty, — из
+    // typeInto и из гейта, когда тот досылает задержанное.
+    scanTyped,
     // Мандат «работает без меня». Живёт вместе с вкладкой (persistTabs) и дублирует то, что
     // знает main: окну он нужен для отметки на карточке и для границы владения (см. typeInto).
     auto: !!opts.auto,
@@ -3482,7 +3423,11 @@ function applyNotify(enabled) {
 function runQuickCommand(text) {
   const s = sessions.get(activeId);
   if (!s || !s.alive) return;
-  window.swarm.sendInput(activeId, text + '\r');
+  // Через ту же границу владения, что и клавиатура (typeInto): команда из меню — такая же
+  // печать в строку ввода, и в отданной вкладке она столкнулась бы с толчком сворма ровно так
+  // же. Мимо гейта здесь был самый обидный обход: человек нажимает /clear в отданной вкладке и
+  // получает мусор в строке, о котором его никто не спросил.
+  typeInto(activeId, text + '\r');
   requestAnimationFrame(() => s.term.focus());
 }
 
@@ -3493,7 +3438,7 @@ async function onQuickCommand(item) {
   if (item.confirm && !(await confirmModal(item.confirm))) return;
   if (item.arg) {
     // Tee up "cmd " (no Enter) and hand focus back — you type the argument.
-    window.swarm.sendInput(activeId, item.name + ' ');
+    typeInto(activeId, item.name + ' ');
     requestAnimationFrame(() => s.term.focus());
 
     return;
@@ -3910,7 +3855,12 @@ function autoNow(id) {
 
 function typeInto(id, bytes) {
   if (!bytes) return;
-  if (!autoNow(id)) { window.swarm.sendInput(id, bytes); return; }
+  const s = sessions.get(id);
+  if (!autoNow(id)) {
+    if (s && s.scanTyped) s.scanTyped(bytes);
+    window.swarm.sendInput(id, bytes);
+    return;
+  }
   const held = gateHeld.get(id) || [];
   held.push(bytes);
   gateHeld.set(id, held);
@@ -3942,19 +3892,29 @@ async function askGate(id) {
   const held = gateHeld.get(id) || [];
   gateHeld.delete(id);
   // Отдаём набранное одним куском: агенту это неотличимо от быстрой печати, а порядок сохранён.
-  if (held.length) window.swarm.sendInput(id, held.join(''));
   const sess = sessions.get(id);
+  if (held.length) {
+    const chunk = held.join('');
+    if (sess && sess.scanTyped) sess.scanTyped(chunk);
+    window.swarm.sendInput(id, chunk);
+  }
   if (sess) sess.term.focus();
 }
 
 // Мандат вкладки поменялся (меню карточки, чат, гейт) — обновляем отметку и запоминаем.
+//
+// Подсказка висит на САМОЙ КАРТОЧКЕ, а не на отдельном значке: у скрытого элемента подсказки не
+// бывает вовсе (display:none — нет и всплывающей строки), а объяснение нужно ровно там, где
+// человек видит кромку и не понимает, почему в вкладку не печатается.
 function applyTabAuto(id, on) {
   const s = sessions.get(String(id));
   if (!s) return;
   s.auto = !!on;
   s.tab.classList.toggle('is-auto', !!on);
-  const chip = s.tab.querySelector('.auto-chip');
-  if (chip) chip.hidden = !on;
+  s.tab.title = on
+    ? 'Работает без тебя: агент решает сам, сворм подталкивает её и будит. Печать в неё'
+      + ' не уходит — правый клик или первая клавиша, чтобы забрать себе.'
+    : '';
   if (!on) gateHeld.delete(String(id));
   persistTabs();
 }
@@ -4574,7 +4534,10 @@ function autoTabsHere() {
 function renderNightPill(st) {
   if (st) nightNow = st;
   const dg = nightNow.digest;
-  const rows = ((dg && dg.tabs) || []).length;
+  // Не число карточек, а число тех, о которых есть что сказать (night.js totals.worth):
+  // карточка есть у каждой живой вкладки, и по их числу значок загорался после самой тихой
+  // ночи — «отчёт: 0 стоят, 0 решений» при шести открытых вкладках.
+  const rows = (dg && dg.totals && dg.totals.worth) || 0;
   if (nightNow.on && nightNow.typed) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
@@ -4622,41 +4585,74 @@ function openNightModal() {
     ? `Без тебя ${t.night || '—'}, вкладок ${t.tabs || 0}. Решений без тебя ${t.decided || 0}, стоят ${t.standing || 0}.`
     : 'Отчёта пока нет.';
   const body = overlay.querySelector('.night-body');
-  for (const g of ((dg && dg.groups) || [])) {
-    const box = document.createElement('div');
-    box.className = 'night-group';
-    const h = document.createElement('div');
-    h.className = 'night-title';
-    h.textContent = g.title;
-    box.appendChild(h);
-    for (const r of g.rows) {
-      // Строка — кнопка: клик уводит в саму вкладку. Утром почти всё, что здесь написано,
-      // кончается словами «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
-      const b = document.createElement('button');
-      b.className = 'night-row';
-      const tab = document.createElement('span');
-      tab.className = 'nr-tab';
-      tab.textContent = r.tab || 'вкладка';
-      const text = document.createElement('span');
-      text.className = 'nr-text';
-      text.textContent = r.text || '';
-      const meta = document.createElement('span');
-      meta.className = 'nr-meta';
-      meta.textContent = r.meta || '';
-      b.append(tab, text, meta);
-      if (r.id && sessions.has(String(r.id))) {
-        b.addEventListener('click', () => { overlay.remove(); activate(String(r.id)); });
-      } else {
-        b.disabled = true;
+  const quiet = [];
+  for (const c of ((dg && dg.tabs) || [])) {
+    // Вкладка, о которой ночи сказать нечего, карточки не заслуживает: их бывает двадцать, и
+    // сводка из них превращается в стену «тихо». Такие уходят одной строкой в конец.
+    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name || 'вкладка'); continue; }
+    // Карточка целиком — одна кнопка: утром почти всё, что здесь написано, кончается словами
+    // «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
+    const box = document.createElement('button');
+    box.className = 'night-card' + (c.state ? ' st-' + c.state : '');
+    const head = document.createElement('div');
+    head.className = 'nc-head';
+    const name = document.createElement('span');
+    name.className = 'nc-name';
+    name.textContent = c.name || 'вкладка';
+    const badge = document.createElement('span');
+    badge.className = 'nc-badge';
+    badge.textContent = c.badge + (c.wait ? ` · ${c.wait}` : '');
+    head.append(name, badge);
+    box.appendChild(head);
+    // «На тебе» — выше «без тебя»: садясь за стол, человек сперва разбирает то, что стоит.
+    for (const [rows, title, cls] of [[c.need, 'На тебе', 'need'], [c.did, 'Без тебя', 'did']]) {
+      if (!rows || !rows.length) continue;
+      const sec = document.createElement('div');
+      sec.className = 'nc-sec ' + cls;
+      const h = document.createElement('div');
+      h.className = 'nc-sec-title';
+      h.textContent = title;
+      sec.appendChild(h);
+      for (const r of rows) {
+        const line = document.createElement('div');
+        line.className = 'nc-row';
+        const text = document.createElement('span');
+        text.className = 'nc-text';
+        text.textContent = r.text || '';
+        line.appendChild(text);
+        if (r.meta) {
+          const meta = document.createElement('span');
+          meta.className = 'nc-meta';
+          meta.textContent = r.meta;
+          line.appendChild(meta);
+        }
+        sec.appendChild(line);
       }
-      box.appendChild(b);
+      box.appendChild(sec);
+    }
+    if (c.note) {
+      const note = document.createElement('div');
+      note.className = 'nc-note';
+      note.textContent = 'не трогали: ' + c.note;
+      box.appendChild(note);
+    }
+    if (c.id && sessions.has(String(c.id))) {
+      box.addEventListener('click', () => { overlay.remove(); activate(String(c.id)); });
+    } else {
+      box.disabled = true;
     }
     body.appendChild(box);
+  }
+  if (quiet.length) {
+    const q = document.createElement('div');
+    q.className = 'night-quiet';
+    q.textContent = 'Тихо всю ночь: ' + quiet.join(', ');
+    body.appendChild(q);
   }
   if (!body.children.length) {
     const e = document.createElement('div');
     e.className = 'night-empty';
-    e.textContent = 'Ночь прошла тихо: никто не встал и ничего за тебя не решали.';
+    e.textContent = 'Прошло тихо: никто не встал и ничего за тебя не решали.';
     body.appendChild(e);
   }
   document.body.appendChild(overlay);

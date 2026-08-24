@@ -334,11 +334,15 @@ function digest(entries, tabs, now, opts) {
   const cards = [];
   const byId = new Map();
   const byName = new Map();
-  function card(id, name) {
+  // `live` — карточку заводит ЖИВАЯ вкладка, у неё есть id. Такие по имени не склеиваются:
+  // имена вкладок человек правит руками, и две «сборки» — это две разные вкладки с разными
+  // делами. Склейка по имени нужна только записям журнала, у которых id может не быть вовсе
+  // (хук знает вкладку по id разговора, а имя ему подставляет приложение).
+  function card(id, name, live) {
     const key = id == null ? '' : String(id);
     if (key && byId.has(key)) return byId.get(key);
     const nm = String(name == null ? '' : name) || 'вкладка';
-    if (byName.has(nm)) {
+    if (!live && byName.has(nm)) {
       const c = byName.get(nm);
       if (key && !c.id) { c.id = key; byId.set(key, c); }
       return c;
@@ -346,14 +350,16 @@ function digest(entries, tabs, now, opts) {
     const c = { id: key, name: nm, state: 'quiet', badge: '', wait: '', since: 0, live: false, mark: false, need: [], did: [], note: '' };
     cards.push(c);
     if (key) byId.set(key, c);
-    byName.set(nm, c);
+    // Первая карточка с этим именем и остаётся адресом для записей журнала без id: если живых
+    // тёзок двое, записи хука без id уйдут к первой — соврать точнее нам всё равно нечем.
+    if (!byName.has(nm)) byName.set(nm, c);
     return c;
   }
 
   // Живые вкладки заводят карточки первыми: у них есть и id, и имя, и они же идут в сводке
   // выше журнальных.
   for (const t of live) {
-    const c = card(t && t.id, t && t.name);
+    const c = card(t && t.id, t && t.name, true);
     c.live = true;
     if (!t || t.status !== 'waiting') continue;
     const perm = t.waitingKind === 'permission';
@@ -441,10 +447,17 @@ function digest(entries, tabs, now, opts) {
     return a.name.localeCompare(b.name);
   });
 
+  // Сколько карточек есть что сказать. Отдельно от общего числа вкладок, потому что этим числом
+  // решается, звать ли человека: карточка есть у КАЖДОЙ живой вкладки (иначе отчёт умалчивал бы
+  // о тех, кого не тронули), и по их числу значок «отчёт» загорался после самой тихой ночи —
+  // «отчёт: 0 стоят, 0 решений» при шести открытых вкладках.
+  const worth = cards.filter((c) => c.need.length || c.did.length || c.note).length;
+
   return {
     from, to: at,
     totals: {
       tabs: cards.length,
+      worth,
       decided: cards.reduce((n, c) => n + c.did.filter((r) => r.review).length, 0),
       standing: cards.filter((c) => c.state === 'wait' || c.state === 'perm').length,
       night: eta(at - from),

@@ -1612,7 +1612,7 @@ function tgPath() { return path.join(app.getPath('userData'), 'telegram.json'); 
 // версии, — и заменяется обычным.
 function tgLegacyPath() { return path.join(app.getPath('userData'), 'telegram.dat'); }
 
-function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', keepAwake: true, night: false, nightRule: '', nightAsk: '', whisperBin: '', whisperModel: '' }; }
+function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', detailPick: false, keepAwake: true, night: false, nightRule: '', nightAsk: '', whisperBin: '', whisperModel: '' }; }
 
 // The last result of tgCheckChat(), so the settings panel can show «бот администратор,
 // темы доступны» without re-asking Telegram on every render.
@@ -1629,7 +1629,17 @@ function tgLoad() {
     topics: (d.topics && typeof d.topics === 'object') ? d.topics : {},
     prompt: String(d.prompt || ''),
     // Файл прошлой версии подробности не знает — и это ровно то, чем мост жил до сих пор.
-    detail: telegram.DETAILS.includes(d.detail) ? d.detail : 'short',
+    //
+    // Переезд. Раньше своя формулировка перебивала пресет молча: `TG.prompt || пресет`. Теперь
+    // она действует только выбранной («своя формулировка» третьим положением), и человек,
+    // обновившийся со своим текстом, тихо потерял бы его действие — текст на месте, в поле
+    // виден, а мост просит «кратко». Поэтому у файла БЕЗ отметки о выборе (то есть от прежней
+    // версии) непустой текст сам поднимает положение до 'custom': это ровно то поведение, с
+    // которым человек жил. Отметку detailPick пишут обе двери — setDetail и setPrompt.
+    detail: (!d.detailPick && String(d.prompt || '').trim())
+      ? 'custom'
+      : (telegram.DETAILS.includes(d.detail) ? d.detail : 'short'),
+    detailPick: !!d.detailPick,
     keepAwake: d.keepAwake !== false,
     // Ночь — не настройка, а положение дел, но записанное: см. tgSetPresence.
     night: !!d.night,
@@ -1645,12 +1655,16 @@ function tgLoad() {
     whisperModel: String(d.whisperModel || ''),
   } : tgBlank();
   tgApplyPrompt();
-  // Ночь возвращаем как была. Остальные положения — нет: «за телефоном», доставшееся от
+  // Начало окна отчёта возвращаем ВСЕГДА, а не только вместе с «меня нет»: окно могло начаться
+  // с мандата одной вкладки, и такая вкладка вернётся вместе со своей отметкой. Без этой строки
+  // отчёт после перезапуска считался бы с мига восстановления — «без тебя 2 минуты» вместо ночи.
+  nightFrom = Number.isFinite(TG.nightFrom) ? TG.nightFrom : 0;
+  // «Меня нет» возвращаем как было. Остальные положения — нет: «за телефоном», доставшееся от
   // вчерашнего вечера, значило бы, что агенты во всех вкладках отказываются показывать
   // варианты выбора человеку, который сидит перед маком.
   if (TG.night) {
     tgPresence = night.NIGHT;
-    nightFrom = TG.nightFrom || Date.now();
+    if (!nightFrom) nightFrom = Date.now();
     // Хук читает «где я» с диска, а его файл переписали ДО нас (provisionStatusline бежит
     // раньше tgLoad) — там сейчас «за компом». Без этой строчки первую половину ночи агенты
     // получали бы не ночное правило, а обычную рамку с вариантами.
@@ -4288,6 +4302,7 @@ ipcMain.handle('telegram:reconnect', async () => {
 ipcMain.handle('telegram:setPrompt', (_e, raw) => {
   const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim().slice(0, 400);
   TG.prompt = text;
+  TG.detailPick = true;                 // выбор сделан руками — переезд больше не нужен
   // Написал свою строку — значит она и в силе. Иначе человек печатает текст, а мост продолжает
   // просить «кратко», и понять это можно только по тому, что ничего не изменилось.
   if (text) TG.detail = 'custom';
@@ -4303,6 +4318,7 @@ ipcMain.handle('telegram:setPrompt', (_e, raw) => {
 ipcMain.handle('telegram:setDetail', (_e, raw) => {
   const detail = telegram.DETAILS.includes(raw) ? raw : 'short';
   TG.detail = detail;
+  TG.detailPick = true;
   tgApplyPrompt();
   try { tgSave(); } catch (e) { reportMainError(e); }
   return tgState();
@@ -4805,12 +4821,22 @@ function autoAfterChange(wasAny) {
   if (nowAny && !nightFrom) {
     nightFrom = Date.now();
     nightTyped = false;
-    nightDigestNow = null;              // прошлый отчёт прочитан самим фактом новой отлучки
+    // Прошлый отчёт здесь НЕ стираем, хотя соблазн есть («новая отлучка — старое неактуально»).
+    // Стирал он не то, что задумано: при запуске приложения восстановленная отданная вкладка
+    // открывает новое окно отчёта, и непрочитанный отчёт за прошлую ночь гас у человека на
+    // глазах — а в файле оставался непрочитанным и всплывал на следующем запуске снова. Новый
+    // отчёт всё равно заменит старый, когда окно закроется (nightBuildDigest).
   }
   if (!nowAny && wasAny) {
     nightBuildDigest(Date.now());
     nightFrom = 0;                      // следующая отлучка начнёт своё окно
     nightTyped = false;
+  }
+  // Окно отчёта переживает перезапуск приложения: мандат вкладки тоже переживает (persistTabs),
+  // и без этой записи отчёт считался бы с мига восстановления.
+  if (TG.nightFrom !== nightFrom) {
+    TG.nightFrom = nightFrom;
+    try { tgSave(); } catch (e) { reportMainError(e); }
   }
 }
 
@@ -4821,7 +4847,10 @@ function autoAfterChange(wasAny) {
 function nightSwitch(prev, next) {
   const wasAny = prev === night.NIGHT || autoCount() > 0;
   if (next === night.NIGHT) {
-    for (const d of det.values()) nightReset(d);
+    // Счётчики обнуляем только тем, у кого мандата НЕ было: вкладке, которая работает сама уже
+    // час, общее «меня нет» ничего нового не выдаёт, а сброс её состояния забыл бы и стену
+    // лимита (журнал получил бы вторую запись про ту же), и то, что правило ей уже говорили.
+    for (const d of det.values()) if (!d.auto) nightReset(d);
     autoAfterChange(wasAny);
     tgLog(`меня нет: включено, вкладок ${det.size}`);
   } else if (prev === night.NIGHT) {
@@ -4940,11 +4969,13 @@ function tgSetPresence(raw, from) {
   // Остальные два начинаются заново «за компом», и это осознанно; но ночь, слетевшая в три
   // часа от автообновления, — это остаток ночи со стоящими вкладками.
   TG.night = next === night.NIGHT;
-  // И КОГДА началась: сводка отбирает записи журнала по этой границе, а перезапуск посреди
-  // ночи иначе обрезал бы отчёт до «с момента обновления».
-  TG.nightFrom = TG.night ? Date.now() : 0;
-  try { tgSave(); } catch (e) { reportMainError(e); }
+  // Начало окна отчёта (TG.nightFrom) ведёт и сохраняет autoAfterChange — оно единственное
+  // знает про вкладочные мандаты. Прежде эта строка стояла ЗДЕСЬ и ставила «сейчас» на каждое
+  // включение, то есть затирала окно, начатое мандатом одной вкладки часом раньше. Сводка
+  // отбирает записи журнала по этой границе, и перезапуск посреди ночи иначе обрезал бы отчёт
+  // до «с момента обновления».
   nightSwitch(prev, next);
+  try { tgSave(); } catch (e) { reportMainError(e); }
   // Хук читает это с диска (см. tgWriteModes): пока человек за телефоном, агент не открывает
   // вопрос с вариантами, а спрашивает прозой — на неё с телефона можно ответить.
   tgWriteModes();
@@ -5064,7 +5095,11 @@ function createWindow() {
       title: 'Закрытие приложения',
       message,
     });
-    if (choice === 1) { allowClose = true; win.close(); }
+    if (choice === 1) { allowClose = true; win.close(); return; }
+    // Передумал. ⌘Q успел объявить `before-quit` ДО этого диалога, и без сброса флага
+    // приложение до конца сеанса считало бы себя уходящим: смерть вкладки перестала бы
+    // писаться в журнал, мандат — сниматься, а отчёт — собираться вовсе.
+    quitting = false;
   });
 
   win.on('closed', () => {

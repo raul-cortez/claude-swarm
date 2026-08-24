@@ -315,6 +315,31 @@ test('сводка ставит первыми тех, кто блокирует
   assert.strictEqual(states[states.length - 1], 'quiet');
 });
 
+// Значок «отчёт» загорается по ЭТОМУ числу, а не по числу карточек: карточка есть у каждой
+// живой вкладки, и после самой тихой ночи значок звал разбираться с «0 стоят, 0 решений».
+test('в итогах отдельно считаются карточки, о которых есть что сказать', () => {
+  const t = sampleDigest().totals;
+  assert.strictEqual(t.tabs, 6);        // все вкладки, включая молчуна и тихие
+  assert.strictEqual(t.worth, 5);       // молчуну сказать нечего
+  const quiet = night.digest([], [
+    { id: '1', name: 'a', status: 'ready', question: '', since: 0 },
+    { id: '2', name: 'b', status: 'ready', question: '', since: 0 },
+  ], NOW, {});
+  assert.strictEqual(quiet.totals.tabs, 2);
+  assert.strictEqual(quiet.totals.worth, 0);
+});
+
+// Имена вкладок человек правит руками, и две «сборки» — это две разные вкладки с разными
+// делами. Склейка по имени осталась только для записей журнала без id.
+test('две живые вкладки с одним именем — две карточки', () => {
+  const dg = night.digest([], [
+    { id: '1', name: 'сборка', status: 'waiting', waitingKind: 'question', question: 'первый вопрос', since: NOW - 60_000 },
+    { id: '2', name: 'сборка', status: 'waiting', waitingKind: 'permission', question: 'rm -rf', since: NOW - 60_000 },
+  ], NOW, {});
+  assert.strictEqual(dg.tabs.length, 2);
+  assert.deepStrictEqual(dg.tabs.map((c) => c.id).sort(), ['1', '2']);
+});
+
 test('пустая ночь — пустая сводка', () => {
   const dg = night.digest([], [], NOW, { from: NOW - 1000 });
   assert.deepStrictEqual(dg.tabs, []);
@@ -432,6 +457,27 @@ test('сводка словами повторяет те же числа и т�
   assert.match(text, /Тихо всю ночь: молчун/);
 });
 
+
+// --- форма сводки: одна на модуль, окно и чат --------------------------------
+// Живой промах: сводку переделали с разделов на карточки, `groups` из night.js исчезли — а окно
+// осталось перебирать `dg.groups`. Тесты зелёные, окно открывается, и в нём всегда «прошло
+// тихо»: пустой перебор пустого поля. Никакой тест логики этого не видит, потому что рендерер
+// в тестах не исполняется вовсе. Поэтому проверяем текстом: окно читает те поля, которые
+// модуль правда отдаёт, и не читает те, которых больше нет.
+test('окно сводки читает поля, которые night.js отдаёт', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const dg = sampleDigest();
+  // Что окно обязано читать — и что в сводке действительно есть.
+  for (const field of ['dg.tabs', 'totals']) assert.ok(src.includes(field), 'окно не читает ' + field);
+  assert.ok(Array.isArray(dg.tabs) && dg.tabs.length, 'в сводке нет карточек');
+  assert.ok(Number.isFinite(dg.totals.worth), 'в итогах нет worth');
+  // Чего в сводке НЕТ — того окно читать не должно: это ровно та тихая поломка.
+  assert.strictEqual(dg.groups, undefined, 'groups вернулись в night.js — проверка устарела');
+  assert.doesNotMatch(src, /dg\s*&&\s*dg\.groups/, 'окно всё ещё перебирает dg.groups');
+  assert.doesNotMatch(src, /night-group|nr-tab|nr-meta/, 'в окне осталась разметка прежних разделов');
+});
 
 // --- дубликаты в хуке ---------------------------------------------------------
 // Хук запускается сам по себе, модулей приложения ему не видно, поэтому правило и пороги там
