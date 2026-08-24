@@ -1838,9 +1838,10 @@ function showSettingsModal(tab) {
             <button type="button" class="set-q" aria-label="подсказка">?</button>
             <span class="set-hint" hidden>Пока вас нет, отвечает агенту сам сворм — вот этими
               двумя текстами. В полях уже лежат его заготовки: правьте их как обычный текст,
-              а кнопка под полем вернёт заготовку назад. Если в своём тексте надо назвать метку
-              вопроса, напишите <span class="set-lit">{тег}</span> — сворм подставит ту, что
-              настроена у вас.</span>
+              а кнопка под полем вернёт заготовку назад. Надо назвать метку, которой агент говорит
+              «жду человека»? Напишите <span class="set-lit">{тег}</span> — сворм подставит
+              <span class="set-lit">[swarm:вопрос]</span> сам. Сама метка зашита и не настраивается:
+              по ней сворм и понимает, что вкладка вас ждёт.</span>
           </div>
           <div class="set-field">
             <div class="set-head">
@@ -2245,8 +2246,8 @@ function showSettingsModal(tab) {
     nightResets.ask.hidden = !st.ask;
     const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
     nightNote.textContent = own.length
-      ? `Свой текст: ${own.join(' и ')}. Метка вопроса — ${st.tag || ''}.`
-      : `Сейчас оба текста — заготовки сворма. Метка вопроса — ${st.tag || ''}.`;
+      ? `Свой текст: ${own.join(' и ')}.`
+      : 'Сейчас оба текста — заготовки сворма.';
   }
 
   async function saveNightText(key) {
