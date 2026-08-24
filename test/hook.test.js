@@ -558,6 +558,58 @@ test('end to end: ворота отказывают подагенту по сн
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- самозвон перезапуска ----------------------------------------------------
+// Умение перезапустить себя у агента было всегда, а знания о нём — нет: имя файла приносила
+// просьба сворма, то есть только тем, кто дошёл до порога. Одна строка на старте сессии закрывает
+// дыру, но она обязана быть правдой: имя файла — тем, которое приложение и правда читает, а сама
+// строка — только когда функция включена.
+test('свежей сессии сворм называет тот файл, который сам читает', () => {
+  const restart = require('../restart');
+  const sid = '0d7f8c22-3b1a-4d55-9f10-aa1122334455';
+  assert.strictEqual(H.restartFileFor(sid), restart.answerName(sid));
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
+    null, [], 'desk', { restart: { on: true } });
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.ok(out.hookSpecificOutput.additionalContext.includes(restart.answerName(sid)),
+    'в строке названо имя файла');
+  assert.match(out.hookSpecificOutput.additionalContext, /перезапустить себя сам/);
+  // Статуса старт сессии не даёт: вкладке он ничего нового про работу не говорит.
+  assert.strictEqual(out.terminalSequence, undefined);
+});
+
+test('выключенный перезапуск про самозвон молчит', () => {
+  const off = { restart: { on: false } };
+  assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' },
+    null, [], 'desk', off), null);
+  // Файла режимов от прежней версии сворма (поля нет вовсе) — то же молчание.
+  assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' },
+    null, [], 'desk', {}), null);
+});
+
+test('end to end: включённый перезапуск на диске доезжает до свежей сессии', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-rs-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
+    JSON.stringify({ sessions: [], presence: 'desk', restart: { on: true } }));
+  const run = () => execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sid-9', cwd: dir }),
+    encoding: 'utf8',
+  });
+  const out = JSON.parse(run());
+  assert.match(out.hookSpecificOutput.additionalContext, /\.swarm-restart-sid-9\.json/);
+  // Выключили — и строка исчезла с того же диска, без пересборки чего-либо.
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
+    JSON.stringify({ sessions: [], presence: 'desk', restart: { on: false } }));
+  assert.strictEqual(run().trim(), '');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('подагенту про перезапуск вкладки не рассказывают', () => {
+  assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1', agent_id: 'a1' },
+    null, [], 'desk', { restart: { on: true } }), null);
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

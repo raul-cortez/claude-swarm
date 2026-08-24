@@ -2629,8 +2629,13 @@ function tgWriteModes() {
   // когда человек за столом».
   const auto = [];
   for (const d of det.values()) if (d.auto && !d.dead && d.claudeSessionId) auto.push(d.claudeSessionId);
+  // Включён ли перезапуск. По этому полю хук кладёт свежей сессии строку «можешь позвать
+  // перезапуск сам» — с именем файла, которое считает сам из id разговора (restart.answerName).
+  // Выключенная функция приезжает выключенной: обещать агенту дверь, которую сворм не откроет,
+  // хуже, чем молчать.
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
+    restart: { on: RESTART_ENABLED },
   });
   if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
   try {
@@ -5351,12 +5356,27 @@ function restartReadAt(file) {
   } catch (_) { return null; }
 }
 
-// Ответ вкладки: свой именной файл, а если его нет — общий. Возвращает и путь: прочитанное мы
-// стираем, и стереть надо ровно тот файл, который прочитали.
+// Файл-ответ, названный по id РАЗГОВОРА. Его имя знает хук — он кладёт свежей сессии строку про
+// самозвон, а ключа вкладки у него нет (см. restart.answerName). Однозначен по построению, поэтому
+// читается и в папке с двумя вкладками, где общее имя не годится.
+function restartSessionFile(d) {
+  const cwd = d && d.cwd;
+  const name = restart.answerName(d && d.claudeSessionId);
+  if (!cwd || !name || !fs.existsSync(cwd)) return '';
+  return path.join(cwd, name);
+}
+
+// Ответ вкладки: свой именной файл, потом названный по разговору, потом общий. Возвращает и путь:
+// прочитанное мы стираем, и стереть надо ровно тот файл, который прочитали.
 function restartReadAnswer(id, d) {
   const named = restartAnswerFile(id, d);
   const own = restartReadAt(named);
   if (own) return { file: named, answer: own };
+  const bySession = restartSessionFile(d);
+  if (bySession) {
+    const mine = restartReadAt(bySession);
+    if (mine) return { file: bySession, answer: mine };
+  }
   const cwd = d && d.cwd;
   if (!cwd) return { file: named, answer: null };
   const shared = path.join(cwd, RESTART_SHARED_NAME);
@@ -5386,7 +5406,9 @@ function restartHandoffName(id, d) {
 function restartSweepCwd(id, d) {
   const cwd = d && d.cwd;
   if (!cwd) return;
-  for (const f of [restartAnswerFile(id, d), path.join(cwd, restartHandoffName(id, d))]) {
+  const bySession = restartSessionFile(d);
+  for (const f of [restartAnswerFile(id, d), path.join(cwd, restartHandoffName(id, d)),
+    ...(bySession ? [bySession] : [])]) {
     try { fs.unlinkSync(f); } catch (_) { /* нет — и хорошо */ }
   }
 }
@@ -6103,6 +6125,9 @@ ipcMain.on('settings:restart', (_e, opts = {}) => {
   RESTART_ENABLED = !!(opts && opts.enabled);
   RESTART_PCT = restart.clampPct(opts && opts.threshold);
   restartLog(`настройка: ${RESTART_ENABLED ? 'вкл' : 'выкл'}, порог ${RESTART_PCT}%`);
+  // Хук читает это из файла режимов: снятая галочка должна закрыть агенту и дверь самозвона, а
+  // не только наши вопросы на пороге.
+  tgWriteModes();
   if (was && !RESTART_ENABLED) {
     // Висящий вопрос снимаем вместе с функцией. Иначе он переживёт выключение, агент допишет
     // ответ в файл, и первый же тик после будущего включения исполнит вчерашнее «можно» — стерев

@@ -236,6 +236,44 @@ const nightRule = (tag) => [
   'Не спрашивай второй раз об одном и том же: повторный вопрос сейчас никто не прочитает.',
 ].join(' ');
 
+// --- перезапуск по своей воле ------------------------------------------------
+// Одна строка в контекст свежей сессии: «ты можешь перезапустить себя сам». Умение это в сворме
+// было с самого начала (restart.js читает файл-ответ мимо порога, мимо отсрочки и мимо немоты),
+// но знал о нём только тот агент, которого УЖЕ спросили на пороге, — просьба и приносила имя
+// файла. Агент, до порога не дошедший, честно домалывал большую работу в тупеющей сессии:
+// сворм видит проценты, а объём работы впереди знает только он.
+//
+// Почему здесь, а не в просьбе сворма: это про УМЕНИЕ, а не про решение. Знать о нём надо
+// заранее и один раз, а решать — в конкретный миг, и критерии решения живут в тексте просьбы
+// (restart.askText), которую сворм печатает на пороге. Здесь коротко: когда стоит, когда нет и
+// куда положить файл.
+//
+// Платит за эти строки каждая сессия, поэтому их мало. Всё длинное — в MANUAL.md.
+const selfRestartNote = (file) => [
+  '[сворм] Ты можешь перезапустить себя сам, не дожидаясь, пока я спрошу.',
+  'Я вижу только проценты заполнения контекста, а объём работы впереди знаешь только ты:',
+  'если впереди большой кусок, а окно уже подъедено — начни его свежей сессией, а не тупеющей.',
+  'Как: сначала запиши эстафету (что сделано, на чём стоишь, что дальше, чем проверять) туда,',
+  'где у тебя это принято, потом положи в свою рабочую папку файл',
+  `${file} с одним JSON-объектом:`,
+  '{"restart": true, "prompt": "чем займётся свежая сессия", "handoff": "где лежит эстафета"}',
+  'Я подберу его в течение полминуты, дождусь спокойного мига и подниму свежую сессию этим',
+  'промптом. Без prompt или без handoff (либо text с самой запиской) перезапуска не будет.',
+  'Когда НЕ стоит: работа закончена или до конца осталось одно-два дешёвых действия — доделай',
+  'здесь. Перезапуск нужен ради работы впереди, а не ради чистоты сессии.',
+].join('\n');
+
+// Имя файла-ответа для ЭТОЙ вкладки — по id разговора, единственному, что хук про неё знает.
+// Дубликат restart.answerName из приложения (модулей приложения здесь нет), сверяется тестом.
+// Общее имя `.swarm-restart.json` тут не годится: в папке с двумя вкладками сворм его не читает,
+// и зов ушёл бы в тишину — предупреждение об этом он пишет на вкладку, а не в разговор. Оно
+// остаётся лишь на случай события без id разговора: назвать нечего, а промолчать про дверь хуже.
+const SHARED_ANSWER = '.swarm-restart.json';
+const restartFileFor = (sid) => {
+  const id = String(sid == null ? '' : sid).replace(/[^\w.-]/g, '_');
+  return id ? '.swarm-restart-' + id + '.json' : SHARED_ANSWER;
+};
+
 // Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
 // его текст в тот же файл, где лежит «где я» (swarm-tgmode.json). Дубликат подстановки из
 // night.js ruleText — по той же причине, что и всё в этом файле: модулей приложения здесь нет.
@@ -407,7 +445,13 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   const seq = markerFor(payload, matcher, (deny || gate) ? 'busy' : null);
   const note = (payload && payload.hook_event_name === 'UserPromptSubmit')
     ? usageNote(ex.usage, nowSec) : '';
-  if (!seq && !deny && !gate && !note) return null;
+  // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
+  // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
+  // не говорим вовсе: он живёт внутри чужого хода и гасить вкладку ему не за что.
+  const intro = (payload && payload.hook_event_name === 'SessionStart'
+    && !isSubagent(payload) && ex.restart && ex.restart.on)
+    ? selfRestartNote(restartFileFor(sid)) : '';
+  if (!seq && !deny && !gate && !note && !intro) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;
   if (deny || gate) {
@@ -417,6 +461,12 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
       permissionDecisionReason: gate
         ? gate.reason
         : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker, ex.nightRule, auto),
+    };
+    if (seq) out.hookSpecificOutput.terminalSequence = seq;
+  } else if (intro) {
+    out.hookSpecificOutput = {
+      hookEventName: 'SessionStart',
+      additionalContext: intro,
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   } else if (note) {
@@ -506,6 +556,7 @@ async function main() {
   let presence = '';
   let nightCustom = '';
   let autoSessions = [];
+  let restartModes = null;
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
     tgSessions = tg.sessions || [];
@@ -518,6 +569,9 @@ async function main() {
     // Вкладки со своим мандатом «работай без меня». Список сессий, как и у режима телефона:
     // хук знает про вкладку только её id разговора.
     autoSessions = Array.isArray(tg.auto) ? tg.auto.map(String) : [];
+    // Включён ли перезапуск. Нет поля (файл от прежней версии) — молчим про самозвон: обещать
+    // дверь, которой может не быть, хуже, чем не обещать. Имя файла считаем сами, из id разговора.
+    restartModes = (tg.restart && typeof tg.restart === 'object') ? tg.restart : null;
   } catch (_) { /* none */ }
   const matcher = loadMatcher(() => phrases);
   let input = '';
@@ -532,7 +586,7 @@ async function main() {
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
-        { usage, nightRule: nightCustom, autoSessions });
+        { usage, nightRule: nightCustom, autoSessions, restart: restartModes });
       // Запрещённая рамка у автономной вкладки — это принятое без человека решение. Записываем
       // ЕГО, а не факт отказа: в отчёте должна стоять развилка дословно.
       const sid = String((payload && payload.session_id) || '');
@@ -571,4 +625,5 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
-  nightRule, nightRuleText, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN };
+  nightRule, nightRuleText, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  selfRestartNote, restartFileFor };

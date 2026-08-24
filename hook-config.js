@@ -17,6 +17,9 @@ function hookSettings(command) {
     PostToolUse: entry,        // → busy: a tool finished, so work resumed. Without
                                // it an approved permission stays «ждёт» until the
                                // next tool starts.
+    SessionStart: entry,       // статуса не даёт: это единственный миг, когда агенту можно
+                               // положить в контекст одну строку — что он вправе позвать
+                               // перезапуск сам (см. selfRestartNote в swarm-signal.mjs).
     SubagentStop: entry,       // → subend: подагент закончил. Парный к `sub`, который
                                // приходит с его шагов через те же Pre/PostToolUse.
   };
