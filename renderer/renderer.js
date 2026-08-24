@@ -573,6 +573,17 @@ window.swarm.onExit(({ id }) => {
 // Terminal links open only on modifier-click (like VS Code / editors), so a
 // stray click while reading never yanks you to the browser. macOS uses ⌘, the
 // rest use Ctrl. The hover tooltip spells this out.
+// Одно место на все подписи, где упоминается система. Приложение собирается и под Windows,
+// поэтому «⌘», «мак» и «~/.zshrc» в тексте — это обещание клавиши и файла, которых там нет.
+const MAC = window.swarm.platform === 'darwin';
+const key = (k) => (MAC ? '⌘' + k : 'Ctrl+' + k);
+const HOST = {
+  fileManager: MAC ? 'Finder' : 'Проводника',
+  profile: MAC ? '<code>~/.zshrc</code>' : 'профиля PowerShell',
+  exports: MAC ? 'пропишите нужные <code>export</code> в <code>~/.zshrc</code>'
+    : 'задайте переменные окружения — <code>setx</code> или профиль PowerShell',
+};
+
 const LINK_MOD = window.swarm.platform === 'darwin' ? 'metaKey' : 'ctrlKey';
 const LINK_HINT = window.swarm.platform === 'darwin'
   ? '⌘+клик — открыть ссылку'
@@ -1337,7 +1348,7 @@ function showSettingsModal(tab) {
         <button class="set-tab" data-tab="tabs">Вкладки</button>
         <button class="set-tab" data-tab="keys">Клавиши</button>
         <button class="set-tab" data-tab="telegram">Телеграм</button>
-        <button class="set-tab" data-tab="night">Авто</button>
+        <button class="set-tab" data-tab="night">Ночной режим</button>
         <button class="set-tab" data-tab="updates">Обновления</button>
       </nav>
 
@@ -1529,7 +1540,7 @@ function showSettingsModal(tab) {
               <span class="set-check-tx">Показывать пульт</span>
             </label>
             <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Вкладка ⌘0 с очередью агентов, которые ждут ответа.</span>
+            <span class="set-hint" hidden>Вкладка ${key('0')} с очередью агентов, которые ждут ответа.</span>
           </div>
         </section>
       </div>
@@ -1545,7 +1556,7 @@ function showSettingsModal(tab) {
             <div class="set-head">
               <span class="set-label">Раскладка</span>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Где живут вкладки — списком слева или карточками сверху (⌘L).</span>
+              <span class="set-hint" hidden>Где живут вкладки — списком слева или карточками сверху (${key('L')}).</span>
             </div>
             <select class="set-input" id="set-layout"></select>
           </div>
@@ -1814,12 +1825,12 @@ function showSettingsModal(tab) {
 
       <div class="set-panel" data-panel="night">
         <header class="set-panel-h">
-          <h2 class="set-h">Работа без вас</h2>
-          <p class="set-intro">Вкладка, которой отдали задачу, решает обратимое сама, а на дорогой
-            развилке останавливается и ждёт вас. Отдать одну вкладку — правый клик по её карточке,
-            «Работает без меня» (или <span class="set-mono">/auto</span> в её теме). Отдать все
-            сразу — луна в нижней панели, положение «меня нет». Вернулись — сворм показывает, кто
-            что решил без вас.</p>
+          <h2 class="set-h">Ночной режим</h2>
+          <p class="set-intro">Вкладка в ночном режиме решает обратимое сама, а на дорогой
+            развилке останавливается и ждёт вас. Включить его одной вкладке — полумесяц на её
+            карточке (или <span class="set-mono">/night</span> в её теме в телеграме), и карточка
+            станет фиолетовой. Включить всем сразу — луна в нижней панели, положение «меня нет».
+            Вернулись — сворм показывает, кто что решил без вас.</p>
         </header>
         <section class="set-group">
           <div class="set-group-h">
@@ -1828,7 +1839,7 @@ function showSettingsModal(tab) {
             <span class="set-hint" hidden>Два текста, и они уезжают агенту в разные моменты.
               Пустое поле — заготовка сворма; она же стоит в поле подсказкой, её можно скопировать
               и переписать под себя. Где нужно назвать метку вопроса, пишите
-              <span class="set-lit">{тег}</span> — сворм подставит ту, что настроена у вас.</span>
+              <span class="set-lit">{тег}</span> — сворм подставит её сам.</span>
           </div>
           <div class="set-field">
             <div class="set-head">
@@ -3144,7 +3155,7 @@ function relayoutTabs() {
   if (pultEnabled) {
     const pt = document.createElement('div');
     pt.className = 'pult-tab' + (pultOn ? ' active' : '');
-    pt.title = 'Пульт — кто ждёт ответа (⌘0)';
+    pt.title = `Пульт — кто ждёт ответа (${key('0')})`;
     pt.innerHTML = '<span class="pult-name">Пульт</span>'
       + '<span class="pult-count" hidden>0</span>';
     pt.addEventListener('click', () => setPult(true));
@@ -3891,11 +3902,11 @@ async function askGate(id) {
   // Текст называет ВСЁ, что случится по кнопке: и снятие общего «меня нет», и снятие отметки
   // вкладки. Молча трогать хоть одно из двух нельзя — человек потом гадает, кто главный.
   const msg = away
-    ? `Включено «меня нет»: вкладки работают сами, и в «${name}» пишет сворм.`
+    ? `Включено «меня нет»: все вкладки в ночном режиме, и в «${name}» пишет сворм.`
       + ' Вы за клавиатурой — снять «меня нет»'
-      + (mine ? ' и отметку «работает без меня» у этой вкладки?' : '?')
-      + ' Остальные вкладки с отметкой продолжат сами.'
-    : `«${name}» работает без вас: агент решает сам, а сворм её подталкивает.`
+      + (mine ? ' и ночной режим у этой вкладки?' : '?')
+      + ' Остальные ночные вкладки продолжат сами.'
+    : `«${name}» в ночном режиме: агент решает сам, а сворм её подталкивает.`
       + ' Забрать вкладку себе? Пока она отдана, набранное ей не уходит.';
   const take = await confirmModal(msg, away ? 'Я за клавиатурой' : 'Забрать себе');
   gateAsking.delete(id);
@@ -4007,25 +4018,25 @@ const HELP_HTML = `
   </ul>
 
   <h4>После перезапуска</h4>
-  <p>Вкладки (папка + имя) запоминаются всегда. Восстановление диалогов — опция в <b>Настройки → Запуск</b> (выкл. по умолчанию); сейчас только для Claude Code.</p>
+  <p>Вкладки (папка + имя) запоминаются всегда, и диалоги возвращаются сами — отдельной галочки для этого нет. Работает это там, где есть чему возвращаться: у Claude Code.</p>
 
   <h4>Горячие клавиши</h4>
   <ul>
-    <li><code>⌘T</code> — новая вкладка (папка по умолчанию) · <code>⌘O</code> — с выбором папки</li>
-    <li><code>⌘K</code> — палитра команд · <code>⌘L</code> — раскладка · <code>⌘W</code> — закрыть вкладку</li>
-    <li><code>⌘1…9</code> — прыжок на вкладку · <code>⌘/</code> — эта справка</li>
+    <li><code>${key('T')}</code> — новая вкладка (папка по умолчанию) · <code>${key('O')}</code> — с выбором папки</li>
+    <li><code>${key('K')}</code> — палитра команд · <code>${key('L')}</code> — раскладка · <code>${key('W')}</code> — закрыть вкладку</li>
+    <li><code>${key('1')}…9</code> — прыжок на вкладку · <code>${key('/')}</code> — эта справка</li>
   </ul>
 
   <h4>Какой аккаунт / модель запускается</h4>
   <p>Приложение наследует окружение от того, <b>кто его запустил</b>, и просто печатает <code>claude</code>. Значит выбор аккаунта живёт в вашем шелле, а не в приложении:</p>
   <ul>
-    <li><b>Надёжно:</b> пропишите нужные <code>export</code> в <code>~/.zshrc</code>. Каждая вкладка поднимает login-шелл, сорсит <code>.zshrc</code> и подхватывает их — даже при запуске из Finder.</li>
-    <li>Запуск из Finder без настроек в <code>.zshrc</code> = голое окружение → дефолтный <code>claude</code> (может быть разлогинен).</li>
-    <li>Правки <code>.zshrc</code> подхватывают <b>новые</b> вкладки; уже открытые — нет.</li>
+    <li><b>Надёжно:</b> ${HOST.exports}. Каждая вкладка поднимает login-шелл, читает ${HOST.profile} и подхватывает их — даже при запуске из ${HOST.fileManager}.</li>
+    <li>Запуск из ${HOST.fileManager} без этих настроек = голое окружение → дефолтный <code>claude</code> (может быть разлогинен).</li>
+    <li>Правки подхватывают <b>новые</b> вкладки; уже открытые — нет.</li>
   </ul>
 
   <h4>Другие модели (GLM, DeepSeek…)</h4>
-  <p>Если модель подключена через <code>ANTHROPIC_BASE_URL</code> — это <b>тот же Claude Code</b>, просто другой бэкенд. Всё работает без изменений: команды (<code>/compact</code>, <code>/clear</code>, <code>/usage</code>) — это фичи CLI, а не модели. Токен и base URL держите в <code>~/.zshrc</code>, <b>не в приложении</b>.</p>
+  <p>Если модель подключена через <code>ANTHROPIC_BASE_URL</code> — это <b>тот же Claude Code</b>, просто другой бэкенд. Всё работает без изменений: команды (<code>/compact</code>, <code>/clear</code>, <code>/usage</code>) — это фичи CLI, а не модели. Токен и base URL держите в ${HOST.profile}, <b>не в приложении</b>.</p>
 
   <h4>Запоминание команды запуска</h4>
   <p>Наберите в терминале вкладки нужный лончер <b>руками</b> (<code>claude-my</code>, <code>claude-glm</code>, <code>glm</code>…) — приложение привяжет его к <b>этой</b> вкладке (при перезапуске снова откроет им) и сделает командой по умолчанию для новых. Ловится только набранное или вставленное: команда из истории стрелкой ↑ не считается, наберите её разок целиком.</p>
@@ -4433,12 +4444,12 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 // отвязкой группы в настройках или привязкой новой с телефона.
 const PRESENCE = [
   { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'телега молчит и в вкладки не пишет' },
-  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, мак не спит', needsBot: true },
+  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, компьютер не спит', needsBot: true },
   // «Меня нет» — не про телегу вовсе: человека нет у компьютера. Поэтому оно в списке всегда, и
   // бота для него не нужно (уйти можно и без телефона), а отчёт ждёт в окне приложения. Это же
   // положение выдаёт мандат «работай без меня» СРАЗУ ВСЕМ вкладкам; одной вкладке он выдаётся
   // отдельно, правым кликом по карточке.
-  { id: 'night', icon: 'moon', name: 'меня нет', hint: 'все вкладки решают сами, разрешения стоят, потом отчёт' },
+  { id: 'night', icon: 'moon', name: 'меня нет', hint: 'ночной режим у всех вкладок, разрешения стоят, потом отчёт' },
 ];
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
@@ -4570,16 +4581,16 @@ function renderNightPill(st) {
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
     nightPill.hidden = false;
     nightPill.textContent = '«меня нет» включено';
-    nightPill.title = 'Вы за клавиатурой, а положение «меня нет» ещё включено: все вкладки продолжают'
-      + ' решать сами. Клик — вернуться и показать отчёт.';
+    nightPill.title = 'Вы за клавиатурой, а положение «меня нет» ещё включено: все вкладки остаются'
+      + ' в ночном режиме и решают сами. Клик — вернуться и показать отчёт.';
   } else if (!nightNow.on && autoTabsHere()) {
-    // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (кромка слева), но
-    // счётчик отвечает на другой вопрос — «сколько всего сейчас работает без меня», — и даёт
-    // одну кнопку забрать всё назад: по одной вкладке через меню это десять правых кликов.
+    // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (они фиолетовые),
+    // но счётчик отвечает на другой вопрос — «сколько всего сейчас в ночном режиме», — и даёт
+    // одну кнопку забрать всё назад: по одной вкладке это десять кликов по полумесяцам.
     const n = autoTabsHere();
     nightPill.hidden = false;
-    nightPill.textContent = `${n} ${n === 1 ? 'вкладка' : 'вкладок'} сами`;
-    nightPill.title = 'Столько вкладок работают без вас: решают обратимое сами, на дорогом'
+    nightPill.textContent = `${n} ${n === 1 ? 'вкладка' : 'вкладок'} в ночном`;
+    nightPill.title = 'Столько вкладок в ночном режиме: решают обратимое сами, на дорогом'
       + ' останавливаются. Клик — забрать все себе.';
   } else if (!nightNow.on && rows) {
     const t = dg.totals || {};

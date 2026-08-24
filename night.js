@@ -178,7 +178,7 @@ function wakeWord() {
 function nudgeDecision(st, ctx) {
   const s = st || {};
   const c = ctx || {};
-  if (!c.auto) return { act: 'skip', why: 'вкладка не автономна' };
+  if (!c.auto) return { act: 'skip', why: 'вкладка не в ночном режиме' };
   if (c.kind === 'permission') return { act: 'stand', why: 'разрешение' };
   if (c.box) return { act: 'skip', why: 'открыта рамка' };
   if ((c.now - (c.bootAt || 0)) < BOOT_MS) return { act: 'skip', why: 'приложение только запустилось' };
@@ -200,7 +200,7 @@ function nudgeDecision(st, ctx) {
 function phaseDecision(st, ctx) {
   const s = st || {};
   const c = ctx || {};
-  if (!c.auto) return { act: 'skip', why: 'вкладка не автономна' };
+  if (!c.auto) return { act: 'skip', why: 'вкладка не в ночном режиме' };
   if (c.status !== 'ready') return { act: 'skip', why: 'вкладка не простаивает' };
   // «Ничего, жду замер стенда» — агент не простаивает, он ждёт свою фоновую задачу, и она
   // его разбудит сама. Вопрос сюда — перебивание.

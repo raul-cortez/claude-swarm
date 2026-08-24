@@ -1947,7 +1947,7 @@ async function voiceInstall(modelId) {
     const plan = await voicePlan(modelId);
     if (!plan.ok) {
       throw new Error('для этой системы готовой сборки распознавателя нет —'
-        + ' поставь whisper.cpp сам и укажи путь вручную');
+        + ' поставьте whisper.cpp сами и укажите пути кнопкой «Уже есть whisper.cpp»');
     }
     voiceJob.total = plan.bytes;
     fs.mkdirSync(voiceDir(), { recursive: true });
@@ -2195,7 +2195,7 @@ async function tgCheckChat(chatId) {
   const manage = admin ? member.can_manage_topics !== false : (admin === null ? null : false);
   checks.push(tgChk('manage', 'Право «Управление темами»', manage,
     manage !== false ? '' : `В «${title}» у бота нет права «Управление темами» — вкладки не`
-      + ' получат своих тем. Включи это право в его админ-настройках.'));
+      + ' получат своих тем. Включите это право в его админ-настройках.'));
 
   // Право на удаление — не гейт: без него мост работает, просто закрытые вкладки оставляют
   // за собой тему с замочком.
@@ -2388,7 +2388,7 @@ async function tgTopicFor(id) {
   // а шапка всегда наверху темы, то есть это постоянная панель управления вкладкой.
   tgRemember(await tgSend({
     threadId,
-    text: `Вкладка «${tgTabName(id)}».${where}\n\nПиши сюда — попадёт в этого агента.`,
+    text: `Вкладка «${tgTabName(id)}».${where}\n\nПишите сюда — попадёт в этого агента.`,
     silent: true,
     replyMarkup: telegram.actionKeyboard(String(id)),
   }), id);
@@ -2538,7 +2538,7 @@ async function tgOnService(u) {
     tgLog(`  тему ${u.threadId} закрыли руками — спрашиваю, что делать со вкладкой ${id}`);
     tgRemember(await tgSend({
       threadId: u.threadId,
-      text: `Тема закрыта, а вкладка «${tgTabName(id)}» на маке ещё работает.`
+      text: `Тема закрыта, а вкладка «${tgTabName(id)}» на компьютере ещё работает.`
         + '\n\n↩️ вернуть тему — открою её обратно, и продолжим здесь.'
         + '\n✖️ закрыть вкладку — агент завершится, тема исчезнет из группы.',
       replyMarkup: telegram.actionKeyboard(String(id), ['reopen', 'kill']),
@@ -2727,11 +2727,11 @@ async function tgDeskHold(id, d, u, tagged) {
   const held = d
     ? `${had ? 'Держу последнее (прежнее забыл)' : 'Сообщение держу'} ${mins} мин: включишь`
       + ` режим телефона — отправлю «${name}» сразу. Не включишь — забуду, напишешь заново.`
-    : `Отправить «${name}» мне уже нечем — вкладки нет. Включи режим телефона и напиши снова.`;
+    : `Отправить «${name}» мне уже нечем — вкладки нет. Включите режим телефона и напишите снова.`;
   await tgSend({
     threadId: u.threadId, replyTo: u.messageId,
     text: '🖥 Сворм в режиме компа — в вкладки я сейчас не пишу.\n\n'
-      + `${held} Тогда же мак перестанет засыпать, а остальные вкладки начнут писать сюда`
+      + `${held} Тогда же компьютер перестанет засыпать, а остальные вкладки начнут писать сюда`
       + ' о вопросах и разрешениях.',
     replyMarkup: telegram.actionKeyboard(String(id), ['phone']),
   });
@@ -3224,7 +3224,7 @@ async function tgNotifyWaiting(id, d) {
   // говорит именно про него, а не «ответь за компьютером».
   const kb = permission ? telegram.actionKeyboard(String(id), ['esc']) : null;
   const tail = permission
-    ? '\n\nВариантов не разобрал — кнопок с ними не будет. Нажми «закрыть диалог»,'
+    ? '\n\nВариантов не разобрал — кнопок с ними не будет. Нажмите «закрыть диалог»,'
       + ' и можно отвечать словами; или ответь за компьютером.'
     : said
       ? '\n\nОтветь реплаем на это сообщение.'
@@ -3301,7 +3301,7 @@ async function tgOnAction(qa, u, ack, routed) {
   const tab = at.tab;
   if (tab == null) {
     await ack('Эта тема ни с одной вкладкой не связана — кнопки в ней уже ничего не адресуют.'
-      + ' Скажи /sync.');
+      + ' Скажите /sync.');
     return;
   }
   if (at.mismatch) tgLog(`  кнопка из прошлого запуска: payload ${qa.tab}, тема даёт ${tab}`);
@@ -3359,7 +3359,7 @@ async function tgOnAction(qa, u, ack, routed) {
     d.tgClearAsk = 0;
     if (!asked || Date.now() - asked > TG_CLEAR_TTL_MS) {
       tgLog(`  кнопка «стереть»: запрос по вкладке ${tab} устарел — не стираю`);
-      await ack('Этот запрос уже устарел, а разговор с тех пор мог стать другим. Скажи /clear'
+      await ack('Этот запрос уже устарел, а разговор с тех пор мог стать другим. Скажите /clear'
         + ' заново, если всё ещё нужно.');
       return;
     }
@@ -3380,7 +3380,7 @@ async function tgOnAction(qa, u, ack, routed) {
     // Кнопка из прошлого тупика остаётся в ленте навсегда, а Escape в РАБОТАЮЩЕГО агента —
     // это прерванный ход. Поэтому нажатие действует только пока вкладка правда ждёт.
     if (d.status !== 'waiting') {
-      await ack('Диалога сейчас нет — Escape не жму, чтобы не прервать работу. Пиши словами.');
+      await ack('Диалога сейчас нет — Escape не жму, чтобы не прервать работу. Пишите словами.');
       return;
     }
     const pending = d.tgPending || '';
@@ -3445,7 +3445,7 @@ async function tgOnCallback(u) {
     tgLog(`  нажатие мимо: кнопка адресует вкладку ${cb.tab}, а тема ${u.threadId} —`
       + ` ${routed == null ? 'ничью' : 'вкладку ' + routed}`);
     await ack('Эта кнопка от прошлого запуска — ничего по ней не делаю.'
-      + ' Скажи /sync, и запрос придёт заново.');
+      + ' Скажите /sync, и запрос придёт заново.');
     return;
   }
   const tab = at.tab;
@@ -3492,12 +3492,12 @@ async function tgOnCallback(u) {
 // Why a pairing attempt didn't take. Told to the chat that tried, because the person
 // holding the phone is the only one who can act on it.
 function tgPairHint() {
-  if (!tgPair) return 'Окно привязки закрыто. Открой «Настройки → Телеграм» → «Привязать группу»'
+  if (!tgPair) return 'Окно привязки закрыто. Откройте «Настройки → Телеграм» → «Привязать группу»'
     + ' и пришли новый код.';
   const left = TG_PAIR_TTL_MS - (Date.now() - tgPair.at);
-  if (left <= 0) return 'Код истёк. Нажми «Привязать группу» ещё раз и пришли новый —'
+  if (left <= 0) return 'Код истёк. Нажмите «Привязать группу» ещё раз и пришлите новый —'
     + ' он живёт 15 минут.';
-  return `Этот код не подходит. Пришли тот, что показан в настройках (действует ещё`
+  return `Этот код не подходит. Пришлите тот, что показан в настройках (действует ещё`
     + ` ${Math.ceil(left / 60000)} мин).`;
 }
 
@@ -3630,9 +3630,9 @@ function tgOnUpdate(u) {
   // меню одно, а в /help про ту же команду другое.
   if (u.command === 'start' || u.command === 'help') {
     tgSend({ threadId: u.threadId, text: [
-      'Уже на связи. Каждая вкладка живёт в своей теме — пиши в тему, попадёшь в её агента.',
+      'Уже на связи. Каждая вкладка живёт в своей теме — пишите в тему, попадёте в её агента.',
       'Можно голосом и картинкой: скриншот уйдёт агенту файлом.',
-      'Писать агентам я даю в режиме телефона (/phone): за компом ты всё видишь сам, и'
+      'Писать агентам я даю в режиме телефона (/phone): за компом вы всё видите сами, и'
         + ' сообщение оттуда я разверну обратно — кнопкой, которая режим и включит.',
       '',
       ...telegram.COMMANDS.map((c) => `/${c.command} — ${c.description}`),
@@ -3659,7 +3659,7 @@ function tgOnUpdate(u) {
     if (u.media) {
       tgLog(`  вложение «${u.media}» — не умею`);
       tgSend({ threadId: u.threadId, replyTo: u.messageId,
-        text: `Не умею брать ${telegram.mediaLabel(u.media)}. Пиши текстом, наговори голосовое`
+        text: `Не умею брать ${telegram.mediaLabel(u.media)}. Напишите текстом, наговорите голосовое`
           + ' или пришли картинку — её я отдам агенту файлом.' }).catch(reportMainError);
     }
     return;
@@ -3672,12 +3672,12 @@ function tgOnUpdate(u) {
     // отправленное в тему вкладки, отправляет человека искать не ту проблему.
     const why = telegram.routeFailure(u, { topics: TG.topics });
     const text = why === 'general'
-      ? 'Это общая тема — здесь я не знаю, к какому агенту обращаться. Напиши в тему нужной'
+      ? 'Это общая тема — здесь я не знаю, к какому агенту обращаться. Напишите в тему нужной'
         + ' вкладки (список — /tabs) или ответь реплаем на сообщение агента.'
       : why === 'topic-closed'
         ? 'Вкладка этой темы уже закрыта, писать некому. Открытые — /tabs, а /sync приведёт'
           + ' темы в соответствие с ними.'
-        : 'Эта тема ни с одной вкладкой не связана. Скажи /sync — я заново сведу темы с'
+        : 'Эта тема ни с одной вкладкой не связана. Скажите /sync — я заново сведу темы с'
           + ' открытыми вкладками, и сюда снова можно будет писать.';
     tgLog(`  отказ: ${why}`);
     tgSend({ threadId: u.threadId, replyTo: u.messageId, text }).catch(reportMainError);
@@ -3720,7 +3720,7 @@ async function tgDeliver(id, d, u, tagged) {
     await tgSend({
       threadId: u.threadId, replyTo: u.messageId,
       text: `${tgTabName(id)} держит диалог на экране, а вариантов в нём я не разобрал —`
-        + ' напечатать словами прямо в него нельзя. Нажми «закрыть диалог»: я закрою его'
+        + ' напечатать словами прямо в него нельзя. Нажмите «закрыть диалог»: я закрою его'
         + ' и отправлю это сообщение.',
       replyMarkup: telegram.actionKeyboard(String(id), ['esc']),
     });
@@ -3755,7 +3755,7 @@ async function tgClaudeCommand(u) {
     // Отказ обязан называть причину точно: «такой команды не знаю» отправило бы человека
     // искать опечатку, хотя команда правильная — просто сказана не в теме вкладки.
     await tgSend({ threadId: u.threadId, replyTo: u.messageId,
-      text: `«${line}» — команда самого Клода, и я печатаю её в вкладку. Скажи её в теме нужной`
+      text: `«${line}» — команда самого Клода, и я печатаю её в вкладку. Скажите её в теме нужной`
         + ' вкладки (список — /tabs), тогда я буду знать, чьему агенту.' });
     return;
   }
@@ -3808,7 +3808,7 @@ async function tgTypeClaudeCommand(id, d, u, line) {
       text: open.options.length
         ? `${name} держит запрос на экране — пока он там, команда уйдёт в него, а не в поле`
           + ' ввода. Ответь кнопкой под запросом и повтори команду.'
-        : `${name} держит диалог на экране — команда уйдёт в него, а не в поле ввода. Нажми`
+        : `${name} держит диалог на экране — команда уйдёт в него, а не в поле ввода. Нажмите`
           + ' «закрыть диалог» и повтори команду.',
       replyMarkup: open.options.length ? null : telegram.actionKeyboard(String(id), ['esc']) });
     return false;
@@ -3838,7 +3838,7 @@ async function tgOnVoice(u) {
   const id = tgRoute(u);
   if (id == null) {
     await tgSend({ threadId: u.threadId, replyTo: u.messageId,
-      text: 'Не понял, какой вкладке это. Пришли голосовое в тему нужной вкладки.' });
+      text: 'Не понял, какой вкладке это. Пришлите голосовое в тему нужной вкладки.' });
     return;
   }
   const d = det.get(id);
@@ -3849,7 +3849,7 @@ async function tgOnVoice(u) {
     await tgSend({ threadId: u.threadId, replyTo: u.messageId,
       text: open && open.options.length
         ? `${tgTabName(id)} ждёт разрешения — выбери вариант кнопкой, голосом это не даётся.`
-        : `${tgTabName(id)} держит диалог, а вариантов в нём я не разобрал. Нажми «закрыть`
+        : `${tgTabName(id)} держит диалог, а вариантов в нём я не разобрал. Нажмите «закрыть`
           + ' диалог» и скажи голосовое снова.',
       replyMarkup: open && open.options.length ? null : telegram.actionKeyboard(String(id), ['esc']) });
     return;
@@ -3857,7 +3857,7 @@ async function tgOnVoice(u) {
   const secs = Number(u.voice.seconds) || 0;
   if (secs > TG_VOICE_MAX_S) {
     await tgSend({ threadId: u.threadId, replyTo: u.messageId,
-      text: `Это ${secs} с — беру голосовые до ${TG_VOICE_MAX_S} с. Скажи короче или напиши текстом.` });
+      text: `Это ${secs} с — беру голосовые до ${TG_VOICE_MAX_S} с. Скажите короче или напишите текстом.` });
     return;
   }
   const r = await tgVoiceToText(u.voice.fileId);
@@ -3953,7 +3953,7 @@ async function tgOnPhoto(u) {
   const id = tgRoute(u);
   if (id == null) {
     await tgSend({ threadId: u.threadId, replyTo: u.messageId,
-      text: 'Не понял, кому эта картинка. Пришли её в тему нужной вкладки (список — /tabs).' });
+      text: 'Не понял, кому эта картинка. Пришлите её в тему нужной вкладки (список — /tabs).' });
     return;
   }
   if (u.photo.bytes > TG_IMG_MAX_BYTES) {
@@ -4164,7 +4164,13 @@ async function tgUsage(u) {
 // /night — общее «меня нет»: мандат сразу всем вкладкам. Отдельной командой, а не третьим
 // значением у /phone и /comp: это ответ на другой вопрос («меня не будет»), и снимая его,
 // человек хочет увидеть отчёт, а не сообщение о положении дел.
+// /night — ночной режим. Адрес выбирает ТЕМА, как у /usage: в теме вкладки это она одна, в
+// общей теме — все вкладки разом. Раньше вкладке отдавалась отдельная команда /auto, и слово
+// «авто» спорило с режимом разрешений самого Клода («auto mode on», /mode auto): человек
+// звал автономию, а получал разговор про разрешения. Команда осталась псевдонимом.
 async function tgNightCmd(u) {
+  const one = tgRoute(u);
+  if (one != null && sessions.has(one)) { await tgNightTab(u, one); return; }
   const on = awayAll();
   const changed = tgSetPresence(on ? 'desk' : night.NIGHT, 'телега');
   if (on) {
@@ -4174,26 +4180,33 @@ async function tgNightCmd(u) {
     return;
   }
   await tgSend({ threadId: u.threadId, text: changed
-    ? '🌙 «Меня нет» включено — все вкладки работают сами. Вопросы с вариантами агентам запрещу,'
+    ? '🌙 «Меня нет» включено — ночной режим у всех вкладок. Вопросы с вариантами агентам запрещу,'
       + ' прозу подтолкну правилом, разрешения оставлю стоять, лимиты разбужу по сбросу.'
       + ' Отчёт — /morning.'
     : '🌙 «Меня нет» и так включено.' });
 }
 
-// /auto — мандат ОДНОЙ вкладке, реплаем в её тему. Ради того случая, ради которого всё это и
-// переделано: одной вкладке отдал задачу на вечер, в остальных сидишь сам.
-async function tgAutoCmd(u) {
-  const id = tgRoute(u);
-  const d = id == null ? null : det.get(id);
-  if (!d || !sessions.has(id)) {
-    await tgSend({ threadId: u.threadId, replyTo: u.messageId,
-      text: '/auto работает в теме вкладки — оттуда я знаю, кому выдавать мандат.' });
-    return;
-  }
+// Ночной режим ОДНОЙ вкладке — ради того случая, ради которого всё это и переделано: одной
+// вкладке отдал задачу на вечер, в остальных сидишь сам.
+async function tgNightTab(u, id) {
+  const d = det.get(id);
+  if (!d) return;
   const on = setTabAuto(id, !d.auto, 'телега');
   await tgSend({ threadId: u.threadId, text: on
-    ? `🤖 «${tgTabName(id)}» работает без вас: решает обратимое сама, на дорогом остановится и спросит.`
+    ? `🌙 «${tgTabName(id)}» в ночном режиме: решает обратимое сама, на дорогом остановится и спросит.`
     : `🙋 «${tgTabName(id)}» снова с вами: вопросы будут ждать ответа.` });
+}
+
+// /auto — псевдоним для той же вкладки. Держим ради тех, у кого он в пальцах, но в меню бота
+// его больше нет: в общей теме он честно отсылает к /night, а не пытается угадать вкладку.
+async function tgAutoCmd(u) {
+  const id = tgRoute(u);
+  if (id == null || !sessions.has(id)) {
+    await tgSend({ threadId: u.threadId, replyTo: u.messageId,
+      text: 'Теперь это /night: в теме вкладки — ночной режим ей одной, в общей теме — всем сразу.' });
+    return;
+  }
+  await tgNightTab(u, id);
 }
 
 // /morning — тот же отчёт, что в окне приложения, только словами: утром смотрят в телефон
@@ -4211,7 +4224,7 @@ async function tgWhereAmI(u, presence) {
     ? (changed ? '📱 Понял, вы с телефоном.' : '📱 Вы и так с телефоном.')
     : (changed ? '🖥 Понял, вы за компом.' : '🖥 Вы и так за компом.');
   const what = phone
-    ? 'Вопросы, разрешения и итоги ходов идут сюда, маку спать не даю.'
+    ? 'Вопросы, разрешения и итоги ходов идут сюда, компьютеру спать не даю.'
       + (TG.keepAwake ? '' : ' Сон, правда, выключен галкой в настройках — там его и включать.')
     : 'Молчу и в вкладки ничего не печатаю: сообщение в тему я разверну кнопкой обратно.'
       + ' Смотреть можно всегда — /tabs, /last, /usage.';
@@ -4387,8 +4400,8 @@ ipcMain.handle('telegram:setKeepAwake', (_e, on) => {
 // «почему не поехали» разбираются именно по этой строке, а сам выбор следов не оставляет.
 const TG_PRESENCE_SAID = {
   desk: 'за компом — в группу не пишу и в вкладки из телеги не печатаю',
-  phone: 'за телефоном — вопросы, разрешения и итоги в группу, мак не засыпает',
-  night: 'меня нет — все вкладки решают сами по правилу, разрешения стоят, потом отчёт',
+  phone: 'за телефоном — вопросы, разрешения и итоги в группу, компьютер не засыпает',
+  night: 'меня нет — ночной режим у всех вкладок: решают сами по правилу, разрешения стоят, потом отчёт',
 };
 
 // --- РАБОТА БЕЗ ЧЕЛОВЕКА ------------------------------------------------------
@@ -4911,7 +4924,7 @@ function nightSwitch(prev, next) {
     autoAfterChange(wasAny);
     const left = autoCount();
     tgLog(left
-      ? `меня нет: снято, но ${left} вкладок работают сами — отчёт позже`
+      ? `меня нет: снято, но ${left} вкладок остались в ночном режиме — отчёт позже`
       : 'меня нет: снято, отчёт собран');
   }
   nightPush();
@@ -4978,7 +4991,7 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   const d = det.get(key);
   if (!d || !win) return false;
   const items = [{
-    label: 'Работает без меня',
+    label: 'Ночной режим',
     type: 'checkbox',
     checked: !!d.auto,
     click: () => setTabAuto(key, !d.auto, 'меню карточки'),

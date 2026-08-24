@@ -45,9 +45,9 @@ test('вкладку без мандата не трогают вовсе', () =
     const d1 = night.nudgeDecision({}, waitCtx(c));
     const d2 = night.phaseDecision({}, readyCtx(c));
     assert.strictEqual(d1.act, 'skip');
-    assert.match(d1.why, /не автономна/);
+    assert.match(d1.why, /не в ночном режиме/);
     assert.strictEqual(d2.act, 'skip');
-    assert.match(d2.why, /не автономна/);
+    assert.match(d2.why, /не в ночном режиме/);
   }
 });
 

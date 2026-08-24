@@ -450,10 +450,9 @@ const CB_MAX = 64;
 const COMMANDS = [
   { command: 'tabs', description: 'вкладки и кто чем занят' },
   { command: 'last', description: 'что агент сказал последним' },
-  { command: 'phone', description: 'я с телефоном: писать сюда обо всём, маку не спать' },
+  { command: 'phone', description: 'я с телефоном: писать сюда обо всём, компьютеру не спать' },
   { command: 'comp', description: 'я за компьютером: молчать и в вкладки не писать' },
-  { command: 'night', description: 'меня нет: все вкладки решают сами, разрешения стоят' },
-  { command: 'auto', description: 'эта вкладка работает без меня (в её теме)' },
+  { command: 'night', description: 'ночной режим: в теме вкладки — ей, в общей теме — всем' },
   { command: 'morning', description: 'отчёт: кто стоит и что решили без меня' },
   { command: 'usage', description: 'расход: контекст вкладки, 5 часов, неделя' },
   { command: 'mode', description: 'режим вкладки: auto, edits, plan, manual' },
@@ -470,7 +469,11 @@ const COMMANDS = [
 //
 // Значит этот список обязан быть ПОЛНЫМ: своя команда, забытая в нём, уедет в вкладку и
 // откроется там меню Клода вместо того, что человек просил.
-const OWN_COMMANDS = new Set(COMMANDS.map((c) => c.command).concat(['start']));
+// Мои команды — те, что в меню, плюс два имени вне его: /start (телега присылает его сама) и
+// /auto (прежнее имя ночного режима для одной вкладки). Псевдоним обязан остаться СВОИМ:
+// выпав из этого множества, он уехал бы в вкладку как команда Клода — и человек, набравший
+// /auto по памяти, получил бы «unknown command» от агента вместо ночного режима.
+const OWN_COMMANDS = new Set(COMMANDS.map((c) => c.command).concat(['start', 'auto']));
 
 function isOwnCommand(name) { return OWN_COMMANDS.has(String(name == null ? '' : name).toLowerCase()); }
 
