@@ -1611,7 +1611,11 @@ body.presence-night .presence-item.is-now .ic { color: var(--night); }
 .set-field > .set-check-btn,
 .set-group > .set-check-btn { align-self: flex-start; }
 .set-check-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
-.upd-go-btn { margin-top: 10px; border-color: var(--accent); color: var(--accent); }
+/* Без margin-top: кнопка стоит в .tg-row (display:flex; align-items:center), а там
+   верхнее поле не отодвигает соседей, а сдвигает саму кнопку вниз на половину — она
+   центрируется в пространстве ЗА ВЫЧЕТОМ своих полей. Отступ остался от времён, когда
+   кнопка стояла на отдельной строке, и превратился в перекос на 5px. */
+.upd-go-btn { border-color: var(--accent); color: var(--accent); }
 
 /* --- Телеграм: токен, привязка чата --------------------------------------- */
 .tg-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
