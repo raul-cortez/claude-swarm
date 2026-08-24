@@ -1139,6 +1139,7 @@ async function createSession(opts = {}) {
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
+    <span class="moon" title="Ночной режим: пусть работает без вас" aria-pressed="false">${ICONS.moon}</span>
     <span class="close" title="Close">×</span>
   `;
   // Name: restored name if given, else folder basename (de-duplicated).
@@ -1147,6 +1148,9 @@ async function createSession(opts = {}) {
   window.swarm.setTabName(id, tab.querySelector('.label').textContent);
   tab.addEventListener('click', (e) => {
     if (e.target.classList.contains('close')) { requestCloseSession(id); return; }
+    // Полумесяц — единственная кнопка на карточке, кроме крестика: клик по ней НЕ открывает
+    // вкладку. Иначе жест «отдать вкладку» тянул бы за собой уход из той, в которой сидишь.
+    if (e.target.closest('.moon')) { e.stopPropagation(); toggleTabAuto(id); return; }
     activate(id);
   });
   // Меню карточки — родное меню системы (его собирает main). Правый клик по карточке жест
@@ -3922,11 +3926,24 @@ function applyTabAuto(id, on) {
   s.auto = !!on;
   s.tab.classList.toggle('is-auto', !!on);
   s.tab.title = on
-    ? 'Работает без вас: агент решает сам, сворм подталкивает её и будит. Печать в неё'
-      + ' не уходит — правый клик или первая клавиша, чтобы забрать себе.'
+    ? 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
+      + ' не уходит — полумесяц или первая клавиша, чтобы забрать себе.'
     : '';
+  const moon = s.tab.querySelector('.moon');
+  if (moon) {
+    moon.title = on ? 'Забрать себе: сейчас работает без вас' : 'Ночной режим: пусть работает без вас';
+    moon.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
   if (!on) gateHeld.delete(String(id));
   persistTabs();
+}
+
+// Клик по полумесяцу. Решение принимает main (он же владеет общим положением и журналом),
+// сюда мандат вернётся пушем tab:auto — той же дорогой, что из меню карточки и из чата.
+async function toggleTabAuto(id) {
+  const s = sessions.get(String(id));
+  if (!s) return;
+  try { await window.swarm.night.setTab(String(id), !s.auto); } catch (_) { /* main ответит пушем */ }
 }
 
 window.swarm.night.onTab(({ id, auto }) => applyTabAuto(id, auto));

@@ -459,11 +459,56 @@ body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
    статуса сжималась с 60px до 17, то есть «работает» превращалось в «р…». Слово осталось там,
    где ему есть место: в подсказке карточки (title на самой карточке — у скрытого элемента
    подсказки не бывает вовсе), в меню карточки и в отчёте. */
-.tab.is-auto { box-shadow: inset 2px 0 0 0 var(--night); }
-.tab.is-auto .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--night) 70%, transparent); }
-/* У открытой вкладки своя подсветка (box-shadow с цветом статуса) — складываем обе, иначе
-   мандат исчезал бы ровно у той вкладки, в которую человек сейчас и норовит напечатать. */
-.tab.is-auto.active { box-shadow: inset 2px 0 0 0 var(--night), 0 0 0 1px var(--tab-c), 0 0 10px -3px var(--tab-c); }
+/* Вкладка в ночном режиме красится ЦЕЛИКОМ, и палитра статусов на ней не работает: цвет
+   карточки отвечает на вопрос «чья она», а не «что с агентом». Что с агентом, остаётся
+   подписью — словами, которые и так стоят в подвале карточки. Раньше здесь были кромка слева
+   и кольцо вокруг точки: их было видно только тому, кто знает, что искать. */
+.tab.is-auto { --tab-c: var(--night); border-color: var(--night); background: color-mix(in srgb, var(--night) 22%, var(--panel-2)); }
+.tab.is-auto .dot { background: var(--night); box-shadow: none; }
+/* Полоска контекста и бейдж сабагентов на ночной карточке тоже фиолетовые: ширина полоски и
+   число агентов остаются, а вот их цвета — из палитры статусов, которой здесь не место. */
+.tab.is-auto .ctx.ctx-lo .ctx-fill,
+.tab.is-auto .ctx.ctx-mid .ctx-fill,
+.tab.is-auto .ctx.ctx-hi .ctx-fill { background: color-mix(in srgb, var(--night) 75%, var(--text)); }
+.tab.is-auto .agents { color: color-mix(in srgb, var(--night) 70%, var(--text)); }
+/* Заливку статусов человек может выключить («Вкладки → Что показывать»), но ночную — нет:
+   она не про статус. Специфичность здесь выше, чем у гасящего правила выше. */
+body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
+#set-tab-preview.tab-no-fill .tab.is-auto {
+  background: color-mix(in srgb, var(--night) 22%, var(--panel-2));
+  border-color: var(--night);
+}
+/* Открытая вкладка подсвечена цветом своего состояния — а состояние ночной вкладки и есть
+   ночь, так что --tab-c уже фиолетовый и складывать ничего не нужно. */
+
+/* Полумесяц — кнопка мандата на самой карточке. Правый клик по карточке жест верный, но
+   невидимый: под ним нет ничего, что подсказало бы, что мандат вообще существует. Значок
+   появляется по наведению и горит постоянно, пока вкладка ночная.
+   Он ВНЕ ПОТОКА и прижат к нижней строке — туда, где подпись статуса. В потоке он стоил бы
+   имени 24px в компактной карточке (замер: 128 → 104) и ещё 6px на зазор строки, причём в
+   каждой карточке, а не только в той, где его видно. Высоту карточки не меняет ни так, ни
+   так — но именно ростом на 4px здесь когда-то не прижился чип со словом «авто».
+   Единственный сосед — бейдж сабагентов, он уступает место, пока значок виден. */
+.tab .moon {
+  position: absolute;
+  right: var(--tab-pad-x);
+  bottom: calc(var(--tab-pad-y) - 1px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.tab .moon svg { width: 13px; height: 13px; flex: none; }
+.tab:hover .moon { opacity: .75; }
+.tab .moon:hover { opacity: 1; color: var(--night); }
+.tab.is-auto .moon { opacity: 1; color: var(--night); }
+.tab:hover .agents,
+.tab.is-auto .agents { margin-right: 16px; }
 
 /* drag & drop — the moved item becomes a faint dashed slot; others reflow around it */
 .tab.dragging {
@@ -1434,6 +1479,8 @@ body.presence-night .presence-item.is-now .ic { color: var(--night); }
 /* Вкладка, которая ночью встала или ушла дальше без человека. Утром по полосе вкладок видно,
    с кем разбираться, ещё до открытия сводки; метка гаснет, когда сводку прочитали. */
 .tab.night-mark { border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
+/* На ночной карточке фиолетовая точка отчёта потерялась бы в фиолетовом — светлее. */
+.tab.is-auto.night-mark::after { background: color-mix(in srgb, var(--night) 45%, var(--text)); }
 .tab.night-mark::after {
   content: '';
   position: absolute; top: 4px; right: 4px;
