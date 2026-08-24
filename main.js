@@ -4838,10 +4838,15 @@ function nightState() {
     digest: nightDigestNow,
     // Свои формулировки и заготовки рядом. Заготовку отдаём готовой строкой, а не просим
     // рендерер собрать её сам: текст один на приложение, хук и подсказку в настройках.
+    //
+    // Заготовки — БЕЗ строки про метку: её сворм дописывает сам к любому тексту (night.protocol),
+    // и класть её в поле значило бы снова отдать человеку на попечение то, за чем следит сворм.
+    // Саму строку отдаём отдельно — настройкам её показывать, а не прятать.
     rule: TG.nightRule || '',
     ask: TG.nightAsk || '',
-    ruleDefault: night.rule(nightMarker()),
-    askDefault: night.phaseAsk(nightMarker()),
+    ruleDefault: night.ruleBody(),
+    askDefault: night.askBody(),
+    protocol: night.protocol(nightMarker()),
     tag: nightMarker(),
   };
 }

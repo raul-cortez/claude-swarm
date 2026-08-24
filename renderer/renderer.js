@@ -1838,13 +1838,9 @@ function showSettingsModal(tab) {
             <button type="button" class="set-q" aria-label="подсказка">?</button>
             <span class="set-hint" hidden>Пока вас нет, отвечает агенту сам сворм — вот этими
               двумя текстами. В полях уже лежат его заготовки: правьте их как обычный текст,
-              а кнопка под полем вернёт заготовку назад.
-              <br><br>
-              Одну строку в них лучше оставить — ту, где агенту велено начинать сообщение с
-              <span class="set-lit">[swarm:вопрос]</span>. Это метка, по которой сворм отличает
-              «агент ждёт вас» от «агент закончил»: увидит её в начале строки — вкладка встанет
-              «ждёт ответа» и позовёт вас, не увидит — промолчит до утра. Больше эта метка нигде
-              не нужна: сами вы её не печатаете и настроить её нельзя.</span>
+              а кнопка под полем вернёт заготовку назад. Пишите только про свой уклад — что агенту
+              решать самому, а на чём останавливаться. Служебное сворм допишет сам, и потерять его,
+              переписав поле, нельзя.</span>
           </div>
           <div class="set-field">
             <div class="set-head">
@@ -1869,6 +1865,7 @@ function showSettingsModal(tab) {
             <textarea class="set-input set-prose" id="set-night-ask" rows="8" spellcheck="false"></textarea>
             <button type="button" class="set-check-btn" id="set-night-ask-reset" hidden>вернуть заготовку</button>
           </div>
+          <div class="set-note" id="set-night-protocol"></div>
           <div class="tg-state" id="set-night-note"></div>
         </section>
       </div>
@@ -2231,6 +2228,7 @@ function showSettingsModal(tab) {
   const nightRuleI = overlay.querySelector('#set-night-rule');
   const nightAskI = overlay.querySelector('#set-night-ask');
   const nightNote = overlay.querySelector('#set-night-note');
+  const nightProtocolEl = overlay.querySelector('#set-night-protocol');
   const nightResets = { rule: overlay.querySelector('#set-night-rule-reset'), ask: overlay.querySelector('#set-night-ask-reset') };
   const nightFields = { rule: nightRuleI, ask: nightAskI };
   const nightDefaults = { rule: '', ask: '' };
@@ -2247,6 +2245,12 @@ function showSettingsModal(tab) {
     if (document.activeElement !== nightAskI) nightAskI.value = st.ask || nightDefaults.ask;
     nightResets.rule.hidden = !st.rule;
     nightResets.ask.hidden = !st.ask;
+    // Служебную строку ПОКАЗЫВАЕМ, но не даём править: агент должен знать, чем звать человека,
+    // а человек — что эта строка есть и уедет в любом случае. Спрятать её значило бы врать про
+    // то, что получит агент; положить в поле — вернуть ловушку, из-за которой она оттуда и уехала.
+    nightProtocolEl.textContent = st.protocol
+      ? `К обоим текстам сворм всегда добавит: «${st.protocol}»`
+      : '';
     const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
     nightNote.textContent = own.length
       ? `Свой текст: ${own.join(' и ')}.`
