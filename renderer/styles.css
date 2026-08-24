@@ -1706,6 +1706,11 @@ body.pult-on.pult-empty .term-holder.active { display: none; }
   letter-spacing: 0.04em;
 }
 body.pult-on.pult-empty #pult-empty { display: flex; }
+/* Вкладок нет вовсе — и тогда записок было ДВЕ, ровно одна поверх другой: обе висят в
+   #stage по inset:0 и обе центрированы, так что «Никто не ждёт ответа» ложилось прямо на
+   подсказку пустой сцены. Убираем пультовую: без единой вкладки она не сообщает ничего —
+   ждать некому по определению, — а подсказка сцены говорит, что делать дальше. */
+body.pult-on.pult-empty.no-sessions #pult-empty { display: none; }
 
 .pult-chip {
   display: flex;
