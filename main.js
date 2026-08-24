@@ -1153,6 +1153,33 @@ function newerTranscriptExists(d, taken) {
   return false;
 }
 
+// Ход кончился вопросом — по последней записи самого файла. Такой файл МОЛЧИТ ПО ДЕЛУ:
+// человек ещё не ответил, писать в разговор нечего, и молчание тут не признак брошенной
+// сессии, а её нормальное состояние. Проверка «файл молчит, а pty говорит» этого не
+// различает: байты в терминал льёт кто угодно — подагент, перерисовка, чужой вывод, — и
+// ждущая вкладка попадала под перепривязку каждые две секунды.
+function trWaitingForMe(d) {
+  return !!(d.trState && d.trState.status === 'waiting');
+}
+
+// Есть ли куда перепривязаться — ДРУГОЙ файл, не тот, что держим сейчас.
+//
+// Спрашиваем до отвязки, а не после. Раньше вкладка сначала отпускала стенограмму и только
+// потом искала новую — и когда искать было нечего, находила ту же самую. Получался холостой
+// круг: отвязка, две секунды без файла (TR_BIND_EVERY_MS), привязка обратно, и так минутами.
+// Снаружи это выглядело мельканием статуса: без файла вердикт даёт экран, с файлом — файл.
+//
+// Ищем в тех же условиях, в каких оказалась бы отвязанная вкладка: без адреса от хука и без
+// прикреплённого id — оба указывают на умолкший файл и вернули бы его же.
+function rebindTarget(d, taken) {
+  const busy = new Set(taken);
+  busy.delete(d.trFile);
+  for (const f of reservedByOthers(d)) busy.add(f);
+  const probe = { ...d, trHint: '', claudeSessionId: null };
+  const file = bindTranscript(probe, busy);
+  return file && file !== d.trFile ? file : null;
+}
+
 // Отобрать свой файл у вкладки, которая держит его по устаревшему праву.
 //
 // Живой случай: вкладка 3 запустилась с `--resume a7c534c7`, Клод форкнул разговор в новый
@@ -1326,15 +1353,22 @@ setInterval(() => {
       // launch, which /clear has just made void — and let the scan (or the next hook
       // marker) find the new file. A frozen status is the worst thing this can do.
       if (d.trFile && now - d.trMtime > TR_STALE_MS && now - d.lastDataAt < 2000
+          && !trWaitingForMe(d) && now - (d.trTryAt || 0) >= TR_BIND_EVERY_MS
           && newerTranscriptExists(d, taken)) {
-        trLog(`tab=${id} стенограмма ${path.basename(d.trFile)} умолкла — перепривязка`);
-        taken.delete(d.trFile);
-        trForget(d);
-        d.claudeSessionId = null;
-        // И адрес от хука тоже: он указывает на тот самый умолкший файл, и без сброса вкладка
-        // тут же привязалась бы к нему обратно. Новый адрес хук пришлёт с первым же событием.
-        d.trHint = '';
-        applyTranscript(d, null);
+        d.trTryAt = now;
+        const other = rebindTarget(d, taken);
+        if (other) {
+          trLog(`tab=${id} стенограмма ${path.basename(d.trFile)} умолкла`
+            + ` — перепривязка на ${path.basename(other)}`);
+          taken.delete(d.trFile);
+          trForget(d);
+          d.claudeSessionId = null;
+          // И адрес от хука тоже: он указывает на тот самый умолкший файл, и без сброса вкладка
+          // тут же привязалась бы к нему обратно. Новый адрес хук пришлёт с первым же событием.
+          d.trHint = '';
+          applyTranscript(d, null);
+          d.trTryAt = 0;                 // взять найденный файл сразу, а не через такт
+        }
       }
       // Клод назвал адрес СВОЕГО разговора, а мы держим другой файл. Раньше подсказку хука
       // спрашивали только у вкладки без файла — и ошибка, сделанная сканом папки до первого

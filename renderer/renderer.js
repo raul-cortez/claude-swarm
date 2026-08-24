@@ -344,6 +344,10 @@ function setStatus(id, status, detail) {
     if (s.sumDot) s.sumDot.className = 'sum-dot status-' + status; // collapsed-group dot
     // Queue order + chip timer in the pult: when this agent started waiting.
     s.waitingSince = status === 'waiting' ? Date.now() : null;
+    // Подпись «вопрос»/«разрешение» — часть жёлтого состояния и снимается вместе с ним. Пока
+    // вкладка жёлтая, стереть её не может никто (см. onStatus): иначе дребезг статуса в main,
+    // которого на вкладке не видно — цвет держат буферы, — проступал бы миганием подписи.
+    if (status !== 'waiting') s.waitKind = null;
     renderPult();
   }
   if (detail != null) {
@@ -411,8 +415,14 @@ window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind,
 
   if (ctxPct !== undefined) { s.ctxPct = ctxPct; updateCtx(s); }
   if (question !== s.question) { s.question = question; renderPult(); }
-  if ((waitingKind || null) !== (s.waitKind || null)) {
-    s.waitKind = waitingKind || null;
+  // Пустой kind приходит с ЛЮБЫМ не-ждущим статусом, а вкладка в этот миг может быть ещё
+  // жёлтой: уход из «ждёт» дебаунсится, «работает» буферизуется (см. applyStatus). Затирать
+  // им подпись значит показывать «ждёт ответа» вместо «вопрос» на каждом таком такте — ровно
+  // это и мигало на вкладке с работающим подагентом. Снимет подпись setStatus, когда вкладка
+  // и правда перестанет быть жёлтой.
+  const kind = waitingKind || null;
+  if (kind !== (s.waitKind || null) && (kind || s.status !== 'waiting')) {
+    s.waitKind = kind;
     renderPult();
     // Sharpening (question → permission) can arrive while status stays «waiting»,
     // so refresh the sub-label directly — applyStatus only repaints on transitions.

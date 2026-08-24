@@ -786,6 +786,37 @@ test('хук «готов» + фон в стенограмме: отметка �
   assert.strictEqual(eff.detail, D.BG_DETAIL);
 });
 
+test('хук «готов» + вопрос в стенограмме: вкладка ждёт, а не «работает в фоне»', () => {
+  // Та же дырка, что и с фоном выше, и цена ошибки больше: у вкладки открыт вопрос, а
+  // подагент внутри ещё ходит — и «готов» поднимался до фона (subWorking), то есть вкладка
+  // с вопросом красилась «занята, не подходи».
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'waiting', kind: 'question', at: NOW }));
+  D.applyHook(d, 'idle', NOW + 1000);
+  D.applyHook(d, 'sub', NOW + 1000);              // подагент работает
+  const eff = D.tickStatus(d, NOW + 1000, QUIET); // строка зова уже уехала с экрана
+  assert.strictEqual(eff.status, 'waiting');
+  assert.strictEqual(eff.kind, 'question');
+});
+
+test('хук «готов» + вопрос в стенограмме: рамка на экране доезжает как рамка', () => {
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'waiting', kind: 'question', at: NOW }));
+  D.applyHook(d, 'idle', NOW + 1000);
+  const eff = D.tickStatus(d, NOW + 1000, PERMISSION);
+  assert.strictEqual(eff.status, 'waiting');
+  assert.strictEqual(eff.kind, 'permission');
+  assert.strictEqual(eff.box, true);
+});
+
+test('хук «работает» новее вопроса в стенограмме: агент снова работает', () => {
+  // Обратная сторона: вопрос в файле старый, а хук говорит, что ход уже пошёл.
+  const d = mkD();
+  D.applyTranscript(d, tr({ status: 'waiting', kind: 'question', at: NOW }));
+  D.applyHook(d, 'busy', NOW + 1000);
+  assert.strictEqual(D.tickStatus(d, NOW + 1000, QUIET).status, 'running');
+});
+
 test('хук «готов» + законченный ход в стенограмме: по-прежнему «готов»', () => {
   // Обратная сторона: файл говорит «ход закончен», и оранжевого тут быть не должно —
   // даже если фраза про фон висит на экране с прошлого хода.
