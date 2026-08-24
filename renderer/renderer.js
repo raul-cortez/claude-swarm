@@ -4646,7 +4646,7 @@ function openNightModal() {
   if (quiet.length) {
     const q = document.createElement('div');
     q.className = 'night-quiet';
-    q.textContent = 'Тихо всю ночь: ' + quiet.join(', ');
+    q.textContent = 'Тихо: ' + quiet.join(', ');
     body.appendChild(q);
   }
   if (!body.children.length) {

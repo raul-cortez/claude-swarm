@@ -4748,6 +4748,11 @@ function nightTabsNow() {
     out.push({
       id, name: tgTabName(id), status: d.status, waitingKind: d.waitingKind,
       question: d.question || '', since: d.waitSince || 0,
+      // Отдавали ли эту вкладку за время отлучки. Не `autoOn(d)`: мандат мог быть снят посреди
+      // окна («забрал вкладку себе»), а рассказать про то, что она успела сделать сама, всё
+      // равно надо. Отметка живёт до конца окна (autoAfterChange) и переживает возврат вкладки,
+      // но не перезапуск приложения — тогда вкладку в отчёт вернут её записи в журнале.
+      auto: autoOn(d) || !!d.autoSeen,
     });
   }
   return out;
@@ -4805,6 +4810,9 @@ function setTabAuto(id, on, from) {
   // этого мига, а не с прошлого вечера. Снятый — снимаем и всё запланированное, иначе толчок,
   // заведённый минуту назад, приедет в вкладку, которую человек только что забрал себе.
   if (next) nightReset(d); else nightClear(d);
+  // «Эту вкладку отдавали» — до конца окна отчёта. Снимать вместе с мандатом нельзя: человек
+  // забирает вкладку себе, а то, что она сделала сама, из отчёта пропадать не должно.
+  if (next) d.autoSeen = true;
   tgLog(`мандат (${from || '—'}): вкладка ${key} ${next ? 'работает без человека' : 'снова с человеком'}`);
   tgWriteModes();
   autoAfterChange(wasAny);
@@ -4829,6 +4837,8 @@ function autoAfterChange(wasAny) {
   }
   if (!nowAny && wasAny) {
     nightBuildDigest(Date.now());
+    // Отчёт собран — отметки «эту отдавали» больше ни о чём: следующая отлучка своя.
+    for (const d of det.values()) d.autoSeen = false;
     nightFrom = 0;                      // следующая отлучка начнёт своё окно
     nightTyped = false;
   }
@@ -4851,6 +4861,9 @@ function nightSwitch(prev, next) {
     // час, общее «меня нет» ничего нового не выдаёт, а сброс её состояния забыл бы и стену
     // лимита (журнал получил бы вторую запись про ту же), и то, что правило ей уже говорили.
     for (const d of det.values()) if (!d.auto) nightReset(d);
+    // Общее положение отдаёт все вкладки сразу — значит все они и попадут в отчёт, включая те,
+    // что родятся позже: у них мандат считается живым (autoOn), отметка им не нужна.
+    for (const d of det.values()) d.autoSeen = true;
     autoAfterChange(wasAny);
     tgLog(`меня нет: включено, вкладок ${det.size}`);
   } else if (prev === night.NIGHT) {

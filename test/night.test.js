@@ -421,6 +421,32 @@ test('живая вкладка не считается закрытой, даж
   assert.match(gone.tabs[0].need[0].text, /закрылась в/);
 });
 
+// Мандат бывает у ОДНОЙ вкладки, и тогда отчёт — про неё, а не про весь сворм. Живьём это
+// читалось так: отдал одну вкладку, а в отчёте первой строкой «мой ресёрч ждёт тебя» — вкладка,
+// которую человек вёл сам и вопрос в которой видел своими глазами.
+test('отчёт не считает вкладки, которых человек не отдавал', () => {
+  const live = [
+    { id: '1', name: 'сборка', status: 'ready', auto: true },
+    { id: '2', name: 'мой ресёрч', status: 'waiting', waitingKind: 'question',
+      question: 'a или b?', since: NOW - 900_000, auto: false },
+  ];
+  const dg = night.digest([night.entry('continue', 'сборка', { at: NOW - 1000, id: '1', n: 1 })],
+    live, NOW, { from: NOW - 3600_000 });
+  assert.deepStrictEqual(dg.tabs.map((c) => c.name), ['сборка']);
+  assert.strictEqual(dg.totals.tabs, 1);
+  assert.strictEqual(dg.totals.standing, 0);
+  assert.doesNotMatch(night.digestText(dg), /ресёрч/);
+});
+
+// Поле молодое: звавший из прежней версии (и половина тестов здесь) о нём не знает, и молчание
+// значит «отдана» — иначе включённая ночь давала бы пустой отчёт при живых вкладках.
+test('вкладка без отметки об отдаче считается отданной', () => {
+  const dg = night.digest([], [{ id: '1', name: 'сборка', status: 'waiting',
+    waitingKind: 'permission', question: 'rm -rf?', since: NOW - 60_000 }], NOW, {});
+  assert.strictEqual(dg.tabs.length, 1);
+  assert.strictEqual(dg.totals.standing, 1);
+});
+
 // Одну вкладку журнал зовёт по-разному: у записи приложения есть id, у записи хука сперва
 // только имя. Без склейки вкладка разъезжается на две карточки — ровно та беда, от которой
 // сводку и переделывали.
@@ -446,7 +472,7 @@ test('запись без имени вкладки не превращаетс�
 test('сводка словами повторяет те же числа и те же половины, что и окно', () => {
   const dg = sampleDigest();
   const text = night.digestText(dg);
-  assert.match(text, /Решений без тебя 2, стоят 2/);
+  assert.match(text, /Решений 2, стоят 2/);
   for (const c of dg.tabs) {
     if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) continue;
     assert.ok(text.includes(c.name), c.name);
@@ -454,7 +480,7 @@ test('сводка словами повторяет те же числа и т�
   assert.match(text, /на тебе:/);
   assert.match(text, /без тебя:/);
   // Тихие вкладки — одной строкой в конце, а не абзацем на каждую: их бывает двадцать.
-  assert.match(text, /Тихо всю ночь: молчун/);
+  assert.match(text, /Тихо: молчун/);
 });
 
 
