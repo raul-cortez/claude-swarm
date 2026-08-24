@@ -354,10 +354,22 @@ function extractQuestion(snapshot) {
 // do: Claude asks to run a tool or edit ("Do you want to proceed?") and always
 // offers the "No, and tell Claude what to do differently" escape. That's the tell.
 const PERMISSION_RE = /No, and tell Claude|Do you want\b/i;
-// A selection cursor immediately before a numbered option ("❯ 1. …"). Mirrors the
-// detector's RE_WAIT_NOW option pattern; used here to spot an AskUserQuestion list.
-// Not anchored — we scan the whole snapshot, not one line.
-const OPTIONS_RE = /[❯>→➜▸►▶]\s*\d+\.\s/;
+// Строка выбора в рамке: «❯ 1. Yes». Клод рисует ❯, Cursor и часть терминалов — стрелку
+// (→ ▸ ▶) или простой «>». Отсюда же её берёт детектор (RE_WAIT / RE_WAIT_NOW): признак
+// рамки один, и разъехаться этим двум нельзя — по нему вкладка встаёт «ждёт ответа».
+//
+// Считается С НАЧАЛА СТРОКИ, мебель рамки перед курсором пропускаем, — и это не косметика.
+// Без якоря шаблон ловил обычную ПРОЗУ: «9494 → 9500 (ровно в потолок) → 9515.» и «Ядро
+// 9515 → 9300.» — стрелка, число, точка, пробел. Живьём это выглядело так: агент закрыл ход
+// тегом [swarm:фон], оба честных канала (хук и стенограмма) сказали «фон», а вкладка встала
+// «ждёт ответа: вопрос» на рамку, которой нет, — и защёлка держала её, пока текст на экране.
+// Настоящий курсор всегда в начале строки: рамка рисуется построчно, — так что якорь не
+// теряет ни одного настоящего выбора.
+//
+// Пробелы после стрелки и после точки — только горизонтальные: с \s шаблон складывался из
+// двух соседних строк и снова читал прозу как рамку.
+const PICK_ROW_SRC = '(?:^|[\\r\\n])[ \\t]*(?:[│|┃][ \\t]*)?[❯>→➜▸►▶][ \\t]*\\d+\\.[ \\t]';
+const OPTIONS_RE = new RegExp(PICK_ROW_SRC);
 // «Сейчас от тебя: …» closes a turn saying what the user must do — but ONLY when it
 // actually asks for something. "Сейчас от тебя: ничего, жди результата" is the
 // opposite: the agent says nothing is needed. So the marker alone isn't enough —
@@ -730,4 +742,5 @@ module.exports = {
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset,
   contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine,
+  PICK_ROW_SRC,
 };

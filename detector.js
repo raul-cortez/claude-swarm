@@ -6,7 +6,7 @@
 // reads `d.lastDataAt`, `applyLatch` reads/mutates the latch fields on `d`, and
 // both take the current screen `snap` as a string.
 
-const { inferWaitingKind, asksForInput, waitsForWork, askFingerprint } = require('./screen');
+const { inferWaitingKind, asksForInput, waitsForWork, askFingerprint, PICK_ROW_SRC } = require('./screen');
 
 // --- что человек сделал на клавиатуре -----------------------------------------
 // Байты из рендерера — это НЕ только печать. Там же приходят стрелки, отчёты мыши и прочие
@@ -73,16 +73,16 @@ const LATCH_RELEASE_MS = 900;
 const ANSWER_HINT_MS = 3000;
 
 // Waiting on me: a permission / confirm prompt sits on screen.
-// Selection cursor before "1. Yes / 2. No": Claude Code often paints ❯ (heavy
-// angle), but Cursor / some terminals use an arrow (→ ▸ ▶) or plain ">".
-// Without those glyphs the tab never flips to «ждёт ответа».
-const RE_WAIT = /Esc to cancel|Do you want|Enter to confirm|[❯>→➜▸►▶]\s*\d+\.\s|No, and tell Claude/i;
+// Строка выбора («❯ 1. Yes») приходит одним куском из screen.js — PICK_ROW_SRC, там же и
+// объяснено, почему она считается с начала строки. Признак рамки один на оба модуля: по нему
+// вкладка встаёт «ждёт ответа», и разъехаться этим двум нельзя.
+const RE_WAIT = new RegExp('Esc to cancel|Do you want|Enter to confirm|No, and tell Claude|' + PICK_ROW_SRC, 'i');
 // Strong subset — prompt UI chrome that never appears in normal streamed output
 // (numbered options, "Esc to cancel"). We trust these EVERY tick, even while bytes
 // are still flowing, so a prompt is caught the instant it renders. The full RE_WAIT
 // (with the looser "Do you want") stays gated behind the quiet window to avoid
 // matching that phrase mid-sentence in streamed prose.
-const RE_WAIT_NOW = /Esc to cancel|Enter to confirm|[❯>→➜▸►▶]\s*\d+\.\s|No, and tell Claude/i;
+const RE_WAIT_NOW = new RegExp('Esc to cancel|Enter to confirm|No, and tell Claude|' + PICK_ROW_SRC, 'i');
 
 // Working but momentarily quiet. While Claude thinks or runs a tool it can go
 // >ACTIVE_MS without emitting a byte (model call with no repaint, a slow tool),

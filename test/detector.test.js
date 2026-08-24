@@ -52,6 +52,30 @@ test('decide: quiet prose question → waiting + question', () => {
   assert.strictEqual(r.kind, 'question');
 });
 
+// Проза со стрелкой — НЕ рамка. Живой случай: агент закрыл ход тегом [swarm:фон], оба
+// честных канала сказали «фон», а вкладка встала «ждёт ответа: вопрос» — шаблон строки
+// выбора («❯ 1. Yes») ловил «→ 9515.» и «→ 9300.» посреди отчёта. Держала её потом защёлка:
+// пока текст на экране, рамка «стоит», и снять её нечем.
+const PROSE_ARROWS = [
+  '⏺ [swarm:фон] Прогон пошёл (~11 мин). Пока идёт — короткий итог.',
+  '',
+  '  Запаса было 115 токенов, и четыре коммита съели его целиком —',
+  '  9385 → 9447 → 9494 → 9500 (ровно в потолок) → 9515. Виноватого коммита нет.',
+  '  Ядро 9515 → 9300.',
+].join('\n');
+
+test('рамки нет: стрелка с числом посреди прозы не читается как строка выбора', () => {
+  assert.strictEqual(D.hasPromptBox(PROSE_ARROWS), false);
+  assert.strictEqual(D.RE_WAIT_NOW.test(PROSE_ARROWS), false);
+  assert.notStrictEqual(D.decide(mkD(), NOW, PROSE_ARROWS).status, 'waiting');
+});
+
+test('рамка есть: тот же шаблон ловит настоящий выбор в начале строки', () => {
+  assert.strictEqual(D.hasPromptBox(QUESTION), true);
+  assert.strictEqual(D.RE_WAIT_NOW.test(PERMISSION), true);
+  assert.strictEqual(D.RE_WAIT_NOW.test(' ❯ 1. Yes, I trust this folder'), true);
+});
+
 test('decide: quiet empty screen → ready', () => {
   assert.strictEqual(D.decide(mkD(), NOW, QUIET).status, 'ready');
 });
