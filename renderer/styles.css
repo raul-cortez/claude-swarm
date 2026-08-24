@@ -827,7 +827,11 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
 .set-panel.hidden { display: none; }
 .set-panel-h { display: flex; flex-direction: column; gap: 5px; margin: 0 0 2px; }
 .set-h { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
-.set-intro { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; max-width: 68ch; }
+/* Ширину прозы НЕ режем: её и так держит окно настроек (900px минус колонка разделов), а
+   типографский предел в 68 символов поверх этого оставлял справа пустую треть панели —
+   человек видел не «удобную строку», а недоделанную вёрстку. Ограничение осталось бы
+   осмысленным на всю ширину экрана; здесь его роль уже играет контейнер. */
+.set-intro { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 .set-intro b { color: var(--text); }
 
 /* Группа настроек — карточка с надзаголовком. Она и делает панель структурой, а не
@@ -970,7 +974,7 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
    .set-note, и разделение здесь жёсткое: пока обе роли носили один класс, любая правка
    стилей подсказок дёргала и надписи, которые обязаны быть на виду. */
 .set-hint { display: none; }
-.set-note { display: block; color: var(--muted); font-size: 12px; line-height: 1.55; max-width: 68ch; }
+.set-note { display: block; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .set-note b { color: var(--text); }
 /* Вопросик. Размер — с прицелом на попадание мышью, а не на красоту: 18px это меньше
    рекомендуемых 24, но строка настройки высотой 20, и кружок крупнее ломал бы её ритм. */
@@ -1425,7 +1429,7 @@ body.pult-on #git-msg { display: none; }
 .modal.logs .logs-copy { border-color: var(--accent); color: var(--accent); }
 
 
-/* --- «меня нет за компьютером» pill -------------------------------------- */
+/* --- «ночной режим» pill -------------------------------------------------- */
 /* Выключенный режим — обычная кнопка бара (тихая, как «команды» и «настройки»), включённый
    светится жёлтым: это не украшение, а единственный признак, что итоги всех вкладок сейчас
    уезжают в телегу. Снимается только руками, поэтому и должен бросаться в глаза. */
