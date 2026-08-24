@@ -149,6 +149,42 @@ test('сброс возвращает вкладку в чистое состо�
   assert.deepStrictEqual(U.initial(), U.reset(st));
 });
 
+// Зов файлом: агент не дожидается просьбы сворма, а кладёт разрешение сам и на том же ходу
+// прощается («эстафета записана, перезапускаюсь»). Служебный круг тут открыть НЕКОГДА: сворм
+// узнаёт о зове тактом, то есть уже после того, как ход кончился и пометка встала.
+//
+// Живой случай (24.08, вкладка fastio 4): файл лёг в 22:14:22, ход кончился в 22:14:36, сворм
+// принял зов в 22:14:47 — и упёрся в пометку от собственного же прощального хода. Часы разрешения
+// под непрочитанным намеренно стоят, так что ждал он бы вечно. Поэтому отметка снимается задним
+// числом: пометку, вставшую не раньше зова, ставил тот самый служебный ход.
+test('зов файлом: прощальный ход агента пометки не оставляет', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: false, done: true, needsYou: true });
+  assert.strictEqual(U.isUnread(st), true, 'сначала пометка есть');
+  assert.strictEqual(U.isUnread(U.onSwarmAsk(st, { since: NOW - 14000 })), false);
+});
+
+// И строгую тоже: «жми перезапуск руками» — это needsYou на открытой вкладке, то есть замок,
+// который не снимает даже взгляд. Ровно им вкладка себя и заперла.
+test('зов файлом снимает и строгую пометку того же хода', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: true, done: true, needsYou: true });
+  assert.strictEqual(U.isUnread(U.onViewed(st)), true, 'строгую взглядом не снять');
+  assert.strictEqual(U.isUnread(U.onSwarmAsk(st, { since: NOW - 1000 })), false);
+});
+
+// А вот чужого долга зов не отменяет. Ответ, лёгший ДО того, как агент позвал перезапуск, человек
+// действительно не видел, и правило владельца про него в силе: ждём глаз, сколько нужно.
+test('ответ, лёгший до зова, держит по-прежнему', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: false, done: true });
+  assert.strictEqual(U.isUnread(U.onSwarmAsk(st, { since: NOW + 1000 })), true);
+});
+
+// Путь «сворм спросил» отметку ставит ДО хода, и снимать ему нечего: без времени зова
+// onSwarmAsk работает как раньше.
+test('без времени зова onSwarmAsk пометку не трогает', () => {
+  const st = U.onTurnEnd(asked(), { now: NOW, viewing: false, done: true });
+  assert.strictEqual(U.isUnread(U.onSwarmAsk(st)), true);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; } catch (e) {
     console.error(`FAIL ${name}\n  ${e.message}`);

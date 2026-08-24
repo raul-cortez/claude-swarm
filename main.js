@@ -5425,6 +5425,19 @@ function restartSessionFile(d) {
   return path.join(cwd, name);
 }
 
+// Лежит ли зов на диске — без чтения и без разбора. Нужна только пинку (restartKick), которому
+// важно не «что там написано», а «есть ли повод тратить полный такт».
+//
+// Общее имя `.swarm-restart.json` сюда не входит намеренно: у него свои оговорки (в папке с двумя
+// вкладками мы его не трогаем, см. restartReadAnswer), и разбирать их в пробе значит завести им
+// второе место жизни. Такой зов доедет общим тактом, за полминуты.
+function restartAnswerWaiting(id, d) {
+  for (const f of [restartAnswerFile(id, d), restartSessionFile(d)]) {
+    if (f && fs.existsSync(f)) return true;
+  }
+  return false;
+}
+
 // Ответ вкладки: свой именной файл, потом названный по разговору, потом общий. Возвращает и путь:
 // прочитанное мы стираем, и стереть надо ровно тот файл, который прочитали.
 function restartReadAnswer(id, d) {
@@ -5680,8 +5693,13 @@ function restartTick(id, d, now) {
   // пометкой «человек этого не видел» ложиться не должно — иначе вкладка запирает себя собственной
   // перепиской (см. unread.onSwarmAsk). Отмечаем по переходам, а не по фазе каждый такт: человек
   // мог вмешаться в круг своим сообщением, и его ожидание перебивает наше.
-  if (r.action === 'ask' || r.action === 'grant') d.unread = unread.onSwarmAsk(d.unread);
-  else if (r.action === 'drop' || r.action === 'fire') d.unread = unread.onSwarmIdle(d.unread);
+  // При зове ФАЙЛОМ круг открывается задним числом: ход, которым агент позвал, кончился раньше,
+  // чем мы о зове узнали, и уже лёг пометкой «человек этого не видел» — то есть запер ровно то
+  // разрешение, которое сам и принёс. Поэтому отдаём время зова: пометку моложе него снимет
+  // onSwarmAsk, а всё, что старше, останется держать (см. unread.js).
+  if (r.action === 'ask' || r.action === 'grant') {
+    d.unread = unread.onSwarmAsk(d.unread, { since: r.action === 'grant' && answer ? answer.mtime : 0 });
+  } else if (r.action === 'drop' || r.action === 'fire') d.unread = unread.onSwarmIdle(d.unread);
   // Почему стоим с разрешением на руках. Раз в смену причины, а не каждый такт: между разрешением и
   // его исполнением проходит до десяти минут, и всё это время человек видит вкладку, которой сказали
   // «можно гасить», — а она живёт. Молчать здесь значит выглядеть зависшей.
@@ -5731,7 +5749,13 @@ const RESTART_KICK_GAP_MS = 1000;
 
 function restartKick(id, d, why) {
   if (!d || d.dead || !d.rs) return;
-  if (d.rs.phase !== 'asked' && d.rs.phase !== 'granted') return;
+  // Фазы круга «спросили — ответили» тактуем всегда. Остальные — только когда на диске лежит зов:
+  // агент кладёт файл и тем же ходом прощается, и ждать после этого полминуты общего такта значит
+  // показывать человеку зависшую вкладку ровно там, где пинок и заводился. Проба — одно обращение
+  // к файловой системе, а полный такт стоит снимка расхода с диска и двух снятий экрана.
+  if (d.rs.phase !== 'asked' && d.rs.phase !== 'granted') {
+    if (!RESTART_ENABLED || !restartAnswerWaiting(id, d)) return;
+  }
   const now = Date.now();
   if (why === 'turn') {
     if (now - (d.rsKickAt || 0) < RESTART_KICK_GAP_MS) return;
