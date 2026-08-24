@@ -282,28 +282,42 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .agents[hidden] { display: none; }
 .tab .agents svg { width: 12px; height: 12px; flex: none; }
 
-/* Крестик — угловой бейдж, частично за пределами карточки, вне потока: не
-   резервирует колонку справа (раньше это давало «воздух»). */
-.tab .close {
+/* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
+   кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,
+   луна — внизу у подписи статуса. Каждый по отдельности был на своём месте, а вместе они
+   читались как два случайно упавших знака, и найти луну, не зная о ней, было нечем.
+
+   Капсула лежит ПОВЕРХ КРОМКИ, вне потока и вне текста: имени она не стоит ни пикселя — ни
+   в широкой карточке, ни в компактной, где имени и так остаётся шестьдесят. По этой же
+   причине она не резервирует колонку справа: появляется и исчезает, ничего не двигая.
+   Бейджу сабагентов от переезда луны вернулось место в нижней строке — костыля с отступом
+   под неё больше нет. */
+.tab .tools {
   position: absolute;
-  top: -6px;
+  top: -8px;
   right: -6px;
   z-index: 2;
-  width: 16px;
-  height: 16px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 50%;
+  gap: 2px;
+  height: 18px;
+  padding: 0 3px;
+  border-radius: 999px;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1;
+  box-shadow: 0 2px 8px -3px #000;
   opacity: 0;
+  transition: opacity 0.12s ease;
 }
-.tab:hover .close { opacity: 1; }
-.tab .close:hover { color: var(--danger); border-color: var(--danger); }
+.tab:hover .tools { opacity: 1; }
+.tab .tools > span { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.tab .tools svg { width: 12px; height: 12px; flex: none; }
+.tab .moon, .tab .close { width: 16px; height: 16px; border-radius: 50%; }
+/* Разделитель — не украшение: он говорит, что кнопки РАЗНЫЕ. Одна отдаёт вкладку агенту,
+   другая убивает процесс, и промахнуться между ними нельзя. */
+.tab .t-sep { width: 1px; height: 10px; background: var(--border); }
+.tab .moon:hover  { color: var(--night);  background: var(--panel); }
+.tab .close:hover { color: var(--danger); background: var(--panel); }
 
 /* While a title is being renamed, allow caret + text selection (the tab itself
    sets user-select:none, which otherwise freezes the contenteditable). */
@@ -481,37 +495,15 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
 /* Открытая вкладка подсвечена цветом своего состояния — а состояние ночной вкладки и есть
    ночь, так что --tab-c уже фиолетовый и складывать ничего не нужно. */
 
-/* Полумесяц — кнопка мандата на самой карточке. Правый клик по карточке жест верный, но
-   невидимый: под ним нет ничего, что подсказало бы, что мандат вообще существует. Значок
-   появляется по наведению и горит постоянно, пока вкладка ночная.
-   Он ВНЕ ПОТОКА и прижат к нижней строке — туда, где подпись статуса. В потоке он стоил бы
-   имени 24px в компактной карточке (замер: 128 → 104) и ещё 6px на зазор строки, причём в
-   каждой карточке, а не только в той, где его видно. Высоту карточки не меняет ни так, ни
-   так — но именно ростом на 4px здесь когда-то не прижился чип со словом «авто».
-   Единственный сосед — бейдж сабагентов, он уступает место, пока значок виден. */
-.tab .moon {
-  position: absolute;
-  right: var(--tab-pad-x);
-  bottom: calc(var(--tab-pad-y) - 1px);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  color: var(--muted);
-  opacity: 0;
-  transition: opacity .12s ease;
-}
-.tab .moon svg { width: 13px; height: 13px; flex: none; }
-/* Полумесяц появляется только под курсором, поэтому светит в полную силу: приглушать
-   нечего — рядом ничего не отвлекает, а тому, кто про ночной режим ещё не знает, значок
-   надо заметить. Прямое наведение НА него добавляет цвет: это уже кнопка под пальцем. */
-.tab:hover .moon { opacity: 1; }
-.tab .moon:hover { color: var(--night); }
-.tab.is-auto .moon { opacity: 1; color: var(--night); }
-.tab:hover .agents,
-.tab.is-auto .agents { margin-right: 16px; }
+/* Ночная карточка держит капсулу ВСЕГДА: луна на ней не кнопка под курсором, а состояние —
+   по ней и видно, что вкладка отдана. Крестик в этом случае прячется до наведения: тянувшийся
+   к луне не должен находить под пальцем «закрыть вкладку вместе с процессом».
+   Правый клик по карточке делает то же самое, но жест невидимый: под ним нет ничего, что
+   подсказало бы, что мандат вообще существует. */
+.tab.is-auto .tools { opacity: 1; border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
+.tab.is-auto .moon { color: var(--night); }
+.tab.is-auto:not(:hover) .t-sep,
+.tab.is-auto:not(:hover) .close { display: none; }
 
 /* drag & drop — the moved item becomes a faint dashed slot; others reflow around it */
 .tab.dragging {

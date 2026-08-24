@@ -287,8 +287,17 @@ const ICONS = {
   monitor: SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   phone: SVG('<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>'),
   moon: SVG('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+  // Lucide "x" — закрыть вкладку. Рисованный, а не литера «×»: рядом с луной в одной
+  // капсуле знак из шрифта заметно тяжелее и стоит не по центру круга.
+  close: SVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
   sunrise: SVG('<path d="M12 2v6"/><path d="m4.93 8.93 1.41 1.41"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m17.66 10.34 1.41-1.41"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/>'),
 };
+
+// Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
+// превью настроек: карточка в настройках должна быть той же карточкой, а не похожей на неё.
+function tabTools() {
+  return `<span class="tools"><span class="moon" title="Ночной режим: пусть работает без вас" aria-pressed="false">${ICONS.moon}</span><span class="t-sep"></span><span class="close" title="Закрыть вкладку">${ICONS.close}</span></span>`;
+}
 
 // Put an icon + a folder name into an element (name via text node, never markup).
 function setFolderLabel(el, name) {
@@ -1161,15 +1170,15 @@ async function createSession(opts = {}) {
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
-    <span class="moon" title="Ночной режим: пусть работает без вас" aria-pressed="false">${ICONS.moon}</span>
-    <span class="close" title="Close">×</span>
+    ${tabTools()}
   `;
   // Name: restored name if given, else folder basename (de-duplicated).
   const folderName = resolvedCwd ? basename(resolvedCwd) : 'claude';
   tab.querySelector('.label').textContent = opts.name || defaultName(folderName);
   window.swarm.setTabName(id, tab.querySelector('.label').textContent);
   tab.addEventListener('click', (e) => {
-    if (e.target.classList.contains('close')) { requestCloseSession(id); return; }
+    // closest, а не сам target: внутри кнопок лежат svg, и клик приходит в них.
+    if (e.target.closest('.close')) { requestCloseSession(id); return; }
     // Полумесяц — единственная кнопка на карточке, кроме крестика: клик по ней НЕ открывает
     // вкладку. Иначе жест «отдать вкладку» тянул бы за собой уход из той, в которой сидишь.
     if (e.target.closest('.moon')) { e.stopPropagation(); toggleTabAuto(id); return; }
@@ -2553,7 +2562,7 @@ function showSettingsModal(tab) {
   // «ждёт ввода» — рядом видно, что открытая и зовущая больше не близнецы.
   // Written once — renderTabPreview only restyles.
   // Превью 1:1 с боем: та же разметка, что строит createSession/relayoutTabs —
-  // включая вкладку Пульта с каунтером и угловой крестик. Ширина/высота ведут
+  // включая вкладку Пульта с каунтером и угловую капсулу с кнопками. Ширина/высота ведут
   // себя как реальные (см. renderTabPreview: класс раскладки берётся из боя).
   tabPreviewEl.innerHTML =
     `<div class="pult-tab">
@@ -2571,7 +2580,7 @@ function showSettingsModal(tab) {
            <span class="agents">${ICONS.agents}<span class="agents-num">3</span></span>
          </span>
        </span>
-       <span class="close" title="Close">×</span>
+       ${tabTools()}
      </div>
      <div class="tab status-ready">
        <span class="grip">${ICONS.grip}</span>
@@ -2583,7 +2592,7 @@ function showSettingsModal(tab) {
            <span class="sub">готов</span>
          </span>
        </span>
-       <span class="close" title="Close">×</span>
+       ${tabTools()}
      </div>
      <div class="tab status-waiting">
        <span class="grip">${ICONS.grip}</span>
@@ -2595,7 +2604,7 @@ function showSettingsModal(tab) {
            <span class="sub">ждёт ответа</span>
          </span>
        </span>
-       <span class="close" title="Close">×</span>
+       ${tabTools()}
      </div>`;
 
   function renderTabPreview() {
