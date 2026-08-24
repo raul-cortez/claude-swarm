@@ -132,6 +132,7 @@ const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scope
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
+const TERMTALK = window.SWARM_TERMTALK;        // речь терминала (мышь, ответы) — не печать человека
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
 // persisted as a single JSON blob in localStorage (see swarm.appearance). Read by
@@ -1115,6 +1116,13 @@ async function createSession(opts = {}) {
   term.onData((data) => {
     const clean = data.replace(/\x1b\[[IO]/g, '');
     if (!clean) return;
+    // Не всё, что приходит отсюда, сделал человек: доклады мыши (Клод включает отслеживание,
+    // и каждое движение указателя над вкладкой — сообщение) и ответы терминала на запросы
+    // приложения — это речь ТЕРМИНАЛА, а не печать (см. termtalk.js). Она уезжает в pty
+    // напрямую, мимо границы владения и мимо разбора набранного: иначе отданную вкладку
+    // нельзя даже открыть — мышь поднимает модалку на каждое шевеление, — а придержанного
+    // ответа приложение ждёт вечно.
+    if (TERMTALK.isTerminalTalk(clean)) { window.swarm.sendInput(id, clean); return; }
     typeInto(id, clean);
   });
 

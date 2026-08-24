@@ -26,6 +26,7 @@ const FILES = [
   'md.js', 'git.js', 'osc.js', 'pty-write.js', 'pty-loader.js', 'agent-rules.js', 'launch-line.js',
   'renderer/renderer.js', 'renderer/diffview.js', 'renderer/themes.js', 'renderer/tabstyle.js',
   'renderer/keybinds.js', 'renderer/logstore.js', 'renderer/resume.js', 'renderer/launch-word.js',
+  'renderer/termtalk.js',
 ];
 
 // Выкусываем всё, где скобки не считаются: комментарии, строки, шаблоны и РЕГУЛЯРКИ. Последние
