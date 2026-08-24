@@ -833,6 +833,53 @@ test('в просьбе сказано про оба хвоста разгово
   assert.ok(/договорились вернуться/.test(t) && /обсудим/.test(t), 'отложенный разговор');
 });
 
+// --- «работа здесь закончена» ---------------------------------------------------------------
+// Ответов было два: «можно» и «не сейчас, переспроси через N». Законченную работу приходилось
+// выражать вторым — то есть вечным кругом: сворм переспрашивает, агент снова говорит «не сейчас»,
+// и так до закрытия вкладки. Причём просьба права: перезапускать доделанную вкладку НЕЛЬЗЯ,
+// свежая сессия получит «продолжи» на готовое и пойдёт искать несуществующий остаток. Значит
+// нужен третий ответ — «спрашивать больше не о чем», без срока.
+test('«закончено» разбирается отдельно от отсрочки', () => {
+  const a = R.parseAnswer('{"restart":false,"done":true}');
+  assert.strictEqual(a.restart, false);
+  assert.strictEqual(a.done, true);
+  assert.strictEqual(a.reason, 'done');
+  // Обычный отказ остаётся отказом со сроком — «закончено» не должно поглотить его.
+  assert.ok(!R.parseAnswer('{"restart":false,"retry":25}').done);
+});
+
+test('«можно» вместе с «закончено» — перезапуск главнее', () => {
+  const a = R.parseAnswer('{"restart":true,"done":true,"prompt":"дальше","handoff":"#215"}');
+  assert.strictEqual(a.restart, true, 'разрешение с эстафетой исполняем, а не молчим');
+});
+
+test('ответ «закончено» уводит в немоту без переспроса', () => {
+  const asked = { ...idle(), phase: 'asked', askedAt: NOW - 1000 };
+  const r = R.step(asked, sig({ answer: { raw: '{"restart":false,"done":true}', mtime: NOW } }));
+  assert.strictEqual(r.action, 'drop', 'ответ прочитан — файл убираем');
+  assert.strictEqual(r.state.phase, 'done');
+  assert.strictEqual(r.state.retryAt, 0, 'никаких сроков: переспрашивать не о чем');
+  assert.ok(/закончена/.test(r.note || ''), 'человеку видно, почему вкладка замолчала');
+});
+
+test('то же самое из отсрочки: агент вправе сказать «всё» раньше срока', () => {
+  const later = { ...idle(), retryAt: NOW + 20 * 60 * 1000 };
+  const r = R.step(later, sig({ answer: { raw: '{"restart":false,"done":true}', mtime: NOW } }));
+  assert.strictEqual(r.state.phase, 'done');
+  assert.strictEqual(r.state.retryAt, 0);
+});
+
+test('в фазе done не спрашиваем, но положенный файл читаем и исполняем', () => {
+  const done = { ...idle(), phase: 'done' };
+  assert.strictEqual(R.step(done, sig()).action, 'nothing', 'просьба больше не печатается');
+  assert.strictEqual(R.wantsAnswer(done, { enabled: true }), true, 'а файл читать не перестаём');
+  // Человек дал вкладке новую работу, агент сам позвал перезапуск — молчание этому не помеха.
+  const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
+  const r = R.step(done, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.phase, 'granted');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; } catch (e) {
     console.error(`FAIL ${name}\n  ${e.message}`);
