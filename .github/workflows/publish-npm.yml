@@ -30,7 +30,7 @@ jobs:
         working-directory: npm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Нода 24 нужна ради npm: доверенная публикация требует npm >= 11.5.1, а в
       # двадцатой ноде npm десятый.
@@ -39,7 +39,7 @@ jobs:
       # `_authToken=${NODE_AUTH_TOKEN}`, и она разворачивается в пустоту: токена-то у нас
       # нет. Дальше npm видит «авторизация настроена», за OIDC не идёт вовсе и падает с
       # ENEEDAUTH. Реестр по умолчанию и так registry.npmjs.org — задавать его незачем.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
 
