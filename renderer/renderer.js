@@ -1167,6 +1167,7 @@ async function createSession(opts = {}) {
       </span>
       <span class="foot">
         <span class="sub">готов</span>
+        <span class="hold" hidden></span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
@@ -4963,6 +4964,26 @@ window.swarm.onRestarted(({ id, n, sessionKey }) => {
 // Всё, что случилось по дороге и НЕ кончилось перезапуском: «не сейчас», нет ответа, отмена.
 // Без этого функция молчала бы ровно в тех случаях, когда человек и хочет знать, чем она занята.
 window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
+
+// Разрешение на перезапуск получено, а вкладка всё живёт. Причин у этого пять, и четыре из них
+// проходят сами за десять минут (вкладка работает, открыта рамка, считают сабагенты). Пятая — нет:
+// под непрочитанным ответом часы разрешения стоят намеренно, и вкладка будет ждать твоих глаз
+// хоть сутки. Со стороны это неотличимо от сломанной функции — вкладка живая, работа идёт, а
+// перезапуска нет, — поэтому она про это говорит. Открыть её или ответить ей: оба снимают пометку.
+const HOLD_LABEL = { unread: 'ждёт взгляда' };
+const HOLD_TITLE = {
+  unread: 'Перезапуск готов, но здесь лежит ответ, которого ты ещё не видел.'
+    + ' Открой вкладку или ответь ей — и она перезапустится.',
+};
+window.swarm.onRestartHold(({ id, hold }) => {
+  const s = sessions.get(String(id));
+  const el = s && s.tab.querySelector('.hold');
+  if (!el) return;
+  const label = HOLD_LABEL[hold] || '';
+  el.textContent = label;
+  el.title = HOLD_TITLE[hold] || '';
+  el.hidden = !label;
+});
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 

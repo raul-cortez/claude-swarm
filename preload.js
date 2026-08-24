@@ -126,6 +126,13 @@ contextBridge.exposeInMainWorld('swarm', {
     ipcRenderer.on('session:restarted', handler);
     return () => ipcRenderer.removeListener('session:restarted', handler);
   },
+  // Что держит уже полученное разрешение — для подписи на карточке. Пустая строка значит
+  // «ничто не держит»: подпись снимается тем же событием, которым встала.
+  onRestartHold: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:restartHold', handler);
+    return () => ipcRenderer.removeListener('session:restartHold', handler);
+  },
   // Всё остальное про перезапуск, что стоит увидеть в журнале: «не сейчас», нет ответа, отмена.
   onRestartNote: (cb) => {
     const handler = (_e, payload) => cb(payload);
