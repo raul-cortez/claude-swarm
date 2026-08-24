@@ -3391,7 +3391,7 @@ async function tgOnAction(qa, u, ack, routed) {
     if (!pending) { await ack('Закрыл диалог. Теперь можно писать словами.'); return; }
     await new Promise((r) => setTimeout(r, TG_ESC_SETTLE_MS));
     if (!tgAnswer(tab, pending)) { await ack('Диалог закрыл, но вкладки уже нет.'); return; }
-    await ack('Закрыл диалог и отправил твоё сообщение.');
+    await ack('Закрыл диалог и отправил ваше сообщение.');
     return;
   }
   // Режимы: то же, что /mode, но одним касанием. Ответ во всплывашке говорит, чем это
@@ -3638,7 +3638,7 @@ function tgOnUpdate(u) {
       ...telegram.COMMANDS.map((c) => `/${c.command} — ${c.description}`),
       '',
       'Любая другая команда со слэшем — не моя, а Клода: я печатаю её в вкладку темы, как'
-        + ' будто ты набрал её за клавиатурой. Так работают /clear, /compact, /model и твои'
+        + ' будто вы набрали её за клавиатурой. Так работают /clear, /compact, /model и ваши'
         + ' собственные команды.',
     ].join('\n') }).catch(reportMainError);
     return;
@@ -4192,8 +4192,8 @@ async function tgAutoCmd(u) {
   }
   const on = setTabAuto(id, !d.auto, 'телега');
   await tgSend({ threadId: u.threadId, text: on
-    ? `🤖 «${tgTabName(id)}» работает без тебя: решает обратимое сама, на дорогом остановится и спросит.`
-    : `🙋 «${tgTabName(id)}» снова с тобой: вопросы будут ждать ответа.` });
+    ? `🤖 «${tgTabName(id)}» работает без вас: решает обратимое сама, на дорогом остановится и спросит.`
+    : `🙋 «${tgTabName(id)}» снова с вами: вопросы будут ждать ответа.` });
 }
 
 // /morning — тот же отчёт, что в окне приложения, только словами: утром смотрят в телефон
@@ -4208,8 +4208,8 @@ async function tgWhereAmI(u, presence) {
   const changed = tgSetPresence(presence, 'телега');
   const phone = presence === 'phone';
   const head = phone
-    ? (changed ? '📱 Понял, ты с телефоном.' : '📱 Ты и так с телефоном.')
-    : (changed ? '🖥 Понял, ты за компом.' : '🖥 Ты и так за компом.');
+    ? (changed ? '📱 Понял, вы с телефоном.' : '📱 Вы и так с телефоном.')
+    : (changed ? '🖥 Понял, вы за компом.' : '🖥 Вы и так за компом.');
   const what = phone
     ? 'Вопросы, разрешения и итоги ходов идут сюда, маку спать не даю.'
       + (TG.keepAwake ? '' : ' Сон, правда, выключен галкой в настройках — там его и включать.')

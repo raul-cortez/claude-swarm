@@ -313,11 +313,11 @@ function short(text, max) {
 // дольше.
 const STATE_ORDER = ['wait', 'perm', 'limit', 'died', 'went', 'quiet'];
 const STATE_BADGE = {
-  wait: 'ждёт тебя',
+  wait: 'ждёт вас',
   perm: 'стоит на разрешении',
   limit: 'стоит на лимите',
   died: 'закрылась',
-  went: 'работала без тебя',
+  went: 'работала без вас',
   quiet: 'тихо',
 };
 
@@ -481,7 +481,7 @@ function digestText(dg) {
   const t = d.totals || {};
   // Словами то же, что в окне: «без тебя прошло …» вместо «ночь». Мандат живёт минутами и
   // днём тоже, и «ночь» в шапке двадцатиминутной отлучки — неправда.
-  const out = [`📋 Отчёт: без тебя прошло ${t.night || '—'}, вкладок ${t.tabs || 0}.`
+  const out = [`📋 Отчёт: без вас прошло ${t.night || '—'}, вкладок ${t.tabs || 0}.`
     + ` Решений ${t.decided || 0}, стоят ${t.standing || 0}.`];
   const quiet = [];
   for (const c of (d.tabs || [])) {
@@ -490,11 +490,11 @@ function digestText(dg) {
     out.push('');
     out.push(`▸ ${c.name} — ${c.badge}${c.wait ? `, ${c.wait}` : ''}`);
     if (c.need.length) {
-      out.push('  на тебе:');
+      out.push('  на вас:');
       for (const r of c.need) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
     }
     if (c.did.length) {
-      out.push('  без тебя:');
+      out.push('  без вас:');
       for (const r of c.did) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
     }
     if (c.note) out.push(`  не трогали: ${c.note}`);

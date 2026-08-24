@@ -477,8 +477,8 @@ test('сводка словами повторяет те же числа и т�
     if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) continue;
     assert.ok(text.includes(c.name), c.name);
   }
-  assert.match(text, /на тебе:/);
-  assert.match(text, /без тебя:/);
+  assert.match(text, /на вас:/);
+  assert.match(text, /без вас:/);
   // Тихие вкладки — одной строкой в конце, а не абзацем на каждую: их бывает двадцать.
   assert.match(text, /Тихо: молчун/);
 });
