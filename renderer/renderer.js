@@ -2720,11 +2720,9 @@ function showSettingsModal(tab) {
     const available = res && res.kind !== 'none';
     updGoBtn.hidden = !available;
     if (available) {
-      updGoBtn.textContent = updateArmed === res.version
-        ? ('Перезапустить для ' + res.version)
-        : res.kind === 'asar'
-          ? ('Обновить до ' + res.version)
-          : ('Скачать установщик ' + res.version);
+      updGoBtn.textContent = res.kind === 'asar'
+        ? ('Обновить до ' + res.version)
+        : ('Скачать установщик ' + res.version);
     }
   }
   // If a check already found an update (pill is showing), offer the button immediately.
@@ -2738,9 +2736,7 @@ function showSettingsModal(tab) {
       updStatus.textContent = 'Не удалось проверить — нет связи.';
       syncUpdGoBtn(updateState); // про уже найденное обновление, если оно было, не забываем
     } else if (res && res.kind !== 'none') {
-      updStatus.textContent = updateArmed === res.version
-        ? ('Обновление ' + res.version + ' скачано — применится при перезапуске')
-        : ('Доступно обновление ' + res.version);
+      updStatus.textContent = 'Доступно обновление ' + res.version;
       syncUpdGoBtn(res);
     } else {
       updStatus.textContent = 'Установлена последняя версия.';
@@ -4170,7 +4166,10 @@ window.addEventListener('keydown', (e) => {
 // Clicking it opens a modal: asar-swap (small, in-app) or a full-installer fallback
 // when the runtime changed. Checks on launch + every 4h + manually from Settings.
 let updateState = null; // last decideUpdate result with kind 'asar'|'installer'
-let updateArmed = '';   // версия, уже скачанная и ждущая запуска (см. armUpdate)
+// Версия, скачанная В ЭТОМ запуске: страховка от повторной загрузки, если перезапуск
+// после успешной кнопки почему-то не случился и окно открыли снова. Между запусками не
+// живёт — плашка про неё ничего не знает и знать не должна.
+let updateArmed = '';
 let arming = null;      // {version, promise} — тихая загрузка в полёте
 const UPDATE_POLL_MS = 4 * 60 * 60 * 1000;
 
@@ -4179,27 +4178,16 @@ function snoozedVersion() { return localStorage.getItem('swarm.update.snooze') |
 function renderUpdatePill() {
   const pill = document.getElementById('update-pill');
   if (!pill) return;
-  // Уже скачано — это не предложение, а состояние: перезапуск сменит версию. Поэтому
-  // «отложить» здесь нечего, и snoozedVersion эту плашку не гасит: спрятав её, мы бы
-  // спрятали единственное место, где написано, что запуск будет уже другой версией.
-  // Кроме одного случая: следующее обновление сменило рантайм и требует полного
-  // установщика. Его перезапуск не поставит, положить рядом нельзя, и спрятав его за
-  // «применится при перезапуске» мы бы пообещали то, чего не произойдёт. Такое
-  // предложение — впереди готового.
-  const needsHands = updateState && updateState.kind === 'installer'
-    && updateState.version !== updateArmed
-    && updateState.version !== snoozedVersion();
-  if (updateArmed && !needsHands) {
-    pill.hidden = false;
-    pill.textContent = '↻ ' + updateArmed + ' — при перезапуске';
-    return;
-  }
+  // У плашки ОДНО состояние: доступна новая версия. Момент обновления выбирает человек, и
+  // до его нажатия ничего не скачано и ничего не ждёт — писать «при перезапуске» было бы
+  // не о чем. Заведомо тихая докачка отсюда убрана намеренно, см. checkForUpdate.
   const show = updateState && updateState.kind !== 'none' && updateState.version !== snoozedVersion();
   pill.hidden = !show;
   if (show) pill.textContent = '↑ Обновить ' + updateState.version;
 }
 
-// Тихо положить обновление рядом и НЕ перезапускаться.
+// Скачать обновление и положить его рядом. Зовётся ТОЛЬКО по кнопке — сама по себе
+// программа этого не делает.
 //
 // applyPayload не трогает установленное приложение: он кладёт новый asar в папку настроек и
 // переставляет указатель, а поднимает его загрузчик при следующем запуске. Перезапуск —
@@ -4214,7 +4202,7 @@ function armUpdate(st) {
   if (arming && arming.version === st.version) return arming.promise;
   const promise = window.swarm.updateApply(st.asar.url, st.asar.sha256, st.version)
     .then((res) => {
-      if (res && res.ok) { updateArmed = st.version; renderUpdatePill(); }
+      if (res && res.ok) updateArmed = st.version;
       return res;
     })
     // Не вышло (нет связи, не сошлась sha) — молчим. Плашка остаётся прежней «↑ Обновить»,
@@ -4241,8 +4229,8 @@ async function checkForUpdate(manual) {
     const prev = updateState && updateState.kind !== 'none' ? updateState.version : '';
     updateState = res;
     renderUpdatePill();
-    // Нашли — сразу и кладём, не спрашивая: ставить обновление больше ничего не стоит.
-    if (res.kind === 'asar') armUpdate(res);
+    // Нашли — ТОЛЬКО показываем. Скачивание начинается по кнопке и ничем иным: момент
+    // обновления выбирает человек, а не приложение за него.
     if (manual) openUpdateModal();
     else if (prev && prev !== res.version) {
       // A newer release appeared after we already had a pill for an older one.
@@ -4312,23 +4300,16 @@ async function openUpdateModal() {
         <button class="modal-ok neutral upd-go"></button>
       </div>
     </div>`;
-  const armedHere = updateArmed === st.version;
   overlay.querySelector('.upd-notes').textContent =
     (st.kind === 'installer' ? 'Изменился рантайм — нужен полный установщик.\n\n' : '')
-    + (armedHere ? 'Уже скачано — применится при следующем запуске приложения.\n\n' : '')
     + (st.notes || '');
   const goBtn = overlay.querySelector('.upd-go');
-  goBtn.textContent = armedHere ? 'Перезапустить сейчас'
-    : st.kind === 'asar' ? 'Обновить и перезапустить' : 'Скачать установщик';
-  // «Позже» здесь означало бы «отложить то, что уже сделано»: откладывать нечего, и
-  // прятать плашку по этой кнопке — значит убрать единственное упоминание, что версия
-  // сменится. Так что закрываем окно и всё.
-  if (armedHere) overlay.querySelector('.upd-later').textContent = 'Понятно';
+  goBtn.textContent = st.kind === 'asar' ? 'Обновить и перезапустить' : 'Скачать установщик';
   document.body.appendChild(overlay);
 
   const close = () => overlay.remove();
   overlay.querySelector('.upd-later').addEventListener('click', () => {
-    if (!armedHere) localStorage.setItem('swarm.update.snooze', st.version);
+    localStorage.setItem('swarm.update.snooze', st.version);
     renderUpdatePill(); close();
   });
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay && !goBtn.disabled) close(); });
@@ -4418,11 +4399,6 @@ async function openUpdateModal() {
 }
 
 // initial + periodic checks (throttled)
-// Сначала спрашиваем, не лежит ли уже скачанное с прошлого раза: иначе плашка предложила бы
-// качать то, что готово, а после перезапуска молча погаснет — версии сравняются.
-window.swarm.updatePending()
-  .then((v) => { if (v) { updateArmed = v; renderUpdatePill(); } })
-  .catch(() => {});
 setTimeout(() => checkForUpdate(false), 3000);
 setInterval(() => {
   const last = Number(localStorage.getItem('swarm.update.lastCheck') || 0);
