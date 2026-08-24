@@ -34,6 +34,14 @@
   <main id="stage">
     <div id="pult-strip"></div>
     <div id="pult-empty">Никто не ждёт ответа</div>
+    <!-- Плашка владения: висит над терминалом вкладки, которую человек отдал агенту.
+         Печать в такую вкладку не принимается вовсе, и плашка — единственное, что об этом
+         говорит; раньше на её месте была модалка поперёк экрана. Заполняет renderGate(). -->
+    <div id="gate-strip" hidden>
+      <span class="gate-moon"></span>
+      <span class="gate-text"></span>
+      <button class="gate-take" type="button"></button>
+    </div>
     <!-- Shown for ~1.2s when the pult hands the terminal to the NEXT agent on
          its own. Filled by flashHandoff(); pointer-none so you can start typing
          the answer straight through it. -->

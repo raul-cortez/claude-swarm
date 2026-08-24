@@ -1896,3 +1896,66 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 .link-tip.show { opacity: 1; }
+
+/* --- граница владения: плашка над отданной вкладкой ------------------------
+   Вкладку, отданную агенту, человек не печатает, и узнать об этом он должен ДО того, как
+   наберёт фразу. Раньше здесь была модалка — она всплывала на каждое движение мыши (доклады
+   мыши приходят тем же путём, что печать) и держала весь сворм, пока её не закроешь. Плашка
+   говорит то же самое, но ничего не отнимает: читать, листать и уходить на другие вкладки
+   можно как обычно. Место то же, что у пультовой полосы, и цвет тот же, что у карточки. */
+#gate-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  background: color-mix(in srgb, var(--night) 16%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--night) 60%, var(--border));
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--text) 78%, var(--night));
+}
+#gate-strip[hidden] { display: none; }
+/* Под пультовой полосой, а не поверх неё: в пульте видна та же чужая вкладка. */
+body.pult-on #gate-strip { top: 34px; }
+.gate-moon { display: flex; flex: none; color: var(--night); }
+.gate-moon svg { width: 13px; height: 13px; }
+/* Уступает кнопке: в узком окне сжимается текст, а не то, чем эту вкладку забирают. */
+.gate-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-take {
+  flex: none;
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--night);
+  background: color-mix(in srgb, var(--night) 18%, transparent);
+  color: color-mix(in srgb, var(--night) 45%, var(--text));
+}
+.gate-take:hover { background: color-mix(in srgb, var(--night) 34%, transparent); }
+/* Попробовали напечатать в чужую вкладку: нажатие не ушло никуда, и сказать об этом надо
+   заметно — но без окна поперёк экрана. Плашка сама и есть ответ, ей только прибавляется
+   света и один короткий толчок. */
+#gate-strip.is-blocked {
+  background: color-mix(in srgb, var(--night) 34%, var(--panel));
+  border-bottom-color: var(--night);
+  color: var(--text);
+  animation: gate-blocked 200ms ease-out 2;
+}
+@keyframes gate-blocked {
+  0%, 100% { transform: none; }
+  50%      { transform: translateY(1px); }
+}
+/* Терминал уезжает вниз на высоту плашки и притухает: «эта вкладка не моя» читается раньше,
+   чем прочитан текст. Притухает НЕ настолько, чтобы мешать читать: за отданной вкладкой
+   следят глазами, ради этого её и открывают. */
+.term-holder.gated {
+  top: 42px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--night) 40%, transparent);
+}
+body.pult-on .term-holder.gated { top: 76px; }
+.term-holder.gated .xterm { opacity: 0.62; }

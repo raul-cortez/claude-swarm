@@ -132,7 +132,7 @@ const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scope
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
-const TERMTALK = window.SWARM_TERMTALK;        // речь терминала (мышь, ответы) — не печать человека
+const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (мышь, ответы) — не печать человека
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
 // persisted as a single JSON blob in localStorage (see swarm.appearance). Read by
@@ -439,6 +439,9 @@ window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind,
   // зависит, буферизуем ли «работает». См. applyStatus.
   s.sure = !!sure;
   applyStatus(s, { notify: true });
+  // Плашка владения называет и то, чего вкладка ждёт: пока она просит разрешение, нажатия
+  // в неё уходят (см. autoNow), и человек должен видеть, что это не поломка.
+  if (id === activeId) renderGate();
 });
 
 // The status a tab should SHOW = the main-thread status, except: while sub-agents
@@ -2905,6 +2908,7 @@ function activate(id, opts) {
   if (!pultOn) s.tab.classList.add('active');
   activeId = id;
   reportViewing();
+  renderGate();
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
@@ -2954,7 +2958,7 @@ function closeSession(id) {
   if (activeId === id) {
     const next = sessions.keys().next();
     if (!next.done) { activate(next.value); }
-    else { activeId = null; }
+    else { activeId = null; renderGate(); }
   }
 }
 
@@ -3487,8 +3491,9 @@ function runQuickCommand(text) {
   if (!s || !s.alive) return;
   // Через ту же границу владения, что и клавиатура (typeInto): команда из меню — такая же
   // печать в строку ввода, и в отданной вкладке она столкнулась бы с толчком сворма ровно так
-  // же. Мимо гейта здесь был самый обидный обход: человек нажимает /clear в отданной вкладке и
-  // получает мусор в строке, о котором его никто не спросил.
+  // же. Мимо границы здесь был самый обидный обход: человек нажимает /clear в отданной вкладке
+  // и получает мусор в строке, о котором его никто не предупреждал. Теперь команда из меню, как
+  // и клавиша, просто не принимается, и об этом говорит плашка (blinkGate).
   typeInto(activeId, text + '\r');
   requestAnimationFrame(() => s.term.focus());
 }
@@ -3897,10 +3902,19 @@ async function onGitPull() {
 // печатает в отданную вкладку, обычно просто забыл, что отдал её, — и половина разговора
 // уезжает агенту, который в это время решает сам.
 //
-// Первая клавиша агенту не уезжает: она копится, всплывает вопрос, и после «забрать себе»
-// набранное уходит целиком. Отмена — набранное отбрасывается, вкладка остаётся отданной.
-const gateHeld = new Map();     // id → куски ввода, ждущие решения
-const gateAsking = new Set();   // у кого вопрос сейчас на экране
+// Печать в отданную вкладку не копится и не досылается — она просто не принимается: хочешь
+// печатать, забери вкладку. Копить пробовали, и вышло дороже пользы. Первая клавиша поднимала
+// модальный вопрос «забрать себе?» — а поднимался он на КАЖДОЕ движение мыши (доклады мыши
+// приходили тем же путём, что печать, см. termtalk.js) и держал весь сворм, пока его не
+// закроешь: отданную вкладку нельзя было даже открыть почитать. Теперь про владение говорит
+// плашка над терминалом — заметная, но ничего не отнимающая (см. renderGate).
+const gateEl = document.getElementById('gate-strip');
+if (gateEl) {
+  gateEl.querySelector('.gate-moon').innerHTML = ICONS.moon;
+  gateEl.querySelector('.gate-take').addEventListener('click', () => takeGate(activeId));
+}
+let gateBlocked = false;          // только что попробовали напечатать — плашка отвечает на это
+let gateBlockedTimer = null;
 
 // Работает ли вкладка без человека ПРЯМО СЕЙЧАС: своя отметка или общий ночной режим.
 function autoNow(id) {
@@ -3915,6 +3929,14 @@ function autoNow(id) {
   return !!(nightNow.on || s.auto);
 }
 
+// Отдана ли вкладка ВООБЩЕ — без исключения про разрешение. Плашка говорит про владение, а не
+// про судьбу конкретного нажатия: она меняет высоту терминала, и мигать ею на каждом вопросе
+// агента значило бы пересчитывать сетку по десять раз за час.
+function gatedTab(id) {
+  const s = sessions.get(id);
+  return !!(s && (nightNow.on || s.auto));
+}
+
 function typeInto(id, bytes) {
   if (!bytes) return;
   const s = sessions.get(id);
@@ -3923,44 +3945,74 @@ function typeInto(id, bytes) {
     window.swarm.sendInput(id, bytes);
     return;
   }
-  const held = gateHeld.get(id) || [];
-  held.push(bytes);
-  gateHeld.set(id, held);
-  askGate(id);
+  // Нажатие не уходит никуда и нигде не ждёт. Молчать об этом нельзя — иначе человек печатает
+  // в пустоту и считает приложение сломанным, — поэтому отвечает плашка.
+  blinkGate(id);
 }
 
-async function askGate(id) {
-  if (gateAsking.has(id)) return;      // вопрос уже висит — остальные клавиши просто копятся
-  gateAsking.add(id);
-  const s = sessions.get(id);
-  const name = s ? s.tab.querySelector('.label').textContent : 'вкладка';
-  const away = !!nightNow.on;
-  const mine = !!(s && s.auto);
-  // Текст называет ВСЁ, что случится по кнопке: и выключение общего ночного режима, и снятие
-  // отметки вкладки. Молча трогать хоть одно из двух нельзя — человек потом гадает, кто главный.
-  const msg = away
-    ? `Ночной режим включён у всех вкладок, и в «${name}» пишет сворм.`
-      + ' Вы за клавиатурой — выключить его'
-      + (mine ? ' и снять ночной режим с этой вкладки?' : '?')
-      + ' Остальные ночные вкладки продолжат сами.'
-    : `«${name}» в ночном режиме: агент решает сам, а сворм её подталкивает.`
-      + ' Забрать вкладку себе? Пока она отдана, набранное ей не уходит.';
-  const take = await confirmModal(msg, away ? 'Я за клавиатурой' : 'Забрать себе');
-  gateAsking.delete(id);
-  if (!take) { gateHeld.delete(id); return; }
-  // Забрать значит забрать: если в силе общее положение — снимаем и его, иначе кнопка обманет.
-  if (away) { try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) {} }
-  if (mine) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
-  const held = gateHeld.get(id) || [];
-  gateHeld.delete(id);
-  // Отдаём набранное одним куском: агенту это неотличимо от быстрой печати, а порядок сохранён.
-  const sess = sessions.get(id);
-  if (held.length) {
-    const chunk = held.join('');
-    if (sess && sess.scanTyped) sess.scanTyped(chunk);
-    window.swarm.sendInput(id, chunk);
+// Плашка владения. Одна на сцену: печатают всегда в активную вкладку, про неё и речь.
+function renderGate() {
+  if (!gateEl) return;
+  const s = sessions.get(activeId);
+  const on = !!s && gatedTab(activeId);
+  for (const [id, sess] of sessions) sess.holder.classList.toggle('gated', on && id === activeId);
+  const was = !gateEl.hidden;
+  gateEl.hidden = !on;
+  if (!on) {
+    gateEl.classList.remove('is-blocked');
+    if (was) refitActive();       // плашка ушла — терминалу вернулась её высота
+    return;
   }
-  if (sess) sess.term.focus();
+  const name = s.tab.querySelector('.label').textContent;
+  // Общее положение и своя отметка снимаются РАЗНЫМИ кнопками, и путать их нельзя: одна
+  // выключает ночь у всех вкладок сразу, другая забирает одну эту. Текст называет то, что
+  // случится, целиком — молча трогать чужие вкладки нельзя.
+  const away = !!nightNow.on;
+  const asks = s.status === 'waiting' && s.waitKind === 'permission';
+  gateEl.querySelector('.gate-text').textContent = gateBlocked
+    ? `Нажатие не ушло: «${name}» работает без вас. Чтобы печатать, заберите вкладку.`
+    : asks
+      ? `«${name}» работает без вас, но сейчас спрашивает разрешение — ответить можно, не забирая.`
+      : away
+        ? `Ночной режим включён у всех вкладок: «${name}» работает без вас, печать ей не уходит.`
+        : `«${name}» работает без вас — печать ей не уходит.`;
+  const btn = gateEl.querySelector('.gate-take');
+  btn.textContent = away ? 'Я за клавиатурой' : 'Забрать себе';
+  btn.title = away
+    ? 'Выключить ночной режим у всех вкладок: они перестанут решать без вас. Эта вкладка'
+      + ' вернётся вам целиком — своя отметка с неё тоже снимается.'
+    : 'Снять с вкладки ночной режим: она снова ваша, печать уходит агенту.';
+  if (!was) refitActive();        // плашка появилась — терминал уезжает вниз
+}
+
+// Попытка напечатать в чужую вкладку. Нажатие пропало, и плашка должна это ПОКАЗАТЬ: молчание
+// здесь неотличимо от сломанной клавиатуры.
+function blinkGate(id) {
+  if (!gateEl || id !== activeId) return;
+  gateBlocked = true;
+  if (gateBlockedTimer) clearTimeout(gateBlockedTimer);
+  gateBlockedTimer = setTimeout(() => {
+    gateBlockedTimer = null;
+    gateBlocked = false;
+    gateEl.classList.remove('is-blocked');
+    renderGate();
+  }, 2600);
+  gateEl.classList.remove('is-blocked');
+  void gateEl.offsetWidth;        // перезапуск анимации, если жали второй раз подряд
+  gateEl.classList.add('is-blocked');
+  renderGate();
+}
+
+// Забрать значит забрать: если в силе общее положение — снимаем и его, иначе кнопка обманет.
+// Отметку вкладки снимает main и присылает пушем tab:auto — той же дорогой, что из меню
+// карточки и из чата (см. applyTabAuto), и плашка гаснет уже оттуда.
+async function takeGate(id) {
+  const s = sessions.get(id);
+  if (!s) return;
+  if (nightNow.on) { try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) {} }
+  if (s.auto) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
+  renderGate();
+  s.term.focus();                 // кнопка забрала фокус у терминала — возвращаем сразу
 }
 
 // Мандат вкладки поменялся (меню карточки, чат, гейт) — обновляем отметку и запоминаем.
@@ -3975,15 +4027,15 @@ function applyTabAuto(id, on) {
   s.tab.classList.toggle('is-auto', !!on);
   s.tab.title = on
     ? 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
-      + ' не уходит — полумесяц или первая клавиша, чтобы забрать себе.'
+      + ' не уходит — полумесяц или кнопка в плашке над терминалом, чтобы забрать себе.'
     : '';
   const moon = s.tab.querySelector('.moon');
   if (moon) {
     moon.title = on ? 'Забрать себе: сейчас работает без вас' : 'Ночной режим: пусть работает без вас';
     moon.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
-  if (!on) gateHeld.delete(String(id));
   persistTabs();
+  renderGate();
 }
 
 // Клик по полумесяцу. Решение принимает main (он же владеет общим положением и журналом),
@@ -4633,6 +4685,7 @@ function renderNightPill(st) {
     nightPill.hidden = true;
   }
   paintNightMarks(nightNow.digest);
+  renderGate();
 }
 
 function openNightModal() {
