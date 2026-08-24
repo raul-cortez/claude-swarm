@@ -1826,40 +1826,44 @@ function showSettingsModal(tab) {
       <div class="set-panel" data-panel="night">
         <header class="set-panel-h">
           <h2 class="set-h">Ночной режим</h2>
-          <p class="set-intro">Вкладка в ночном режиме решает обратимое сама, а на дорогой
-            развилке останавливается и ждёт вас. Включить его одной вкладке — полумесяц на её
-            карточке (или <span class="set-mono">/night</span> в её теме в телеграме), и карточка
-            станет фиолетовой. Включить всем сразу — луна в нижней панели, положение «меня нет».
-            Вернулись — сворм показывает, кто что решил без вас.</p>
+          <p class="set-intro">Ночной режим — это работа, пока вас нет рядом. Агент в нём сам
+            решает всё, что легко переделать, а на дорогом решении останавливается и ждёт вашего
+            возвращения. Включить его одной вкладке — полумесяц на её карточке (или
+            <span class="set-mono">/night</span> в её теме в телеграме), карточка станет фиолетовой;
+            всем сразу — луна в нижней панели. Вернётесь — сворм покажет, кто что решил без вас.</p>
         </header>
         <section class="set-group">
           <div class="set-group-h">
-            <span>Что сворм говорит агенту без вас</span>
+            <span>Что сворм пишет агенту, пока вас нет</span>
             <button type="button" class="set-q" aria-label="подсказка">?</button>
-            <span class="set-hint" hidden>Два текста, и они уезжают агенту в разные моменты.
-              Пустое поле — заготовка сворма; она же стоит в поле подсказкой, её можно скопировать
-              и переписать под себя. Где нужно назвать метку вопроса, пишите
-              <span class="set-lit">{тег}</span> — сворм подставит её сам.</span>
+            <span class="set-hint" hidden>Пока вас нет, отвечает агенту сам сворм — вот этими
+              двумя текстами. В полях уже лежат его заготовки: правьте их как обычный текст,
+              а кнопка под полем вернёт заготовку назад. Если в своём тексте надо назвать метку
+              вопроса, напишите <span class="set-lit">{тег}</span> — сворм подставит ту, что
+              настроена у вас.</span>
           </div>
           <div class="set-field">
             <div class="set-head">
               <span class="set-label">Правило</span>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Приезжает агенту, когда он собирается спросить вас
-                вариантами — внутри хода, так что вкладка даже не встаёт. Тем же текстом сворм
-                толкает вкладку, которая всё-таки встала с вопросом.</span>
+              <span class="set-hint" hidden>Агент собрался спросить вас и показать варианты —
+                и вместо вас отвечает сворм, вот этим текстом. Успевает он прямо посреди хода,
+                так что вкладка даже не останавливается. Этим же текстом сворм подталкивает
+                вкладку, которая всё-таки встала с вопросом.</span>
             </div>
-            <textarea class="set-input set-prose" id="set-night-rule" rows="5" spellcheck="false"></textarea>
+            <textarea class="set-input set-prose" id="set-night-rule" rows="8" spellcheck="false"></textarea>
+            <button type="button" class="set-check-btn" id="set-night-rule-reset" hidden>вернуть заготовку</button>
           </div>
           <div class="set-field">
             <div class="set-head">
               <span class="set-label">Вопрос замолчавшей вкладке</span>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Уезжает вкладке, которая закончила ход и две минуты
-                молчит: работа кончилась или впереди следующая фаза? Ответ агент выбирает сам
-                из тех, что вы ему предложите.</span>
+              <span class="set-hint" hidden>Вкладка закончила ход и две минуты молчит — сворм
+                спрашивает её сам: работа кончилась или впереди следующий шаг? Отвечает агент,
+                и выбирает он из вариантов, которые вы напишете ему здесь.</span>
             </div>
-            <textarea class="set-input set-prose" id="set-night-ask" rows="5" spellcheck="false"></textarea>
+            <textarea class="set-input set-prose" id="set-night-ask" rows="8" spellcheck="false"></textarea>
+            <button type="button" class="set-check-btn" id="set-night-ask-reset" hidden>вернуть заготовку</button>
           </div>
           <div class="tg-state" id="set-night-note"></div>
         </section>
@@ -2210,33 +2214,54 @@ function showSettingsModal(tab) {
   window.swarm.telegram.onState((st) => { if (document.body.contains(overlay)) renderTg(st); });
 
   // --- Ночь: свои формулировки -------------------------------------------------------------
-  // Заготовка стоит в поле ПОДСКАЗКОЙ, а не значением: значением её пришлось бы отличать от
-  // своего текста при сохранении («это он переписал или просто не тронул?»), а подсказкой
-  // пустое поле честно значит «как у сворма». Скопировать её человеку есть откуда — она же
-  // напечатана серым прямо в поле.
+  // Заготовка лежит в поле ЗНАЧЕНИЕМ, и это здесь главное. Раньше она стояла подсказкой
+  // (placeholder) — так пустое поле честно значило «как у сворма», и отличать своё от нетронутого
+  // не приходилось вовсе. Но подсказку нельзя ПРАВИТЬ: чтобы поменять в правиле одно слово, человек
+  // должен был перепечатать шестьсот символов руками, и «слегка поменять» превращалось в работу
+  // переписчика. Никто этого не делал.
+  //
+  // Теперь текст видно и правят его как обычный, а «как у сворма» считается сравнением: совпал с
+  // заготовкой — сохраняем пусто, и текст продолжит обновляться вместе со свормом, как и раньше.
+  // Кнопка «вернуть заготовку» делает то же самое одним нажатием и стоит только там, где есть что
+  // возвращать: при заготовке в поле возвращать нечего.
   const nightRuleI = overlay.querySelector('#set-night-rule');
   const nightAskI = overlay.querySelector('#set-night-ask');
   const nightNote = overlay.querySelector('#set-night-note');
+  const nightResets = { rule: overlay.querySelector('#set-night-rule-reset'), ask: overlay.querySelector('#set-night-ask-reset') };
+  const nightFields = { rule: nightRuleI, ask: nightAskI };
+  const nightDefaults = { rule: '', ask: '' };
+  // Сравниваем так же, как main чистит текст перед сохранением (night:setTexts): иначе лишний
+  // перенос строки делал бы правку «своим текстом», ничего в ней не поменяв.
+  const flatText = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 
   function renderNightTexts(st) {
     if (!st) return;
-    if (document.activeElement !== nightRuleI) nightRuleI.value = st.rule || '';
-    if (document.activeElement !== nightAskI) nightAskI.value = st.ask || '';
-    nightRuleI.placeholder = st.ruleDefault || '';
-    nightAskI.placeholder = st.askDefault || '';
+    nightDefaults.rule = st.ruleDefault || '';
+    nightDefaults.ask = st.askDefault || '';
+    // Поле под курсором не трогаем: человек в нём печатает.
+    if (document.activeElement !== nightRuleI) nightRuleI.value = st.rule || nightDefaults.rule;
+    if (document.activeElement !== nightAskI) nightAskI.value = st.ask || nightDefaults.ask;
+    nightResets.rule.hidden = !st.rule;
+    nightResets.ask.hidden = !st.ask;
     const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
     nightNote.textContent = own.length
-      ? `Своими словами: ${own.join(' и ')}. Метка вопроса у вас — ${st.tag || ''}.`
-      : `Оба текста — заготовки сворма. Метка вопроса — ${st.tag || ''}.`;
+      ? `Свой текст: ${own.join(' и ')}. Метка вопроса — ${st.tag || ''}.`
+      : `Сейчас оба текста — заготовки сворма. Метка вопроса — ${st.tag || ''}.`;
+  }
+
+  async function saveNightText(key) {
+    const typed = flatText(nightFields[key].value);
+    const same = typed === flatText(nightDefaults[key]);
+    renderNightTexts(await window.swarm.night.setTexts({ [key]: same ? '' : typed }));
   }
 
   window.swarm.night.state().then(renderNightTexts).catch(() => {});
-  nightRuleI.addEventListener('change', async () => {
-    renderNightTexts(await window.swarm.night.setTexts({ rule: nightRuleI.value }));
-  });
-  nightAskI.addEventListener('change', async () => {
-    renderNightTexts(await window.swarm.night.setTexts({ ask: nightAskI.value }));
-  });
+  for (const key of ['rule', 'ask']) {
+    nightFields[key].addEventListener('change', () => { saveNightText(key).catch(() => {}); });
+    nightResets[key].addEventListener('click', async () => {
+      renderNightTexts(await window.swarm.night.setTexts({ [key]: '' }));
+    });
+  }
 
   overlay.querySelector('#set-tg-save').addEventListener('click', async () => {
     const token = tgTokenI.value.trim();
@@ -3861,7 +3886,7 @@ async function onGitPull() {
 const gateHeld = new Map();     // id → куски ввода, ждущие решения
 const gateAsking = new Set();   // у кого вопрос сейчас на экране
 
-// Работает ли вкладка без человека ПРЯМО СЕЙЧАС: своя отметка или общее «меня нет».
+// Работает ли вкладка без человека ПРЯМО СЕЙЧАС: своя отметка или общий ночной режим.
 function autoNow(id) {
   const s = sessions.get(id);
   if (!s) return false;
@@ -3895,12 +3920,12 @@ async function askGate(id) {
   const name = s ? s.tab.querySelector('.label').textContent : 'вкладка';
   const away = !!nightNow.on;
   const mine = !!(s && s.auto);
-  // Текст называет ВСЁ, что случится по кнопке: и снятие общего «меня нет», и снятие отметки
-  // вкладки. Молча трогать хоть одно из двух нельзя — человек потом гадает, кто главный.
+  // Текст называет ВСЁ, что случится по кнопке: и выключение общего ночного режима, и снятие
+  // отметки вкладки. Молча трогать хоть одно из двух нельзя — человек потом гадает, кто главный.
   const msg = away
-    ? `Включено «меня нет»: все вкладки в ночном режиме, и в «${name}» пишет сворм.`
-      + ' Вы за клавиатурой — снять «меня нет»'
-      + (mine ? ' и ночной режим у этой вкладки?' : '?')
+    ? `Ночной режим включён у всех вкладок, и в «${name}» пишет сворм.`
+      + ' Вы за клавиатурой — выключить его'
+      + (mine ? ' и снять ночной режим с этой вкладки?' : '?')
       + ' Остальные ночные вкладки продолжат сами.'
     : `«${name}» в ночном режиме: агент решает сам, а сворм её подталкивает.`
       + ' Забрать вкладку себе? Пока она отдана, набранное ей не уходит.';
@@ -4418,14 +4443,29 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 //
 // Положение живёт в main и приезжает оттуда же, чем бы его ни поменяли — этим списком,
 // отвязкой группы в настройках или привязкой новой с телефона.
+//
+// Подписи — целыми фразами, как человек сказал бы вслух, и это не вкусовщина. Рубленое
+// «разрешения стоят» читалось как «разрешения выданы», то есть ровно наоборот — а цена
+// ошибки здесь в том, что человек уходит, думая, будто агенту всё позволено. Обрывки вроде
+// «потом отчёт» экономят три слова и теряют смысл целиком.
+//
+// Каждая подпись отвечает на один вопрос: что будет, пока это положение включено. Про то,
+// чего НЕ будет, не пишем: «за компом» — обычная работа, и перечислять при ней замолчавшую
+// телегу значит объяснять человеку за клавиатурой, чего он лишён.
+//
+// Место есть: подпись лежит своей строкой под именем, в меню 240–340px её хватает на две.
 const PRESENCE = [
-  { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'телега молчит и в вкладки не пишет' },
-  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'вопросы и итоги в телегу, компьютер не спит', needsBot: true },
-  // «Меня нет» — не про телегу вовсе: человека нет у компьютера. Поэтому оно в списке всегда, и
+  { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'Всё как обычно: агенты спрашивают вас прямо в окне.' },
+  { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'Вопросы и итоги приходят в телеграм, отвечать можно оттуда, и компьютер не уснёт.', needsBot: true },
+  // Ночной режим — не про телегу вовсе: человека нет у компьютера. Поэтому он в списке всегда, и
   // бота для него не нужно (уйти можно и без телефона), а отчёт ждёт в окне приложения. Это же
   // положение выдаёт мандат «работай без меня» СРАЗУ ВСЕМ вкладкам; одной вкладке он выдаётся
   // отдельно, правым кликом по карточке.
-  { id: 'night', icon: 'moon', name: 'меня нет', hint: 'ночной режим у всех вкладок, разрешения стоят, потом отчёт' },
+  //
+  // Называется он так же, как везде вокруг: в подсказках, в отчёте и в телеге положение и до
+  // того звали ночным режимом, а в списке оно одно стояло «меня нет» — и человек, читавший про
+  // ночной режим, искал в списке пункт с таким именем и не находил.
+  { id: 'night', icon: 'moon', name: 'ночной режим', hint: 'Агенты работают сами: запрос разрешения дождётся вас, а к возвращению будет готов отчёт.' },
 ];
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
@@ -4467,7 +4507,7 @@ function renderPresencePill(st) {
   const it = presenceItem(presenceNow);
   presencePill.classList.toggle('is-on', presenceNow !== 'desk');
   presencePill.innerHTML = ICONS[it.icon];
-  presencePill.title = `Где я: ${it.name} — ${it.hint}`;
+  presencePill.title = `Где я: ${it.name}. ${it.hint}`;
 }
 
 function openPresenceMenu() {
@@ -4486,7 +4526,7 @@ function openPresenceMenu() {
     name.textContent = p.name;
     const hint = document.createElement('span');
     hint.className = 'cmd-hint';
-    hint.textContent = b.disabled ? 'нужен бот в телеграме — настройки' : p.hint;
+    hint.textContent = b.disabled ? 'Сначала подключите бота в настройках.' : p.hint;
     b.append(ic, name, hint);
     b.addEventListener('click', async () => {
       closePresenceMenu();
@@ -4556,9 +4596,9 @@ function renderNightPill(st) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
     nightPill.hidden = false;
-    nightPill.textContent = '«меня нет» включено';
-    nightPill.title = 'Вы за клавиатурой, а положение «меня нет» ещё включено: все вкладки остаются'
-      + ' в ночном режиме и решают сами. Клик — вернуться и показать отчёт.';
+    nightPill.textContent = 'ночной режим включён';
+    nightPill.title = 'Вы за клавиатурой, а ночной режим всё ещё включён: все вкладки остаются'
+      + ' в нём и решают сами. Клик — вернуться и показать отчёт.';
   } else if (!nightNow.on && autoTabsHere()) {
     // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (они фиолетовые),
     // но счётчик отвечает на другой вопрос — «сколько всего сейчас в ночном режиме», — и даёт

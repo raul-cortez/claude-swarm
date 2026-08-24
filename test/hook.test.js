@@ -483,7 +483,7 @@ test('без снимка расхода начало хода выглядит 
   assert.deepStrictEqual(Object.keys(out), ['terminalSequence']);
 });
 
-test('end to end: «меня нет» на диске даёт правило любой вкладке', () => {
+test('end to end: общий ночной режим на диске даёт правило любой вкладке', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-night-')));
   const staged = path.join(dir, 'swarm-signal.mjs');
   fs.copyFileSync(SCRIPT, staged);
