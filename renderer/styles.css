@@ -504,8 +504,11 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
   transition: opacity .12s ease;
 }
 .tab .moon svg { width: 13px; height: 13px; flex: none; }
-.tab:hover .moon { opacity: .75; }
-.tab .moon:hover { opacity: 1; color: var(--night); }
+/* Полумесяц появляется только под курсором, поэтому светит в полную силу: приглушать
+   нечего — рядом ничего не отвлекает, а тому, кто про ночной режим ещё не знает, значок
+   надо заметить. Прямое наведение НА него добавляет цвет: это уже кнопка под пальцем. */
+.tab:hover .moon { opacity: 1; }
+.tab .moon:hover { color: var(--night); }
 .tab.is-auto .moon { opacity: 1; color: var(--night); }
 .tab:hover .agents,
 .tab.is-auto .agents { margin-right: 16px; }
