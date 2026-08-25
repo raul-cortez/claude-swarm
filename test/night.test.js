@@ -282,7 +282,7 @@ test('своя формулировка вытесняет заготовку, �
   assert.strictEqual(night.ruleText('Реши сам, спорное — утром.', '[t]'),
     'Реши сам, спорное — утром. ' + night.protocol('[t]'));
   assert.strictEqual(night.askText('Кончил или ждёшь?', '[t]'),
-    'Кончил или ждёшь? ' + night.protocol('[t]'));
+    'Кончил или ждёшь? ' + night.protocol('[t]') + ' ' + night.summaryNote());
 });
 
 // Ловушка, ради которой строку и вынесли: человек переписывает правило под свой уклад и метку не
@@ -300,10 +300,24 @@ test('метка, названная в своём тексте, не дубли
   assert.strictEqual(night.ruleText(own, '[swarm:вопрос]'), own);
 });
 
+// Итог дописан СНАРУЖИ редактируемого текста — как и метка: человек, переписавший вопрос под
+// свой уклад, унёс бы требование вместе с абзацем, и отказ был бы тихим.
+test('вопрос про фазу зовёт написать итог — и к заготовке, и к своему тексту', () => {
+  assert.ok(night.askText('', '[swarm:вопрос]').includes(night.summaryNote()),
+    'заготовка потеряла итог');
+  assert.ok(night.askText('Свой вопрос про фазу.', '[swarm:вопрос]').includes(night.summaryNote()),
+    'свой текст потерял итог');
+});
+
+test('итог не повторяется, если он уже назван в тексте', () => {
+  const t = night.askText('Спроси себя. ' + night.summaryNote(), '[swarm:вопрос]');
+  assert.strictEqual(t.split('Задача кончилась').length - 1, 1, 'итог сказан дважды');
+});
+
 test('метка подставляется вместо {тег} в любом написании', () => {
   assert.strictEqual(night.ruleText('стой и пиши {тег}', '[swarm:вопрос]'), 'стой и пиши [swarm:вопрос]');
   assert.strictEqual(night.ruleText('write { TAG } and wait', '[q]'), 'write [q] and wait');
-  assert.strictEqual(night.askText('вариант 3: {тег}', '[q]'), 'вариант 3: [q]');
+  assert.strictEqual(night.askText('вариант 3: {тег}', '[q]'), 'вариант 3: [q] ' + night.summaryNote());
 });
 
 // --- утренняя сводка ----------------------------------------------------------

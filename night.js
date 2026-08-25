@@ -130,7 +130,7 @@ function askBody() {
 }
 
 function phaseAsk(tag) {
-  return withProtocol(askBody(), tag);
+  return withSummary(withProtocol(askBody(), tag));
 }
 
 // Итог задачи. Приложение видит, ЧТО происходило на экране, и не видит, ЧТО сделано: рассказ о
@@ -167,6 +167,13 @@ function protocol(tag) {
     + ' — иначе сворм не поймёт, что ты ждёшь ответа, и не позовёт его.';
 }
 
+function withSummary(text) {
+  const t = String(text == null ? '' : text).trim();
+  const s = summaryNote();
+  if (!t) return s;
+  return t.includes(s) ? t : t + ' ' + s;
+}
+
 // Метка уже названа в тексте — второй раз не повторяем: чей-то сохранённый текст мог застать
 // времена, когда её писали руками (или через {тег}), и одна и та же просьба дважды подряд
 // читается как две разные.
@@ -198,9 +205,13 @@ function ruleText(custom, tag) {
   return withProtocol(t ? fill(t, tag || '[swarm:вопрос]') : ruleBody(), tag);
 }
 
+// Итог дописываем ВСЕГДА и снаружи редактируемого текста — по той же причине, по какой снаружи
+// живёт метка (см. protocol): вопрос про порог фазы человек правит под свой уклад, и требование,
+// лежащее внутри абзаца, уехало бы вместе с ним. А спрашивают этот вопрос ровно в тот миг, когда
+// агент отвечает «всё сделано», — то есть тогда, когда итог и нужен.
 function askText(custom, tag) {
   const t = String(custom == null ? '' : custom).trim();
-  return withProtocol(t ? fill(t, tag || '[swarm:вопрос]') : askBody(), tag);
+  return withSummary(withProtocol(t ? fill(t, tag || '[swarm:вопрос]') : askBody(), tag));
 }
 
 // Будильник по сбросу лимита. Коротко: вкладка стояла часами, и весь контекст у агента свой.
