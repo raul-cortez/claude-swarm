@@ -251,6 +251,15 @@ const nightRuleBody = () => [
 // Строка про метку отделена от уклада и дописывается ВСЕГДА — к заготовке и к своему тексту
 // одинаково. Метка служебная, и следить за ней должен сворм: пока она стояла внутри текста,
 // который человек правит, переписанное под свой уклад правило уносило её с собой, и вкладка
+// Итог задачи. Дубликат night.js summaryNote — у хука нет доступа к модулям приложения (та же
+// причина, что у правила и порогов), сверяется тестом.
+const summaryNote = () => [
+  'Задача кончилась — напиши итог одним сообщением:',
+  'что сделано; что ты решил сам вместо человека и почему;',
+  'что осталось и чем это проверять.',
+  'Человек прочитает его, открыв вкладку, — другого рассказа о твоей работе у него нет.',
+].join(' ');
+
 // стояла зелёной с вопросом до утра. Дубликат night.js protocol/withProtocol, сверяется тестом.
 const nightProtocol = (tag) => `Когда спрашиваешь человека, начинай сообщение отдельной строкой с тегом ${tag}`
   + ' — иначе сворм не поймёт, что ты ждёшь ответа, и не позовёт его.';
@@ -471,8 +480,14 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // Отказ (любой) значит «ход продолжается», а не «агент ждёт»: рамку мы только что
   // запретили, и агент сейчас пойдёт писать прозой или делать шаг сам.
   const seq = markerFor(payload, matcher, (deny || gate) ? 'busy' : null);
-  const note = (payload && payload.hook_event_name === 'UserPromptSubmit')
-    ? usageNote(ex.usage, nowSec) : '';
+  const starts = !!(payload && payload.hook_event_name === 'UserPromptSubmit');
+  // Начало хода — единственный миг, когда автономной вкладке можно положить требование в контекст
+  // ДО работы. Сказать его в конце нельзя: конец хода мы узнаём тогда, когда агент уже замолчал,
+  // и просить у него итог задним числом — значит будить вкладку ради того, что она сделала бы
+  // сама, если бы знала. Подагенту не говорим: он живёт внутри чужого хода и итог не пишет.
+  const wantsSummary = starts && !isSubagent(payload) && (presence === 'night' || auto);
+  const note = [starts ? usageNote(ex.usage, nowSec) : '', wantsSummary ? summaryNote() : '']
+    .filter(Boolean).join('\n\n');
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
   // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
   // не говорим вовсе: он живёт внутри чужого хода и гасить вкладку ему не за что.
@@ -653,5 +668,5 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
-  nightRule, nightRuleText, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  nightRule, nightRuleText, summaryNote, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor };

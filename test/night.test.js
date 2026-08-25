@@ -573,6 +573,11 @@ test('ночное правило в хуке слово в слово совп�
   assert.strictEqual(H.nightRule('Позови меня'), night.rule('Позови меня'));
 });
 
+test('просьба про итог в хуке слово в слово совпадает с night.js', async () => {
+  const H = await import('../hooks/swarm-signal.mjs');
+  assert.strictEqual(H.summaryNote(), night.summaryNote());
+});
+
 test('пороги ворот в хуке те же, что в night.js', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
   assert.strictEqual(H.GATE_FIVE, night.GATE_FIVE);

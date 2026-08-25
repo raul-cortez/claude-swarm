@@ -495,6 +495,38 @@ test('в начало хода уезжают числа расхода, а не
   assert.match(out.terminalSequence, /;busy;/, 'статус хода не меняется');
 });
 
+// Итог доезжает в НАЧАЛЕ хода, а не в конце: конец хода мы узнаём тогда, когда агент уже
+// замолчал, — говорить ему про итог в этот миг поздно.
+test('автономной вкладке в начало задачи уезжает просьба про итог', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+    { autoSessions: ['s1'], nowSec: 0 });
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(out.hookSpecificOutput.additionalContext, /Задача кончилась/);
+});
+
+test('вкладке без мандата про итог не говорят', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+    { autoSessions: [], nowSec: 0 });
+  assert.ok(!out || !out.hookSpecificOutput, 'обычной вкладке добавлять нечего');
+});
+
+test('общий ночной режим тоже зовёт писать итог', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's9' }, m, [], 'night',
+    { autoSessions: [], nowSec: 0 });
+  assert.match(out.hookSpecificOutput.additionalContext, /Задача кончилась/);
+});
+
+test('числа расхода и просьба про итог едут вместе', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+    { usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 } }, autoSessions: ['s1'], nowSec: 0 });
+  assert.match(out.hookSpecificOutput.additionalContext, /5ч 93%/);
+  assert.match(out.hookSpecificOutput.additionalContext, /Задача кончилась/);
+});
+
 test('без снимка расхода начало хода выглядит как раньше', () => {
   const m = H.loadMatcher(() => null);
   const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, []);
