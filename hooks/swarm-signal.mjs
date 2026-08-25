@@ -11,7 +11,7 @@
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
 import { pathToFileURL } from 'node:url';
-import { realpathSync, readFileSync, readdirSync, appendFileSync } from 'node:fs';
+import { realpathSync, readFileSync, readdirSync } from 'node:fs';
 
 // --- «агент зовёт тебя»: теги и фразы ----------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
@@ -322,21 +322,6 @@ const nightRuleText = (custom, tag) => {
   return withNightProtocol(t ? t.replace(TAG_SLOT, m) : nightRuleBody(), m);
 };
 
-// Что агент СОБИРАЛСЯ спросить. Единственное место во всей системе, где развилка видна
-// дословно — с вопросом и вариантами, до всякого разбора прозы: дальше по цепочке остаётся
-// только то, что агент сам решил сказать вслух. Отсюда её и берёт утренняя сводка.
-function askedQuestion(payload) {
-  const inp = (payload && payload.tool_input) || {};
-  const qs = Array.isArray(inp.questions) ? inp.questions : [];
-  const first = qs[0] || {};
-  const text = String(first.question || first.header || '').replace(/\s+/g, ' ').trim();
-  const options = (Array.isArray(first.options) ? first.options : [])
-    .map((o) => String((o && (o.label || o.description)) || '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .slice(0, 6);
-  return { text: text.slice(0, 600), options };
-}
-
 // --- ворота на подагентов ----------------------------------------------------
 // Живой случай: расход у подписки на пределе, сессия запускает пятерых подагентов, и все
 // они умирают через пять минут. Агент об этом знать не может — числа расхода Клод отдаёт
@@ -567,25 +552,6 @@ function readUsage(sessionId) {
   return pickUsage(snaps, sessionId);
 }
 
-// --- ночной журнал -----------------------------------------------------------
-// Строка на развилку, которую агент прошёл сам. Пишет ХУК, а не приложение, потому что
-// дословный вопрос с вариантами есть только здесь: дальше остаётся лишь то, что агент решил
-// сказать вслух. Читает утренняя сводка (night.js parse/digest).
-//
-// Дописывание одной строкой и без чтения: тот же файл пишут одновременно все вкладки, а
-// каждая из них — отдельный процесс. Сломать сводку это не может, битую строку разбор
-// пропускает молча.
-function logNight(kind, payload, extra) {
-  try {
-    const e = Object.assign({
-      at: Date.now(),
-      kind,
-      session: String((payload && payload.session_id) || ''),
-    }, extra || {});
-    appendFileSync(new URL('./night.jsonl', import.meta.url), JSON.stringify(e) + '\n');
-  } catch (_) { /* журнал не важнее работы */ }
-}
-
 // The files the app writes beside this script (all three live in userData).
 async function readJsonBeside(name) {
   const { readFileSync } = await import('node:fs');
@@ -630,14 +596,6 @@ async function main() {
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
         { usage, nightRule: nightCustom, autoSessions, restart: restartModes });
-      // Запрещённая рамка у автономной вкладки — это принятое без человека решение. Записываем
-      // ЕГО, а не факт отказа: в отчёте должна стоять развилка дословно.
-      const sid = String((payload && payload.session_id) || '');
-      const autoTab = presence === 'night' || (!!sid && autoSessions.includes(sid));
-      if (autoTab && deniesPicker(payload, tgSessions, presence, autoSessions)) {
-        const q = askedQuestion(payload);
-        logNight('deny-box', payload, { text: q.text, options: q.options });
-      }
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -668,5 +626,5 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
-  nightRule, nightRuleText, summaryNote, askedQuestion, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  nightRule, nightRuleText, summaryNote, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor };

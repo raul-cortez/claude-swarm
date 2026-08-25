@@ -404,18 +404,6 @@ test('за телефоном причина остаётся прежней, а
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /с телефона/);
 });
 
-// Развилка дословно есть только здесь: дальше по цепочке остаётся лишь то, что агент сам
-// решил сказать вслух. Из этого и живёт группа «решено без тебя» в утренней сводке.
-test('вопрос агента разбирается с вариантами', () => {
-  const q = H.askedQuestion({ tool_input: { questions: [{
-    question: 'Мигрировать старый формат молча?',
-    options: [{ label: 'молча' }, { label: 'спросить при запуске' }],
-  }] } });
-  assert.strictEqual(q.text, 'Мигрировать старый формат молча?');
-  assert.deepStrictEqual(q.options, ['молча', 'спросить при запуске']);
-  assert.deepStrictEqual(H.askedQuestion({}), { text: '', options: [] });
-});
-
 test('на пределе пятичасового окна подагенты не запускаются', () => {
   const now = 1_000_000;
   const task = { hook_event_name: 'PreToolUse', tool_name: 'Task', session_id: 's1' };
@@ -547,18 +535,14 @@ test('end to end: общий ночной режим на диске даёт п
   }));
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /работает без человека/i);
-  // И развилка легла в журнал — именно её читает отчёт.
-  const log = fs.readFileSync(path.join(dir, 'night.jsonl'), 'utf8').trim().split('\n');
-  const e = JSON.parse(log[log.length - 1]);
-  assert.strictEqual(e.kind, 'deny-box');
-  assert.strictEqual(e.session, 'ночная');
-  assert.strictEqual(e.text, 'Мигрировать молча?');
-  assert.deepStrictEqual(e.options, ['да']);
+  // Следа от развилки не остаётся, и это осознанно: рассказывает о своей работе сам агент
+  // (night.js summaryNote), а не сворм по своим записям.
+  assert.strictEqual(fs.existsSync(path.join(dir, 'night.jsonl')), false, 'журнала больше нет');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // Мандат одной вкладки — через тот же файл, что и «где я»: хук отдельный процесс, и другого
-// способа узнать про вкладку у него нет. Проверяем весь путь: файл → отказ → правило → журнал.
+// способа узнать про вкладку у него нет. Проверяем весь путь: файл → отказ → правило.
 test('end to end: мандат одной вкладки читается с диска', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-auto-')));
   const staged = path.join(dir, 'swarm-signal.mjs');
@@ -575,9 +559,6 @@ test('end to end: мандат одной вкладки читается с д�
   const mine = run('своя');
   assert.strictEqual(mine.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(mine.hookSpecificOutput.permissionDecisionReason, /Реши сам/);
-  // Развилка легла в журнал — отчёт покажет её дословно.
-  const log = fs.readFileSync(path.join(dir, 'night.jsonl'), 'utf8').trim().split('\n');
-  assert.strictEqual(JSON.parse(log[log.length - 1]).session, 'своя');
   // А соседней вкладке за компом рамку никто не запрещает: человек рядом и ответит кнопками.
   const other = execFileSync(process.execPath, [staged], {
     input: JSON.stringify({

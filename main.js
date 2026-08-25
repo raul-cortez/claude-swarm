@@ -268,8 +268,7 @@ function provisionStatusline() {
   // сюда как раз и вернёт хуку ночное правило.
   tgWriteModes();
   pruneUsage();
-  pruneNight();
-  nightLoadDigest();
+  dropNightFiles();
   pruneRestart();
 }
 
@@ -1714,7 +1713,6 @@ function tgLoad() {
     keepAwake: d.keepAwake !== false,
     // Ночь — не настройка, а положение дел, но записанное: см. tgSetPresence.
     night: !!d.night,
-    nightFrom: Number.isFinite(d.nightFrom) ? d.nightFrom : 0,
     // Свои формулировки ночи. Лежат здесь, потому что здесь же лежит «где я»: ночь — его
     // третье положение, и файл этот хук уже читает (см. tgWriteModes).
     nightRule: String(d.nightRule || ''),
@@ -1726,16 +1724,11 @@ function tgLoad() {
     whisperModel: String(d.whisperModel || ''),
   } : tgBlank();
   tgApplyPrompt();
-  // Начало окна отчёта возвращаем ВСЕГДА, а не только вместе с ночным режимом: окно могло начаться
-  // с мандата одной вкладки, и такая вкладка вернётся вместе со своей отметкой. Без этой строки
-  // отчёт после перезапуска считался бы с мига восстановления — «без тебя 2 минуты» вместо ночи.
-  nightFrom = Number.isFinite(TG.nightFrom) ? TG.nightFrom : 0;
   // «Меня нет» возвращаем как было. Остальные положения — нет: «за телефоном», доставшееся от
   // вчерашнего вечера, значило бы, что агенты во всех вкладках отказываются показывать
   // варианты выбора человеку, который сидит перед маком.
   if (TG.night) {
     tgPresence = night.NIGHT;
-    if (!nightFrom) nightFrom = Date.now();
     // Хук читает «где я» с диска, а его файл переписали ДО нас (provisionStatusline бежит
     // раньше tgLoad) — там сейчас «за компом». Без этой строчки первую половину ночи агенты
     // получали бы не ночное правило, а обычную рамку с вариантами.
@@ -2482,22 +2475,11 @@ function tgOnTabGone(d) {
   // выглядят одинаково тихо, а значат разное. Поднимать её сами не берёмся: процесс упал по
   // неизвестной причине, и будить такое без присмотра — способ проснуться хуже, чем лёг.
   //
-  // Но НЕ при выходе из приложения — по той же причине, по какой не сносим темы (см.
-  // tgCloseTopic ниже): на закрытии окна умирают все pty разом, и здесь это выглядело ровно как
-  // двадцать закрывшихся вкладок. В сводку попадала не вся двадцатка, а одна-две случайных —
-  // приложение гасит процессы и до обработчиков доходит не всегда (см. will-quit), — и утром
-  // человек читал «вкладка закрылась» про вкладку, которую никто не закрывал: она просто
-  // переживала обновление сворма вместе с остальными.
-  if (autoOn(d) && !allowClose && !quitting) {
-    for (const [id, dd] of det) if (dd === d) { nightLog('died', id, d, {}); break; }
-  }
-  // Мандат умершей вкладки снимаем: список для хука не должен помнить её сессию, а если она
-  // была последней автономной — пора собирать отчёт. Не при выходе приложения: там мандаты
-  // переживают перезапуск вместе с вкладками.
+  // Мандат умершей вкладки снимаем: список для хука не должен помнить её сессию. Не при выходе
+  // приложения: там мандаты переживают перезапуск вместе с вкладками.
   if (d.auto && !allowClose && !quitting) {
     d.auto = false;
     tgWriteModes();
-    autoAfterChange(true);
     nightPush();
   }
   nightClear(d);
@@ -3661,7 +3643,6 @@ function tgOnUpdate(u) {
   if (u.command === 'comp') { tgWhereAmI(u, 'desk').catch(reportMainError); return; }
   if (u.command === 'night') { tgNightCmd(u).catch(reportMainError); return; }
   if (u.command === 'auto') { tgAutoCmd(u).catch(reportMainError); return; }
-  if (u.command === 'morning') { tgMorning(u).catch(reportMainError); return; }
   if (u.command === 'last') { tgLastWord(u).catch(reportMainError); return; }
   // Помощь собирается из ТОГО ЖЕ списка, что и меню у поля ввода (telegram.COMMANDS).
   // Списка было два, набранных руками, и они уже разошлись формулировками: человек читал в
@@ -4212,15 +4193,16 @@ async function tgNightCmd(u) {
   const on = awayAll();
   const changed = tgSetPresence(on ? 'desk' : night.NIGHT, 'телега');
   if (on) {
-    // Вернулся — значит пора читать отчёт. Он уже собран переключателем (nightSwitch).
-    await tgSend({ threadId: u.threadId, text: '🙋 Вернулся: ночной режим выключен.' });
-    await tgMorning(u);
+    // Что было без человека, рассказывают сами вкладки: агент пишет итог, закончив задачу, и он
+    // уже уехал сюда обычным итогом хода (tgNotifyDone). Пересказывать это второй раз нечем.
+    await tgSend({ threadId: u.threadId, text: '🙋 Вернулся: ночной режим выключен.'
+      + ' Что вкладки сделали без вас — в их итогах выше и на экранах вкладок.' });
     return;
   }
   await tgSend({ threadId: u.threadId, text: changed
     ? '🌙 «Меня нет» включено — ночной режим у всех вкладок. Вопросы с вариантами агентам запрещу,'
       + ' прозу подтолкну правилом, разрешения оставлю стоять, лимиты разбужу по сбросу.'
-      + ' Отчёт — /morning.'
+      + ' Закончив задачу, каждая вкладка напишет итог — что сделала и что решила без вас.'
     : '🌙 «Меня нет» и так включено.' });
 }
 
@@ -4245,14 +4227,6 @@ async function tgAutoCmd(u) {
     return;
   }
   await tgNightTab(u, id);
-}
-
-// /morning — тот же отчёт, что в окне приложения, только словами: утром смотрят в телефон
-// раньше, чем в мак. Собирается на месте, поэтому ответит и посреди ночи — «как дела сейчас».
-async function tgMorning(u) {
-  const dg = autoAny() ? night.digest(nightEntries(nightFrom), nightTabsNow(), Date.now(), { from: nightFrom })
-    : (nightDigestNow || night.digest(nightEntries(nightFrom), nightTabsNow(), Date.now(), { from: nightFrom }));
-  await tgSend({ threadId: u.threadId, text: night.digestText(dg) });
 }
 
 async function tgWhereAmI(u, presence) {
@@ -4439,7 +4413,7 @@ ipcMain.handle('telegram:setKeepAwake', (_e, on) => {
 const TG_PRESENCE_SAID = {
   desk: 'за компом — в группу не пишу и в вкладки из телеги не печатаю',
   phone: 'за телефоном — вопросы, разрешения и итоги в группу, компьютер не засыпает',
-  night: 'ночной режим — сразу у всех вкладок: решают сами по правилу, запрос разрешения ждёт возвращения, потом отчёт',
+  night: 'ночной режим — сразу у всех вкладок: решают сами по правилу, запрос разрешения ждёт возвращения, итог пишут сами',
 };
 
 // --- РАБОТА БЕЗ ЧЕЛОВЕКА ------------------------------------------------------
@@ -4466,23 +4440,28 @@ function awayAll() { return tgPresence === night.NIGHT; }
 // иначе получаются два источника правды, и человек гадает, кто сейчас главный.
 function autoOn(d) { return awayAll() || !!(d && d.auto); }
 
-// Работает ли автономно хоть кто-нибудь. Нужно тому, что живёт на уровне приложения: такт,
-// чистка журнала, отчёт.
+// Работает ли автономно хоть кто-нибудь. Нужно тому, что живёт на уровне приложения: ночному
+// такту.
 function autoAny() {
   if (awayAll()) return true;
   for (const d of det.values()) if (d.auto && !d.dead) return true;
   return false;
 }
 
-// Сколько вкладок сейчас работает без человека — для журнала и для строки состояния.
+// Сколько вкладок сейчас работает без человека — для лога и для строки состояния.
 function autoCount() {
   if (awayAll()) return det.size;
   let n = 0;
   for (const d of det.values()) if (d.auto && !d.dead) n++;
   return n;
 }
-function nightPath() { return path.join(app.getPath('userData'), 'night.jsonl'); }
-function nightDigestPath() { return path.join(app.getPath('userData'), 'night-digest.json'); }
+// Отчёта за ночь больше нет (см. night.js), а его файлы остались лежать в userData. Удаляем
+// разово и молча: читать их некому, а держать в чужой папке мусор прошлой версии — невежливо.
+function dropNightFiles() {
+  for (const name of ['night.jsonl', 'night-digest.json']) {
+    try { fs.unlinkSync(path.join(app.getPath('userData'), name)); } catch (_) { /* уже нет */ }
+  }
+}
 
 // Разговаривает ли перезапуск с агентом ПРЯМО СЕЙЧАС. Печатать в вкладку в это время нельзя:
 // он сам печатает туда просьбу и `/exit`, и наш текст, приехавший посреди, попадёт в ту же
@@ -4499,12 +4478,6 @@ function nightBusyWithRestart(d) {
   return !!(d && d.rs && NIGHT_RS_BUSY.includes(d.rs.phase));
 }
 
-// С какого мига идёт отлучка: по этой границе отчёт отбирает записи журнала. Ноль — все вкладки
-// сейчас с человеком, отчёт закрыт.
-let nightFrom = 0;
-// Последняя собранная сводка. Её показывает значок в нижней панели и она же переживает
-// перезапуск приложения — иначе утреннее обновление съедало бы отчёт за ночь.
-let nightDigestNow = null;
 // Человек печатал за клавиатурой, пока ночь ещё включена. Ночь выключается руками, значит
 // «забыл снять» — самый вероятный промах, и молчать про него нельзя: агенты продолжают
 // решать за человека, который уже сидит рядом.
@@ -4518,7 +4491,6 @@ const NIGHT_RESOLVE_MS = 120_000;
 // упёрлось (недельное отпускает через дни), и вкладка встанет снова — но бесконечно ловить
 // стену тоже нельзя.
 const NIGHT_MAX_WAKES = 3;
-const NIGHT_JOURNAL_TTL_MS = 7 * 24 * 3600 * 1000;
 
 function nightSt(d) {
   if (!d.ni) {
@@ -4548,17 +4520,6 @@ function nightClear(d) {
 function nightReset(d) {
   nightClear(d);
   if (d) d.ni = null;
-}
-
-// Строка в журнал. Пишет и приложение, и хук (тот — дословные развилки, единственное место,
-// где они видны целиком). Имя вкладки кладём сразу: к утру она может закрыться, а сводка без
-// имён нечитаема.
-function nightLog(kind, id, d, extra) {
-  try {
-    const e = night.entry(kind, tgTabName(id), Object.assign(
-      { id: String(id), session: (d && d.claudeSessionId) || '' }, extra || {}));
-    fs.appendFileSync(nightPath(), night.line(e));
-  } catch (e) { reportMainError(e); }
 }
 
 // Печать в вкладку от лица сворма. Тот же путь, которым доезжает сообщение из телеграма
@@ -4614,7 +4575,7 @@ function nightOnWaiting(id, d) {
     const mark = dec.why + '|' + key;
     if (st.stoodKey !== mark) {
       st.stoodKey = mark;
-      nightLog('stand', id, d, { why: dec.why, text: night.short(d.question, 300) });
+      tgLog(`авто: вкладку ${id} оставил стоять — ${dec.why}: ${night.short(d.question, 120)}`);
     }
     return;
   }
@@ -4630,7 +4591,6 @@ function nightOnWaiting(id, d) {
     if (st.nudgedKeys.length > 8) st.nudgedKeys.shift();
     st.stoodKey = '';
     nightType(id, night.ruleText(TG.nightRule, nightMarker()));
-    nightLog('nudge', id, d, { text: night.short(d.question, 300) });
     tgLog(`авто: толчок в вкладку ${id} (${st.nudges}/${night.MAX_NUDGES})`);
   }, night.NUDGE_DELAY_MS);
 }
@@ -4669,13 +4629,11 @@ function nightOnLimit(id, d) {
     if (st.limitMute) return;
     st.limitMute = true;
     st.limitAt = Date.now();
-    nightLog('limit', id, d, { until: null });
     tgLog(`авто: вкладка ${id} упёрлась в лимит (время сброса неизвестно — не бужу)`);
     return;
   }
   st.wokeUntil = untilMs;
   st.limitAt = Date.now();
-  nightLog('limit', id, d, { until: untilMs });
   tgLog(`авто: вкладка ${id} упёрлась в лимит, сброс ${night.clock(untilMs)}`);
   if (st.wakes >= NIGHT_MAX_WAKES) return;
   const delay = untilMs + night.WAKE_LAG_MS - Date.now();
@@ -4696,7 +4654,6 @@ function nightOnLimit(id, d) {
     st.wakes++;
     st.limitAt = 0;
     nightType(id, night.wakeWord());
-    nightLog('wake', id, d, {});
     tgLog(`авто: разбудил вкладку ${id} после сброса лимита`);
   }, wait);
 }
@@ -4719,7 +4676,6 @@ function nightOnLimitReset(id, d) {
   st.wakes++;
   st.limitAt = 0;
   nightType(id, night.wakeWord());
-  nightLog('wake', id, d, {});
   tgLog(`авто: вкладка ${id} дождалась сброса лимита — нажал за неё`);
 }
 
@@ -4730,7 +4686,6 @@ function nightAskPhase(id, d) {
   st.asks = (st.asks || 0) + 1;
   st.askedTurn = d.turnStartedAt || st.askedAt;
   nightType(id, night.askText(TG.nightAsk, nightMarker()));
-  nightLog('phase-ask', id, d, {});
   tgLog(`авто: спросил вкладку ${id} про порог фазы`);
 }
 
@@ -4745,16 +4700,14 @@ function nightResolvePhase(id, d, now) {
   // кончится ПОСЛЕ разбора. Иначе её собственный ответ нам и был бы тем «новым простоем», из
   // которого рождался следующий вопрос — круг на всю ночь (см. night.phaseDecision).
   st.resolvedAt = now;
-  const text = night.short(d.trFinal || d.trText || '', 300);
   if (d.status === 'running') {
     st.continues++;
-    nightLog('continue', id, d, { n: st.continues, text, at: now });
     tgLog(`авто: вкладка ${id} продолжила сама (${st.continues}/${night.MAX_CONTINUES})`);
   } else if (d.status === 'ready') {
     // Молчит. Это может быть и «всё сделано», и «сделал очередной шаг и снова жду» — по одному
     // взгляду на статус их не различить, поэтому запирающей отметки здесь НЕТ: вкладку ограничит
     // потолок вопросов, а не наша догадка о смысле её молчания.
-    nightLog('done', id, d, { text, at: now });
+    tgLog(`авто: вкладка ${id} после вопроса про фазу молчит`);
   }
 }
 
@@ -4800,70 +4753,15 @@ setInterval(() => {
         workedAt: d.turnEndedAt || 0, turn: d.turnStartedAt || 0,
       });
       if (dec.act === 'ask') nightAskPhase(id, d);
-      // Свой ключ, а не общий со ожиданием: иначе две ветки затирали бы друг другу отметку и
-      // «не трогали» попадало бы в сводку дважды.
+      // Свой ключ, а не общий с ожиданием: иначе две ветки затирали бы друг другу отметку и
+      // одна и та же причина попадала бы в лог дважды.
       else if (dec.act === 'stand' && st.stoodPhase !== dec.why) {
         st.stoodPhase = dec.why;
-        nightLog('stand', id, d, { why: dec.why });
+        tgLog(`авто: вкладку ${id} не спрашиваю про фазу — ${dec.why}`);
       }
     } catch (e) { reportMainError(e); }
   }
 }, NIGHT_TICK_MS);
-
-// --- утренняя сводка ----------------------------------------------------------
-// Список дел на утро, а не журнал: журнал у нас уже есть. Порядок групп и тексты — в
-// night.js digest, здесь только материал: записи за ночь и то, как вкладки выглядят сейчас.
-function nightEntries(from) {
-  let entries = [];
-  try { entries = night.parse(fs.readFileSync(nightPath(), 'utf8')); } catch (_) { return []; }
-  const out = [];
-  for (const e of entries) {
-    if (from && e.at < from) continue;
-    // Записи хука знают только id разговора Клода: имя вкладки ему негде взять. Подставляем
-    // здесь — иначе половина сводки была бы без имён.
-    if (!e.tab && e.session) {
-      for (const [id, d] of det) {
-        if (d.claudeSessionId === e.session) { e.tab = tgTabName(id); e.id = String(id); break; }
-      }
-    }
-    out.push(e);
-  }
-  return out;
-}
-
-function nightTabsNow() {
-  const out = [];
-  for (const [id, d] of det) {
-    if (d.dead) continue;
-    out.push({
-      id, name: tgTabName(id), status: d.status, waitingKind: d.waitingKind,
-      question: d.question || '', since: d.waitSince || 0,
-      // Отдавали ли эту вкладку за время отлучки. Не `autoOn(d)`: мандат мог быть снят посреди
-      // окна («забрал вкладку себе»), а рассказать про то, что она успела сделать сама, всё
-      // равно надо. Отметка живёт до конца окна (autoAfterChange) и переживает возврат вкладки,
-      // но не перезапуск приложения — тогда вкладку в отчёт вернут её записи в журнале.
-      auto: autoOn(d) || !!d.autoSeen,
-    });
-  }
-  return out;
-}
-
-function nightBuildDigest(now) {
-  const from = nightFrom || 0;
-  const dg = night.digest(nightEntries(from), nightTabsNow(), now || Date.now(), { from });
-  nightDigestNow = dg;
-  try {
-    let store = { digests: [] };
-    try { store = JSON.parse(fs.readFileSync(nightDigestPath(), 'utf8')) || store; } catch (_) { /* первая отлучка */ }
-    if (!Array.isArray(store.digests)) store.digests = [];
-    store.digests.push(dg);
-    // Семь последних ночей: дольше эти числа ни о чём не говорят, а материал всё равно лежит
-    // в журнале.
-    while (store.digests.length > 7) store.digests.shift();
-    fs.writeFileSync(nightDigestPath(), JSON.stringify(store));
-  } catch (e) { reportMainError(e); }
-  return dg;
-}
 
 function nightState() {
   return {
@@ -4871,9 +4769,7 @@ function nightState() {
     // именно про общее (им красится панель и им объясняется гейт ввода), а про каждую вкладку
     // рендерер знает сам — он же их и переключает.
     on: awayAll(),
-    from: nightFrom,
     typed: nightTyped,
-    digest: nightDigestNow,
     // Свои формулировки и заготовки рядом. Заготовку отдаём готовой строкой, а не просим
     // рендерер собрать её сам: текст один на приложение, хук и подсказку в настройках.
     //
@@ -4905,44 +4801,11 @@ function setTabAuto(id, on, from) {
   // этого мига, а не с прошлого вечера. Снятый — снимаем и всё запланированное, иначе толчок,
   // заведённый минуту назад, приедет в вкладку, которую человек только что забрал себе.
   if (next) nightReset(d); else nightClear(d);
-  // «Эту вкладку отдавали» — до конца окна отчёта. Снимать вместе с мандатом нельзя: человек
-  // забирает вкладку себе, а то, что она сделала сама, из отчёта пропадать не должно.
-  if (next) d.autoSeen = true;
   tgLog(`мандат (${from || '—'}): вкладка ${key} ${next ? 'работает без человека' : 'снова с человеком'}`);
   tgWriteModes();
-  autoAfterChange(wasAny);
   safeSend('tab:auto', { id: key, auto: next });
   nightPush();
   return next;
-}
-
-// Мандатов стало больше или меньше — а от этого зависит окно отчёта. Начало ставим на ПЕРВЫЙ
-// мандат, а собираем отчёт, когда не осталось ни одного: «что было без меня» имеет смысл
-// именно как рассказ вернувшемуся, и пока хоть одна вкладка работает сама, рассказ не кончен.
-function autoAfterChange(wasAny) {
-  const nowAny = autoAny();
-  if (nowAny && !nightFrom) {
-    nightFrom = Date.now();
-    nightTyped = false;
-    // Прошлый отчёт здесь НЕ стираем, хотя соблазн есть («новая отлучка — старое неактуально»).
-    // Стирал он не то, что задумано: при запуске приложения восстановленная отданная вкладка
-    // открывает новое окно отчёта, и непрочитанный отчёт за прошлую ночь гас у человека на
-    // глазах — а в файле оставался непрочитанным и всплывал на следующем запуске снова. Новый
-    // отчёт всё равно заменит старый, когда окно закроется (nightBuildDigest).
-  }
-  if (!nowAny && wasAny) {
-    nightBuildDigest(Date.now());
-    // Отчёт собран — отметки «эту отдавали» больше ни о чём: следующая отлучка своя.
-    for (const d of det.values()) d.autoSeen = false;
-    nightFrom = 0;                      // следующая отлучка начнёт своё окно
-    nightTyped = false;
-  }
-  // Окно отчёта переживает перезапуск приложения: мандат вкладки тоже переживает (persistTabs),
-  // и без этой записи отчёт считался бы с мига восстановления.
-  if (TG.nightFrom !== nightFrom) {
-    TG.nightFrom = nightFrom;
-    try { tgSave(); } catch (e) { reportMainError(e); }
-  }
 }
 
 // Общий ночной режим включили / выключили. Зовётся из tgSetPresence — единственной двери к
@@ -4950,25 +4813,22 @@ function autoAfterChange(wasAny) {
 // сразу, снятое возвращает каждую вкладку к её собственному выбору. Иначе выходили два
 // источника правды — общий переключатель молча стирал бы то, что человек отметил на карточке.
 function nightSwitch(prev, next) {
-  const wasAny = prev === night.NIGHT || autoCount() > 0;
   if (next === night.NIGHT) {
     // Счётчики обнуляем только тем, у кого мандата НЕ было: вкладке, которая работает сама уже
     // час, общий ночной режим ничего нового не выдаёт, а сброс её состояния забыл бы и стену
-    // лимита (журнал получил бы вторую запись про ту же), и то, что правило ей уже говорили.
+    // лимита (её нашли бы второй раз), и то, что правило ей уже говорили.
     for (const d of det.values()) if (!d.auto) nightReset(d);
-    // Общее положение отдаёт все вкладки сразу — значит все они и попадут в отчёт, включая те,
-    // что родятся позже: у них мандат считается живым (autoOn), отметка им не нужна.
-    for (const d of det.values()) d.autoSeen = true;
-    autoAfterChange(wasAny);
+    // Напоминание «печатаете, а ночь включена» — про ЭТУ отлучку: прошлую человек уже видел.
+    nightTyped = false;
     tgLog(`ночной режим: включён, вкладок ${det.size}`);
   } else if (prev === night.NIGHT) {
     // Вкладкам со своим мандатом ничего не отменяем — они продолжают работать сами.
     for (const d of det.values()) if (!autoOn(d)) nightClear(d);
-    autoAfterChange(wasAny);
+    nightTyped = false;
     const left = autoCount();
     tgLog(left
-      ? `ночной режим: выключен, но ${left} вкладок остались в нём — отчёт позже`
-      : 'ночной режим: выключен, отчёт собран');
+      ? `ночной режим: выключен, но ${left} вкладок остались в нём`
+      : 'ночной режим: выключен');
   }
   nightPush();
 }
@@ -4984,43 +4844,7 @@ function nightOnKeyboard() {
   nightPush();
 }
 
-// Чистка журнала: перечитать и переписать целиком. Только когда ночи НЕТ — во время ночи в этот
-// файл дописывают хуки всех вкладок, и перезапись потеряла бы строку, легшую между чтением и
-// записью. Зовётся на старте, где ночь ещё не восстановлена (tgLoad идёт позже).
-function pruneNight() {
-  if (autoAny()) return;
-  try {
-    const cut = Date.now() - NIGHT_JOURNAL_TTL_MS;
-    const entries = night.parse(fs.readFileSync(nightPath(), 'utf8')).filter((e) => e.at >= cut);
-    fs.writeFileSync(nightPath(), entries.map(night.line).join(''));
-  } catch (_) { /* нет журнала — нечего чистить */ }
-}
-
-function nightLoadDigest() {
-  try {
-    const store = JSON.parse(fs.readFileSync(nightDigestPath(), 'utf8'));
-    const list = Array.isArray(store && store.digests) ? store.digests : [];
-    const last = list[list.length - 1] || null;
-    // Прочитанную сводку не поднимаем. Иначе значок «утро — 2 стоят» возвращался бы с каждым
-    // запуском приложения и звал разбираться с ночью, которая была позавчера.
-    nightDigestNow = last && !last.read ? last : null;
-  } catch (_) { nightDigestNow = null; }
-}
-
-// Отметка «прочитал» — в файл, а не только в память. Сам отчёт остаётся: перечитать вчерашнее
-// утро человек вправе, а вот звать его второй раз незачем.
-function nightMarkRead() {
-  try {
-    const store = JSON.parse(fs.readFileSync(nightDigestPath(), 'utf8'));
-    const list = Array.isArray(store && store.digests) ? store.digests : [];
-    if (!list.length) return;
-    list[list.length - 1].read = true;
-    fs.writeFileSync(nightDigestPath(), JSON.stringify(store));
-  } catch (_) { /* нет файла — нечего отмечать */ }
-}
-
 ipcMain.handle('night:state', () => nightState());
-// Сводку прочитали — значок гаснет, и гаснет насовсем (см. nightMarkRead).
 // Свои формулировки ночи. Пусто — заготовка: пустое поле здесь честнее кнопки «сбросить»,
 // потому что не оставляет третьего состояния «своё, но пустое».
 // Мандат вкладке из окна: меню карточки и кнопка «забрать себе» в гейте ввода.
@@ -5057,13 +4881,6 @@ ipcMain.handle('night:setTexts', (_e, raw) => {
   return nightState();
 });
 
-ipcMain.handle('night:dismiss', () => {
-  nightDigestNow = null;
-  nightMarkRead();
-  nightPush();
-  return nightState();
-});
-
 // Одна дверь для обоих способов переключиться — иконкой в приложении и командой из телеги.
 // Возвращает, изменилось ли положение: телега на этом отвечает по-разному («включил» против
 // «и так уже»), а врать про переключение, которого не было, — сбивать с толку в дороге.
@@ -5077,11 +4894,6 @@ function tgSetPresence(raw, from) {
   // Остальные два начинаются заново «за компом», и это осознанно; но ночь, слетевшая в три
   // часа от автообновления, — это остаток ночи со стоящими вкладками.
   TG.night = next === night.NIGHT;
-  // Начало окна отчёта (TG.nightFrom) ведёт и сохраняет autoAfterChange — оно единственное
-  // знает про вкладочные мандаты. Прежде эта строка стояла ЗДЕСЬ и ставила «сейчас» на каждое
-  // включение, то есть затирала окно, начатое мандатом одной вкладки часом раньше. Сводка
-  // отбирает записи журнала по этой границе, и перезапуск посреди ночи иначе обрезал бы отчёт
-  // до «с момента обновления».
   nightSwitch(prev, next);
   try { tgSave(); } catch (e) { reportMainError(e); }
   // Хук читает это с диска (см. tgWriteModes): пока человек за телефоном, агент не открывает
@@ -6320,7 +6132,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   // сворма молча забирало бы у отданных вкладок разрешение работать.
   d0.auto = !!opts.auto;
   det.set(id, d0);
-  if (d0.auto) { const was = autoAny(); tgWriteModes(); autoAfterChange(was); }
+  if (d0.auto) tgWriteModes();
 
   child.onData((data) => {
     feedDetector(id, data);

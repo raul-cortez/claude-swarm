@@ -1,4 +1,4 @@
-// Ночной режим: решения (толкать / спросить / оставить стоять), журнал и утренняя сводка.
+// Ночной режим: решения (толкать / спросить / оставить стоять) и тексты, которые едут агенту.
 // Чистый Node — как и весь night.js, который для этого и отделён от main.js: проверить это в
 // живом приложении можно только дождавшись ночи.
 //
@@ -242,32 +242,6 @@ test('итог требует сказать, что решено без чел�
   assert.match(t, /осталось|проверять/i, 'итог обязан сказать, что осталось');
 });
 
-// --- журнал -------------------------------------------------------------------
-
-test('запись журнала переживает круг через строку', () => {
-  const e = night.entry('nudge', 'вкладка A', { at: NOW, text: 'вопрос' });
-  const back = night.parse(night.line(e));
-  assert.strictEqual(back.length, 1);
-  assert.deepStrictEqual(back[0], e);
-});
-
-// Журнал пишут два процесса (приложение и хук), и обрыв на середине строки — обычное дело при
-// выключении. Потерять из-за него всю сводку было бы глупо.
-test('битые и чужие строки журнала пропускаются молча', () => {
-  const good = night.line(night.entry('nudge', 'A', { at: NOW }));
-  const text = '{"половина строки\n' + good + '{"kind":"чужое","at":1}\n{"kind":"nudge"}\n';
-  const back = night.parse(text);
-  assert.strictEqual(back.length, 1);
-  assert.strictEqual(back[0].kind, 'nudge');
-});
-
-test('журнал отдаётся по времени, даже если записан вперемешку', () => {
-  const late = night.line(night.entry('nudge', 'A', { at: NOW + 10 }));
-  const early = night.line(night.entry('stand', 'B', { at: NOW }));
-  const back = night.parse(late + early);
-  assert.deepStrictEqual(back.map((e) => e.tab), ['B', 'A']);
-});
-
 // --- свои формулировки --------------------------------------------------------
 // Человек вправе сказать ночным агентам своё: уклад бывает другой. Не свободна одна вещь —
 // метка вопроса: тег зашит в протокол, и текст без него оставит агента без способа сказать
@@ -320,240 +294,6 @@ test('метка подставляется вместо {тег} в любом 
   assert.strictEqual(night.askText('вариант 3: {тег}', '[q]'), 'вариант 3: [q] ' + night.summaryNote());
 });
 
-// --- утренняя сводка ----------------------------------------------------------
-
-function sampleDigest() {
-  const entries = [
-    night.entry('deny-box', 'миграция', { at: NOW - 5 * 3600_000, id: '1', text: 'мигрировать молча или спросить?', options: ['молча', 'спросить'] }),
-    night.entry('nudge', 'миграция', { at: NOW - 4 * 3600_000, id: '1', text: 'какой формат' }),
-    night.entry('continue', 'док', { at: NOW - 3 * 3600_000, id: '2', n: 1, text: 'начал реализацию по плану' }),
-    night.entry('limit', 'тесты', { at: NOW - 2 * 3600_000, id: '3', until: NOW - 3600_000 }),
-    night.entry('wake', 'тесты', { at: NOW - 3600_000 + 120_000, id: '3' }),
-    night.entry('done', 'док', { at: NOW - 600_000, id: '2', text: 'всё зелёное' }),
-    night.entry('died', 'старая', { at: NOW - 500_000, id: '9' }),
-    night.entry('stand', 'сборка', { at: NOW - 6 * 3600_000, id: '4', why: 'разрешение' }),
-  ];
-  const tabs = [
-    { id: '1', name: 'миграция', status: 'waiting', waitingKind: 'question', question: 'выбрать формат настроек?', since: NOW - 3600_000 },
-    { id: '4', name: 'сборка', status: 'waiting', waitingKind: 'permission', question: 'rm -rf build?', since: NOW - 7 * 3600_000 },
-    { id: '2', name: 'док', status: 'ready', waitingKind: null, question: '', since: 0 },
-    { id: '3', name: 'тесты', status: 'ready', waitingKind: null, question: '', since: 0 },
-    // Вкладка, о которой ночи сказать нечего: такая уходит одной строкой в конец сводки.
-    { id: '5', name: 'молчун', status: 'ready', waitingKind: null, question: '', since: 0 },
-  ];
-  return night.digest(entries, tabs, NOW, { from: NOW - 8 * 3600_000 });
-}
-
-// Один пункт на ВКЛАДКУ. Раньше сводка была разложена по роду события, и одна вкладка попадала
-// в три раздела разом — «ждёт тебя» тут, «решено без тебя» там, «не трогали» ещё ниже. Утром это
-// читалось как бардак: судьба вкладки собиралась из трёх мест.
-test('вкладка в сводке одна, и в ней обе половины', () => {
-  const dg = sampleDigest();
-  const names = dg.tabs.map((c) => c.name);
-  assert.strictEqual(new Set(names).size, names.length, names.join(','));
-  const mig = dg.tabs.find((c) => c.name === 'миграция');
-  assert.strictEqual(mig.need.length, 1);                  // вопрос на экране — на тебе
-  assert.strictEqual(mig.did.length, 1);                   // развилка хука — без тебя
-});
-
-test('сводка ставит первыми тех, кто блокирует работу', () => {
-  const states = sampleDigest().tabs.map((c) => c.state);
-  assert.strictEqual(states[0], 'wait');
-  assert.strictEqual(states[1], 'perm');
-  // Тихие — последние: они ни о чём не просят.
-  assert.strictEqual(states[states.length - 1], 'quiet');
-});
-
-// Значок «отчёт» загорается по ЭТОМУ числу, а не по числу карточек: карточка есть у каждой
-// живой вкладки, и после самой тихой ночи значок звал разбираться с «0 стоят, 0 решений».
-test('в итогах отдельно считаются карточки, о которых есть что сказать', () => {
-  const t = sampleDigest().totals;
-  assert.strictEqual(t.tabs, 6);        // все вкладки, включая молчуна и тихие
-  assert.strictEqual(t.worth, 5);       // молчуну сказать нечего
-  const quiet = night.digest([], [
-    { id: '1', name: 'a', status: 'ready', question: '', since: 0 },
-    { id: '2', name: 'b', status: 'ready', question: '', since: 0 },
-  ], NOW, {});
-  assert.strictEqual(quiet.totals.tabs, 2);
-  assert.strictEqual(quiet.totals.worth, 0);
-});
-
-// Имена вкладок человек правит руками, и две «сборки» — это две разные вкладки с разными
-// делами. Склейка по имени осталась только для записей журнала без id.
-test('две живые вкладки с одним именем — две карточки', () => {
-  const dg = night.digest([], [
-    { id: '1', name: 'сборка', status: 'waiting', waitingKind: 'question', question: 'первый вопрос', since: NOW - 60_000 },
-    { id: '2', name: 'сборка', status: 'waiting', waitingKind: 'permission', question: 'rm -rf', since: NOW - 60_000 },
-  ], NOW, {});
-  assert.strictEqual(dg.tabs.length, 2);
-  assert.deepStrictEqual(dg.tabs.map((c) => c.id).sort(), ['1', '2']);
-});
-
-test('пустая ночь — пустая сводка', () => {
-  const dg = night.digest([], [], NOW, { from: NOW - 1000 });
-  assert.deepStrictEqual(dg.tabs, []);
-  assert.strictEqual(dg.totals.standing, 0);
-});
-
-test('итог считает решения и стоящих, а не строки журнала', () => {
-  const t = sampleDigest().totals;
-  assert.strictEqual(t.standing, 2);            // вопрос + разрешение
-  assert.strictEqual(t.decided, 2);             // развилка хука + продолжение
-  assert.match(t.night, /^8ч/);
-});
-
-test('разрешение и вопрос — разные состояния вкладки', () => {
-  const dg = sampleDigest();
-  const perm = dg.tabs.find((c) => c.name === 'сборка');
-  assert.strictEqual(perm.state, 'perm');
-  assert.match(perm.need[0].text, /rm -rf/);
-  // «Стоит семь часов» — это и есть цена решения «разрешения ночью не трогаем».
-  assert.match(perm.need[0].meta, /7ч/);
-  assert.strictEqual(perm.wait, '7ч');
-  // Почему ночь её не тронула — строкой внизу карточки, а не отдельным разделом.
-  assert.match(perm.note, /разрешение/);
-});
-
-// Дословная развилка в разделе «без тебя» обязана говорить, что она УЖЕ решена: иначе утром
-// читается как вопрос, заданный человеку.
-test('развилка в сводке — дословная, с вариантами и словами «решила сама»', () => {
-  const row = sampleDigest().tabs.find((c) => c.name === 'миграция').did[0];
-  assert.match(row.text, /^решила сама: /);
-  assert.match(row.text, /мигрировать молча или спросить/);
-  assert.match(row.meta, /варианты: молча \/ спросить/);
-});
-
-test('лимит, который отпустил, — рассказ; лимит, который стоит, — дело', () => {
-  const woken = sampleDigest().tabs.find((c) => c.name === 'тесты');
-  assert.strictEqual(woken.need.length, 0);
-  assert.match(woken.did[0].text, /разбудили сами/);
-  assert.match(woken.did[0].meta, /потеряно/);
-
-  const dg = night.digest([night.entry('limit', 'тесты', { at: NOW - 3600_000, until: NOW + 3600_000 })], [], NOW, {});
-  const c = dg.tabs[0];
-  assert.strictEqual(c.state, 'limit');
-  assert.match(c.need[0].text, /упёрлась в лимит/);
-  assert.doesNotMatch(c.need[0].text, /разбудили/);
-});
-
-test('вопрос в сводке берётся из живого состояния, а не из журнала', () => {
-  // В журнале лежит «какой формат» (текст на момент толчка), а на экране уже дописанный вопрос.
-  const mig = sampleDigest().tabs.find((c) => c.name === 'миграция');
-  assert.match(mig.need[0].text, /выбрать формат настроек/);
-});
-
-// Метку на карточке вкладки в полосе ставит сводка, а не рендерер: правило одно на окно, чат и
-// полосу. «Закончила и молчит» — не дело, продолжение и развилка — дело.
-test('метку получает та вкладка, с которой утром разбираться', () => {
-  const dg = sampleDigest();
-  assert.strictEqual(dg.tabs.find((c) => c.name === 'миграция').mark, true);
-  assert.strictEqual(dg.tabs.find((c) => c.name === 'док').mark, true);
-  const quiet = night.digest([night.entry('done', 'тихая', { at: NOW, id: '7', text: 'готово' })], [], NOW, {});
-  assert.strictEqual(quiet.tabs[0].mark, false);
-});
-
-// Живьём это выглядело так: человек обновил сворм, ночь была включена — и утром одна вкладка
-// стояла в сводке закрытой, хотя её никто не закрывал. На выходе из приложения умирают все pty
-// разом, и обработчик выхода вкладки видит то же, что при закрытии одной. Приложение теперь
-// такие смерти не пишет (см. tgOnTabGone), но журнал переживает и перезапуск, и повторное
-// открытие вкладки, поэтому второй замок стоит здесь: живая вкладка не закрыта, что бы ни
-// лежало в журнале.
-test('живая вкладка не считается закрытой, даже если в журнале есть смерть', () => {
-  const entries = [night.entry('died', 'миграция', { at: NOW - 3600_000, id: '1' })];
-  const alive = night.digest(entries,
-    [{ id: '1', name: 'миграция', status: 'ready', question: '', since: 0 }], NOW, {});
-  assert.strictEqual(alive.tabs[0].state, 'quiet');
-  assert.strictEqual(alive.tabs[0].need.length, 0);
-  // А вкладка, которой правда больше нет, — дело на утро: её никто не поднимет.
-  const gone = night.digest(entries, [], NOW, {});
-  assert.strictEqual(gone.tabs[0].state, 'died');
-  assert.match(gone.tabs[0].need[0].text, /закрылась в/);
-});
-
-// Мандат бывает у ОДНОЙ вкладки, и тогда отчёт — про неё, а не про весь сворм. Живьём это
-// читалось так: отдал одну вкладку, а в отчёте первой строкой «мой ресёрч ждёт тебя» — вкладка,
-// которую человек вёл сам и вопрос в которой видел своими глазами.
-test('отчёт не считает вкладки, которых человек не отдавал', () => {
-  const live = [
-    { id: '1', name: 'сборка', status: 'ready', auto: true },
-    { id: '2', name: 'мой ресёрч', status: 'waiting', waitingKind: 'question',
-      question: 'a или b?', since: NOW - 900_000, auto: false },
-  ];
-  const dg = night.digest([night.entry('continue', 'сборка', { at: NOW - 1000, id: '1', n: 1 })],
-    live, NOW, { from: NOW - 3600_000 });
-  assert.deepStrictEqual(dg.tabs.map((c) => c.name), ['сборка']);
-  assert.strictEqual(dg.totals.tabs, 1);
-  assert.strictEqual(dg.totals.standing, 0);
-  assert.doesNotMatch(night.digestText(dg), /ресёрч/);
-});
-
-// Поле молодое: звавший из прежней версии (и половина тестов здесь) о нём не знает, и молчание
-// значит «отдана» — иначе включённая ночь давала бы пустой отчёт при живых вкладках.
-test('вкладка без отметки об отдаче считается отданной', () => {
-  const dg = night.digest([], [{ id: '1', name: 'сборка', status: 'waiting',
-    waitingKind: 'permission', question: 'rm -rf?', since: NOW - 60_000 }], NOW, {});
-  assert.strictEqual(dg.tabs.length, 1);
-  assert.strictEqual(dg.totals.standing, 1);
-});
-
-// Одну вкладку журнал зовёт по-разному: у записи приложения есть id, у записи хука сперва
-// только имя. Без склейки вкладка разъезжается на две карточки — ровно та беда, от которой
-// сводку и переделывали.
-test('запись без id склеивается с живой вкладкой по имени', () => {
-  const dg = night.digest(
-    [night.entry('deny-box', 'миграция', { at: NOW - 1000, text: 'молча или спросить?' })],
-    [{ id: '1', name: 'миграция', status: 'ready', question: '', since: 0 }], NOW, {});
-  assert.strictEqual(dg.tabs.length, 1);
-  assert.strictEqual(dg.tabs[0].id, '1');
-  assert.strictEqual(dg.tabs[0].did.length, 1);
-});
-
-// Записи хука знают только id разговора Клода; имя подставляет приложение, и только если такая
-// вкладка ещё жива (после самоперезапуска id другой). В окне рендерер прикрывал дыру своим
-// умолчанием, а текст для /morning печатал «• undefined — …».
-test('запись без имени вкладки не превращается в undefined', () => {
-  const e = night.entry('deny-box', '', { at: NOW - 1000, text: 'мигрировать?' });
-  const dg = night.digest([e], [], NOW, { from: NOW - 1000 });
-  assert.strictEqual(dg.tabs[0].name, 'вкладка');
-  assert.doesNotMatch(night.digestText(dg), /undefined/);
-});
-
-test('сводка словами повторяет те же числа и те же половины, что и окно', () => {
-  const dg = sampleDigest();
-  const text = night.digestText(dg);
-  assert.match(text, /Решений 2, стоят 2/);
-  for (const c of dg.tabs) {
-    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) continue;
-    assert.ok(text.includes(c.name), c.name);
-  }
-  assert.match(text, /на вас:/);
-  assert.match(text, /без вас:/);
-  // Тихие вкладки — одной строкой в конце, а не абзацем на каждую: их бывает двадцать.
-  assert.match(text, /Тихо: молчун/);
-});
-
-
-// --- форма сводки: одна на модуль, окно и чат --------------------------------
-// Живой промах: сводку переделали с разделов на карточки, `groups` из night.js исчезли — а окно
-// осталось перебирать `dg.groups`. Тесты зелёные, окно открывается, и в нём всегда «прошло
-// тихо»: пустой перебор пустого поля. Никакой тест логики этого не видит, потому что рендерер
-// в тестах не исполняется вовсе. Поэтому проверяем текстом: окно читает те поля, которые
-// модуль правда отдаёт, и не читает те, которых больше нет.
-test('окно сводки читает поля, которые night.js отдаёт', () => {
-  const fs = require('fs');
-  const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const dg = sampleDigest();
-  // Что окно обязано читать — и что в сводке действительно есть.
-  for (const field of ['dg.tabs', 'totals']) assert.ok(src.includes(field), 'окно не читает ' + field);
-  assert.ok(Array.isArray(dg.tabs) && dg.tabs.length, 'в сводке нет карточек');
-  assert.ok(Number.isFinite(dg.totals.worth), 'в итогах нет worth');
-  // Чего в сводке НЕТ — того окно читать не должно: это ровно та тихая поломка.
-  assert.strictEqual(dg.groups, undefined, 'groups вернулись в night.js — проверка устарела');
-  assert.doesNotMatch(src, /dg\s*&&\s*dg\.groups/, 'окно всё ещё перебирает dg.groups');
-  assert.doesNotMatch(src, /night-group|nr-tab|nr-meta/, 'в окне осталась разметка прежних разделов');
-});
-
 // --- дубликаты в хуке ---------------------------------------------------------
 // Хук запускается сам по себе, модулей приложения ему не видно, поэтому правило и пороги там
 // свои. Разъехаться они не имеют права: агент, получающий разное правило от рамки и от толчка,
@@ -584,10 +324,13 @@ test('пороги ворот в хуке те же, что в night.js', async 
   assert.strictEqual(H.GATE_SEVEN, night.GATE_SEVEN);
 });
 
-test('отсчёт до сброса в хуке и в сводке пишется одинаково', async () => {
+// Отсчёт до сброса пишут двое: хук (в заметке про расход) и строка статуса. Оба текста человек
+// читает рядом, и разъехавшийся формат читается как разные числа.
+test('отсчёт до сброса в хуке и в строке статуса пишется одинаково', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
+  const SL = require('../swarm-statusline');
   for (const sec of [0, 59, 60, 3600, 3660, 86_400, 90_000]) {
-    assert.strictEqual(H.fmtEta(sec), night.eta(sec * 1000), 'sec=' + sec);
+    assert.strictEqual(H.fmtEta(sec), SL.fmtEta(sec), 'sec=' + sec);
   }
 });
 

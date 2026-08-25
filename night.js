@@ -1,6 +1,5 @@
 'use strict';
-// night.js — АВТОНОМНАЯ РАБОТА: что говорить агенту, которому разрешили решать без человека,
-// и что показать человеку, когда он вернётся.
+// night.js — АВТОНОМНАЯ РАБОТА: что говорить агенту, которому разрешили решать без человека.
 // Спека: docs/superpowers/specs/2026-08-21-night-mode-design.md
 //
 // Имя файла историческое: начиналось это как «ночной режим». Настоящая ось оказалась не во
@@ -15,6 +14,11 @@
 // инструмента, ход не прерывается), вопрос прозой получает один толчок в вкладку, разрешение
 // стоит до возвращения, лимит будят по времени сброса, а «закончил этап, скажи когда дальше» —
 // спрашивают, потому что угадать это по тексту нельзя.
+//
+// Рассказа о ночи здесь больше нет, и это осознанно. Сводка собиралась из следов — отказов хука,
+// простоев, времени конца хода, — потому что приложение видит, ЧТО происходило на экране, и не
+// видит, ЧТО сделано. Выходил пересказ поведения вкладки вместо результата. Знает результат один
+// агент, поэтому теперь он и рассказывает сам (summaryNote), а сворм только просит.
 //
 // Здесь только решения и тексты, без Electron и без pty: печать в вкладку, таймеры и чтение
 // снимков расхода живут в main.js. Причина та же, что у restart.js — цена ошибки высокая
@@ -295,281 +299,25 @@ function phaseDecision(st, ctx) {
   return { act: 'ask', why: 'простой две минуты' };
 }
 
-// --- журнал -------------------------------------------------------------------
-// Строка на событие, JSONL, дописывается и приложением, и ХУКОМ (тот пишет отказы: только у
-// него на руках дословный текст вопроса и варианты — до всякого разбора прозы). Отдельный
-// файл, а не журнал моста: этот читают, а не смотрят, и читают ровно один раз в сутки.
-const KINDS = ['deny-box', 'nudge', 'stand', 'phase-ask', 'continue', 'limit', 'wake', 'died', 'done'];
-
-function entry(kind, tab, extra) {
-  const e = Object.assign({}, extra || {});
-  e.kind = String(kind);
-  e.tab = String(tab == null ? '' : tab);
-  if (!Number.isFinite(e.at)) e.at = Date.now();
-  return e;
-}
-
-function line(e) {
-  return JSON.stringify(e) + '\n';
-}
-
-// Битую строку пропускаем молча: журнал пишут два процесса, и обрыв на середине строки —
-// не ошибка, а обычное дело при выключении. Потерять из-за него всю сводку было бы глупо.
-function parse(text) {
-  const out = [];
-  for (const raw of String(text == null ? '' : text).split('\n')) {
-    const t = raw.trim();
-    if (!t) continue;
-    let e = null;
-    try { e = JSON.parse(t); } catch (_) { continue; }
-    if (!e || typeof e !== 'object') continue;
-    if (!KINDS.includes(e.kind)) continue;
-    if (!Number.isFinite(e.at)) continue;
-    out.push(e);
-  }
-  out.sort((a, b) => a.at - b.at);
-  return out;
-}
-
-// --- сводка -------------------------------------------------------------------
-// «2ч14м» / «18м». Копия из swarm-statusline.js, и намеренная: тот модуль грузится в процессе
-// строки статуса Клода, а тянуть его сюда ради шести строк значило бы связать два независимых
-// файла. Формат сверяется тестом.
-function eta(ms) {
-  const s = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d}д${h}ч` : `${d}д`;
-  if (h > 0) return m > 0 ? `${h}ч${m}м` : `${h}ч`;
-  return `${m}м`;
-}
-
-// Часы и минуты по местному времени — сводку читают утром там же, где ночью работали.
+// --- мелочи для журнала приложения -------------------------------------------
+// Часы и минуты по местному времени: ими main.js пишет в свой лог время сброса лимита.
 function clock(at) {
   const dt = new Date(Number(at) || 0);
   return String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0');
 }
 
+// Обрезка длинного текста до читаемой строки: отпечаток вопроса, на который толкали.
 function short(text, max) {
   const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
   const lim = Math.max(20, Number(max) || 200);
   return t.length > lim ? t.slice(0, lim - 1).trimEnd() + '…' : t;
 }
 
-// Сводка на утро. `entries` — журнал за ночь, `tabs` — как вкладки выглядят СЕЙЧАС (стоящую
-// вкладку описывает её текущее состояние, а не запись в журнале: вопрос мог дописаться).
-//
-// Один пункт на ВКЛАДКУ, и это главное решение здесь. Раньше сводка была разложена по роду
-// события — «ждут тебя», «решено без тебя», «не трогали», «умерли», — и одна вкладка попадала в
-// три раздела разом, в каждом под своим именем и со своим статусом. Утром это читалось как
-// бардак: чтобы понять, что вообще было с вкладкой «миграция», человек собирал её судьбу из
-// трёх мест и сам сводил концы. Вопрос, с которым садятся за стол, звучит по-другому: «что было
-// с этой вкладкой?» — и ответ у него из двух половин: что она решила БЕЗ тебя и что оставила НА
-// тебя.
-//
-// Порядок вкладок — по тому, что от человека нужно: сперва те, что стоят и ждут (они блокируют
-// работу), потом те, что просто работали, последними тихие. Внутри одного вида — кто стоит
-// дольше.
-const STATE_ORDER = ['wait', 'perm', 'limit', 'died', 'went', 'quiet'];
-const STATE_BADGE = {
-  wait: 'ждёт вас',
-  perm: 'стоит на разрешении',
-  limit: 'стоит на лимите',
-  died: 'закрылась',
-  went: 'работала без вас',
-  quiet: 'тихо',
-};
-
-function digest(entries, tabs, now, opts) {
-  const list = Array.isArray(entries) ? entries.slice().sort((a, b) => a.at - b.at) : [];
-  const live = Array.isArray(tabs) ? tabs : [];
-  const at = Number.isFinite(now) ? now : Date.now();
-  const from = Number.isFinite(opts && opts.from) ? opts.from : (list.length ? list[0].at : at);
-
-  // Одну и ту же вкладку журнал зовёт по-разному: у записи приложения есть id, у записи хука
-  // сперва только имя (он знает лишь id разговора Клода, а имя подставляет приложение — и
-  // только если такая вкладка ещё жива). Поэтому склеиваем и по id, и по имени: иначе вкладка
-  // разъезжается на две карточки, а это ровно та беда, от которой мы уходим.
-  const cards = [];
-  const byId = new Map();
-  const byName = new Map();
-  // `live` — карточку заводит ЖИВАЯ вкладка, у неё есть id. Такие по имени не склеиваются:
-  // имена вкладок человек правит руками, и две «сборки» — это две разные вкладки с разными
-  // делами. Склейка по имени нужна только записям журнала, у которых id может не быть вовсе
-  // (хук знает вкладку по id разговора, а имя ему подставляет приложение).
-  function card(id, name, live) {
-    const key = id == null ? '' : String(id);
-    if (key && byId.has(key)) return byId.get(key);
-    const nm = String(name == null ? '' : name) || 'вкладка';
-    if (!live && byName.has(nm)) {
-      const c = byName.get(nm);
-      if (key && !c.id) { c.id = key; byId.set(key, c); }
-      return c;
-    }
-    const c = { id: key, name: nm, state: 'quiet', badge: '', wait: '', since: 0, live: false, mark: false, need: [], did: [], note: '' };
-    cards.push(c);
-    if (key) byId.set(key, c);
-    // Первая карточка с этим именем и остаётся адресом для записей журнала без id: если живых
-    // тёзок двое, записи хука без id уйдут к первой — соврать точнее нам всё равно нечем.
-    if (!byName.has(nm)) byName.set(nm, c);
-    return c;
-  }
-
-  // Живые вкладки заводят карточки первыми: у них есть и id, и имя, и они же идут в сводке
-  // выше журнальных.
-  for (const t of live) {
-    // Отчёт — про вкладки, которые человек ОТДАЛ, а не про весь сворм. Вкладку, которую он вёл
-    // сам, здесь считать нельзя: она попадала в отчёт первой строкой как дело на утро («стоит на
-    // вопросе»), хотя вопрос этот задан ЕМУ и он его видел. При общем ночном режиме мандат у всех, и
-    // отчёт по-прежнему про всех — считает это main.js, здесь только «отдана или нет».
-    //
-    // `undefined` — не «нет»: поле молодое, и старый звавший (или тест) о нём не знает. Отсекаем
-    // только прямое `false`.
-    if (t && t.auto === false) continue;
-    const c = card(t && t.id, t && t.name, true);
-    c.live = true;
-    if (!t || t.status !== 'waiting') continue;
-    const perm = t.waitingKind === 'permission';
-    c.state = perm ? 'perm' : 'wait';
-    c.since = t.since || 0;
-    c.need.push({
-      text: short(t.question, 400) || (perm ? 'запрос разрешения на экране вкладки' : 'вопрос на экране вкладки'),
-      meta: t.since ? `стоит ${eta(at - t.since)}` : '',
-    });
-  }
-
-  const pairs = list.map((e) => [e, card(e.id, e.tab)]);
-  for (const [e, c] of pairs) {
-    if (e.kind === 'deny-box') {
-      // Дословная развилка из отказа хука — самое ценное, что есть в сводке: другого места, где
-      // виден точный вопрос, у нас нет. `review` помечает то, за чем утром стоит посмотреть.
-      c.did.push({
-        // «Решила сама» словами: без этих слов дословная развилка в разделе «без тебя» читается
-        // как вопрос, заданный ТЕБЕ, — а он уже решён, и утром его только вычитывают.
-        text: 'решила сама: ' + (short(e.text, 400) || 'вопрос без текста'),
-        meta: [clock(e.at), Array.isArray(e.options) && e.options.length
-          ? 'варианты: ' + e.options.map((o) => short(o, 40)).join(' / ') : ''].filter(Boolean).join(' · '),
-        review: true,
-      });
-    } else if (e.kind === 'continue') {
-      c.did.push({
-        text: short(e.text, 400) || 'закрыла этап и пошла дальше',
-        meta: `${clock(e.at)} · продолжение №${e.n || 1}`,
-        review: true,
-      });
-    } else if (e.kind === 'limit') {
-      // Пара «упёрлась» + «разбудили»: вторая запись может и не прийти (сброс позже утра), и
-      // тогда лимит — не рассказ о ночи, а дело на утро.
-      const woke = pairs.find(([w, wc]) => wc === c && w.kind === 'wake' && w.at > e.at);
-      if (woke) {
-        c.did.push({
-          text: `стояла на лимите с ${clock(e.at)} до ${clock(woke[0].at)} — разбудили сами`,
-          meta: `потеряно ${eta(woke[0].at - e.at)}`,
-        });
-      } else {
-        if (c.state === 'quiet') { c.state = 'limit'; c.since = e.at; }
-        c.need.push({
-          text: `упёрлась в лимит в ${clock(e.at)}` + (e.until ? `, сброс в ${clock(e.until)}` : ''),
-          meta: `стоит ${eta(at - e.at)}`,
-        });
-      }
-    } else if (e.kind === 'done') {
-      // Только ПОСЛЕДНЕЕ «закончила и молчит»: за ночь их бывает несколько, и все, кроме
-      // последнего, уже неправда.
-      const row = { text: short(e.text, 400) || 'ход закончен', meta: clock(e.at), done: true };
-      const old = c.did.findIndex((r) => r.done);
-      if (old >= 0) c.did[old] = row; else c.did.push(row);
-    } else if (e.kind === 'died') {
-      // Вкладка, которая ЖИВА СЕЙЧАС, не закрылась — что бы ни лежало в журнале. Запись про
-      // смерть переживает и перезапуск приложения, и повторное открытие вкладки с тем же именем,
-      // а сводка описывает то, что верно утром, а не что случалось ночью.
-      if (c.live) continue;
-      // Время смерти — в самой строке, а не сроком стояния: «закрылась, 8м» читается как
-      // «стоит восемь минут», хотя стоять там больше нечему.
-      c.state = 'died';
-      c.since = 0;
-      c.need.push({ text: `вкладка закрылась в ${clock(e.at)}`, meta: '' });
-    } else if (e.kind === 'stand') {
-      // Почему ночь эту вкладку не тронула. Не дело, а объяснение: строкой внизу карточки, а не
-      // отдельным разделом — в разделе оно выглядело как ещё одно дело.
-      c.note = short(e.why, 200) || 'оставили стоять';
-    }
-  }
-
-  for (const c of cards) {
-    // «Тихо» значит РОВНО тихо: ни дел, ни рассказа. Вкладку, которую ночью будили по лимиту,
-    // тихой не назовёшь, хотя вычитывать за ней нечего.
-    if (c.state === 'quiet' && c.did.length) c.state = 'went';
-    c.badge = STATE_BADGE[c.state] || '';
-    c.wait = c.since ? eta(at - c.since) : '';
-    // Метка на карточке вкладки в полосе: утром видно, с кем разбираться, ещё до открытия
-    // сводки. Ставится ровно там, где от человека что-то нужно или где есть что вычитать.
-    c.mark = c.need.length > 0 || c.did.some((r) => r.review);
-  }
-  cards.sort((a, b) => {
-    const wa = STATE_ORDER.indexOf(a.state);
-    const wb = STATE_ORDER.indexOf(b.state);
-    if (wa !== wb) return wa - wb;
-    if ((a.since || 0) !== (b.since || 0)) return (a.since || 0) - (b.since || 0);
-    return a.name.localeCompare(b.name);
-  });
-
-  // Сколько карточек есть что сказать. Отдельно от общего числа вкладок, потому что этим числом
-  // решается, звать ли человека: карточка есть у КАЖДОЙ живой вкладки (иначе отчёт умалчивал бы
-  // о тех, кого не тронули), и по их числу значок «отчёт» загорался после самой тихой ночи —
-  // «отчёт: 0 стоят, 0 решений» при шести открытых вкладках.
-  const worth = cards.filter((c) => c.need.length || c.did.length || c.note).length;
-
-  return {
-    from, to: at,
-    totals: {
-      tabs: cards.length,
-      worth,
-      decided: cards.reduce((n, c) => n + c.did.filter((r) => r.review).length, 0),
-      standing: cards.filter((c) => c.state === 'wait' || c.state === 'perm').length,
-      night: eta(at - from),
-    },
-    tabs: cards,
-  };
-}
-
-// Строка итога для чата: та же сводка словами, потому что `/morning` спрашивают с телефона, а
-// окно приложения там не откроешь. Один текст на оба места, чтобы они не разошлись в счёте.
-function digestText(dg) {
-  const d = dg || {};
-  const t = d.totals || {};
-  // Словами то же, что в окне: «без тебя прошло …» вместо «ночь». Мандат живёт минутами и
-  // днём тоже, и «ночь» в шапке двадцатиминутной отлучки — неправда.
-  const out = [`📋 Отчёт: без вас прошло ${t.night || '—'}, вкладок ${t.tabs || 0}.`
-    + ` Решений ${t.decided || 0}, стоят ${t.standing || 0}.`];
-  const quiet = [];
-  for (const c of (d.tabs || [])) {
-    // Тихая вкладка не стоит абзаца — она попадёт в одну строку в конце (см. окно сводки).
-    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name); continue; }
-    out.push('');
-    out.push(`▸ ${c.name} — ${c.badge}${c.wait ? `, ${c.wait}` : ''}`);
-    if (c.need.length) {
-      out.push('  на вас:');
-      for (const r of c.need) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
-    }
-    if (c.did.length) {
-      out.push('  без вас:');
-      for (const r of c.did) out.push(`   — ${r.text}${r.meta ? ` (${r.meta})` : ''}`);
-    }
-    if (c.note) out.push(`  не трогали: ${c.note}`);
-  }
-  if (quiet.length) { out.push(''); out.push('Тихо: ' + quiet.join(', ')); }
-  return out.join('\n');
-}
-
-
 return {
   NIGHT, IDLE_MS, NUDGE_DELAY_MS, WARMUP_MS, BOOT_MS, WAKE_LAG_MS, MAX_CONTINUES, MAX_NUDGES,
-  MAX_ASKS, GATE_FIVE, GATE_SEVEN, KINDS,
+  MAX_ASKS, GATE_FIVE, GATE_SEVEN,
   rule, phaseAsk, wakeWord, ruleText, askText, ruleBody, askBody, summaryNote, protocol,
-  nudgeDecision, phaseDecision,
-  entry, line, parse, digest, digestText, eta, clock, short,
+  nudgeDecision, phaseDecision, clock, short,
 };
 
 });

@@ -453,7 +453,6 @@ const COMMANDS = [
   { command: 'phone', description: 'я с телефоном: писать сюда обо всём, компьютеру не спать' },
   { command: 'comp', description: 'я за компьютером: молчать и в вкладки не писать' },
   { command: 'night', description: 'ночной режим: в теме вкладки — ей, в общей теме — всем' },
-  { command: 'morning', description: 'отчёт: кто стоит и что решили без меня' },
   { command: 'usage', description: 'расход: контекст вкладки, 5 часов, неделя' },
   { command: 'mode', description: 'режим вкладки: auto, edits, plan, manual' },
   { command: 'new', description: 'ещё один агент в папке этой темы' },
