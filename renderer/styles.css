@@ -478,7 +478,7 @@ body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
    4px (список подпрыгивал, когда вкладку отдают), а в компактных карточках сверху подпись
    статуса сжималась с 60px до 17, то есть «работает» превращалось в «р…». Слово осталось там,
    где ему есть место: в подсказке карточки (title на самой карточке — у скрытого элемента
-   подсказки не бывает вовсе), в меню карточки и в отчёте. */
+   подсказки не бывает вовсе) и в меню карточки. */
 /* Вкладка в ночном режиме красится ЦЕЛИКОМ, и палитра статусов на ней не работает: цвет
    карточки отвечает на вопрос «чья она», а не «что с агентом». Что с агентом, остаётся
    подписью — словами, которые и так стоят в подвале карточки. Раньше здесь были кромка слева
@@ -1481,20 +1481,8 @@ body.presence-night .presence-pill.is-on {
 }
 body.presence-night .presence-item.is-now .ic { color: var(--night); }
 
-/* Вкладка, которая ночью встала или ушла дальше без человека. Утром по полосе вкладок видно,
-   с кем разбираться, ещё до открытия сводки; метка гаснет, когда сводку прочитали. */
-.tab.night-mark { border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
-/* На ночной карточке фиолетовая точка отчёта потерялась бы в фиолетовом — светлее. */
-.tab.is-auto.night-mark::after { background: color-mix(in srgb, var(--night) 45%, var(--text)); }
-.tab.night-mark::after {
-  content: '';
-  position: absolute; top: 4px; right: 4px;
-  width: 5px; height: 5px; border-radius: 50%;
-  background: var(--night);
-}
-
-/* Значок утренней сводки. Вид у него как у значка обновления (тот же размер и место), цвет —
-   ночной: это отчёт за ночь, а не новость про приложение. */
+/* Значок мандата: сколько вкладок работает без человека и не забыт ли включённый ночной режим.
+   Вид как у значка обновления (тот же размер и место), цвет — ночной. */
 .night-pill {
   -webkit-app-region: no-drag;
   display: inline-flex; align-items: center;
@@ -1505,70 +1493,6 @@ body.presence-night .presence-item.is-now .ic { color: var(--night); }
 }
 .night-pill[hidden] { display: none; }
 .night-pill:hover { background: color-mix(in srgb, var(--night) 26%, transparent); }
-
-/* Окно сводки. Карточка на вкладку, в карточке две половины: «на тебе» и «без тебя». Раньше
-   здесь были разделы по роду события и строки в них — и одна вкладка попадала в три раздела,
-   а читать это в семь утра значило собирать её судьбу из трёх мест.
-
-   Воздуха больше, чем хочется экономить: карточки разделены полем, а не линией, имя вкладки
-   заметно крупнее подробностей, и внутри карточки есть отступ. Плотный список тут проигрывает
-   не по красоте — по скорости чтения: утром взгляд ищет ИМЕНА, а не строки. */
-.modal.night { width: min(700px, 94vw); }
-.modal.night .night-sum { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
-.modal.night .night-body {
-  max-height: min(64vh, 560px); overflow-y: auto;
-  /* Полоса прокрутки не должна лежать на кромке карточки: место под неё держим всегда. */
-  scrollbar-gutter: stable; padding-right: 2px;
-  display: flex; flex-direction: column; gap: 10px;
-}
-.modal.night .night-card {
-  display: block; width: 100%; text-align: left; font: inherit; color: var(--text);
-  background: var(--panel-2); border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
-  border-radius: 8px; padding: 10px 12px; cursor: pointer;
-}
-.modal.night .night-card:hover { border-color: var(--night); }
-.modal.night .night-card:disabled { cursor: default; opacity: .75; }
-/* Цветная кромка слева — то же, чем полоса вкладок говорит о статусе: ждут тебя видно, не
-   читая. Тихие остаются серыми намеренно. */
-.modal.night .night-card.st-wait { border-left-color: var(--waiting); }
-.modal.night .night-card.st-perm { border-left-color: var(--waiting); }
-.modal.night .night-card.st-limit { border-left-color: var(--night); }
-.modal.night .night-card.st-died { border-left-color: var(--danger); }
-.modal.night .night-card.st-went { border-left-color: var(--ready); }
-.modal.night .nc-head {
-  display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
-}
-.modal.night .nc-name {
-  font-size: 14px; font-weight: 600; letter-spacing: .01em;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.modal.night .nc-badge {
-  margin-left: auto; flex: none;
-  font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
-}
-.modal.night .nc-sec { margin-top: 8px; }
-.modal.night .nc-sec-title {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--muted); margin-bottom: 3px;
-}
-.modal.night .nc-sec.need .nc-sec-title { color: color-mix(in srgb, var(--night) 60%, var(--muted)); }
-.modal.night .nc-row { font-size: 12px; line-height: 1.45; padding-left: 16px; position: relative; }
-.modal.night .nc-row + .nc-row { margin-top: 4px; }
-.modal.night .nc-row::before {
-  content: '—'; position: absolute; left: 0; color: var(--muted);
-}
-.modal.night .nc-text { display: block; }
-.modal.night .nc-meta { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
-.modal.night .nc-note {
-  margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
-  font-size: 10px; color: var(--muted);
-}
-/* Вкладки, о которых сказать нечего, — одной строкой в конце. Карточка на каждую превращала
-   сводку в стену «тихо»: у человека их бывает двадцать, и все они про то, что ночь их не
-   касалась. */
-.modal.night .night-quiet { color: var(--muted); font-size: 11px; padding: 2px 2px 0; }
-.modal.night .night-empty { color: var(--muted); font-size: 12px; }
 
 /* Пункт списка: иконка, название, пояснение под ними. */
 .presence-item { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center; }

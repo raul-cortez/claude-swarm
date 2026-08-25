@@ -4525,7 +4525,7 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 // Подписи — целыми фразами, как человек сказал бы вслух, и это не вкусовщина. Рубленое
 // «разрешения стоят» читалось как «разрешения выданы», то есть ровно наоборот — а цена
 // ошибки здесь в том, что человек уходит, думая, будто агенту всё позволено. Обрывки вроде
-// «потом отчёт» экономят три слова и теряют смысл целиком.
+// «потом итог» экономят три слова и теряют смысл целиком.
 //
 // Каждая подпись отвечает на один вопрос: что будет, пока это положение включено. Про то,
 // чего НЕ будет, не пишем: «за компом» — обычная работа, и перечислять при ней замолчавшую
@@ -4536,14 +4536,13 @@ const PRESENCE = [
   { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'Всё как обычно: агенты спрашивают вас прямо в окне.' },
   { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'Вопросы и итоги приходят в телеграм, отвечать можно оттуда, и компьютер не уснёт.', needsBot: true },
   // Ночной режим — не про телегу вовсе: человека нет у компьютера. Поэтому он в списке всегда, и
-  // бота для него не нужно (уйти можно и без телефона), а отчёт ждёт в окне приложения. Это же
-  // положение выдаёт мандат «работай без меня» СРАЗУ ВСЕМ вкладкам; одной вкладке он выдаётся
-  // отдельно, правым кликом по карточке.
+  // бота для него не нужно (уйти можно и без телефона). Это же положение выдаёт мандат «работай
+  // без меня» СРАЗУ ВСЕМ вкладкам; одной вкладке он выдаётся отдельно, правым кликом по карточке.
   //
-  // Называется он так же, как везде вокруг: в подсказках, в отчёте и в телеге положение и до
-  // того звали ночным режимом, а в списке оно одно стояло «меня нет» — и человек, читавший про
-  // ночной режим, искал в списке пункт с таким именем и не находил.
-  { id: 'night', icon: 'moon', name: 'ночной режим', hint: 'Агенты работают сами: запрос разрешения дождётся вас, а к возвращению будет готов отчёт.' },
+  // Называется он так же, как везде вокруг: в подсказках и в телеге положение и до того звали
+  // ночным режимом, а в списке оно одно стояло «меня нет» — и человек, читавший про ночной
+  // режим, искал в списке пункт с таким именем и не находил.
+  { id: 'night', icon: 'moon', name: 'ночной режим', hint: 'Агенты работают сами: запрос разрешения дождётся вас, а закончив задачу, каждый напишет итог.' },
 ];
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
@@ -4634,26 +4633,15 @@ presencePill.addEventListener('click', (e) => {
 window.swarm.telegram.onState(renderPresencePill);
 window.swarm.telegram.state().then(renderPresencePill).catch(() => {});
 
-// --- утренняя сводка --------------------------------------------------------------------
-// Ночь кончилась — и первое, что нужно человеку, это не «всё хорошо», а список дел: кто стоит,
-// что решили без него, кто потерял часы на лимите. Значок в той же панели, что и обновление,
-// цветом ночи; окно — КАРТОЧКА НА ВКЛАДКУ, две половины в каждой: что она решила без тебя и
-// что оставила на тебя. Порядок вкладок задаёт night.js digest, рендерер его не
-// пересортировывает.
+// --- значок мандата ---------------------------------------------------------------------
+// Что вкладки делали без человека, рассказывают они сами: агент пишет итог, закончив задачу
+// (night.js summaryNote), и человек читает его, открыв вкладку. Сводки, собранной свормом по
+// следам, здесь больше нет — она пересказывала поведение вкладок, а не их работу.
+//
+// Значку осталось одно дело, и оно про НАСТОЯЩЕЕ: сколько вкладок сейчас работает без человека
+// и не забыт ли включённый ночной режим.
 const nightPill = document.getElementById('night-pill');
-let nightNow = { on: false, digest: null, typed: false };
-
-// Вкладки, о которых ночь имеет что сказать. Метка на карточке нужна ровно потому, что окно
-// сводки закрывают, а дела остаются: утром по полосе вкладок видно, с кем разбираться.
-function paintNightMarks(dg) {
-  const marked = new Set();
-  // Кого метить, решает night.js (поле mark): «закончила и молчит» — не дело, а вкладка с
-  // развилкой или продолжением — дело, и правило это одно на окно, чат и полосу вкладок.
-  for (const c of ((dg && dg.tabs) || [])) if (c.mark && c.id) marked.add(String(c.id));
-  for (const [id, s] of sessions) {
-    if (s && s.tab) s.tab.classList.toggle('night-mark', marked.has(String(id)));
-  }
-}
+let nightNow = { on: false, typed: false };
 
 // Сколько вкладок работает без человека прямо сейчас. Считаем по своим записям, а не по числу
 // из main: карточки и значок должны говорить одно и то же в один и тот же миг.
@@ -4665,18 +4653,13 @@ function autoTabsHere() {
 
 function renderNightPill(st) {
   if (st) nightNow = st;
-  const dg = nightNow.digest;
-  // Не число карточек, а число тех, о которых есть что сказать (night.js totals.worth):
-  // карточка есть у каждой живой вкладки, и по их числу значок загорался после самой тихой
-  // ночи — «отчёт: 0 стоят, 0 решений» при шести открытых вкладках.
-  const rows = (dg && dg.totals && dg.totals.worth) || 0;
   if (nightNow.on && nightNow.typed) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
     nightPill.hidden = false;
     nightPill.textContent = 'ночной режим включён';
     nightPill.title = 'Вы за клавиатурой, а ночной режим всё ещё включён: все вкладки остаются'
-      + ' в нём и решают сами. Клик — вернуться и показать отчёт.';
+      + ' в нём и решают сами. Клик — вернуться.';
   } else if (!nightNow.on && autoTabsHere()) {
     // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (они фиолетовые),
     // но счётчик отвечает на другой вопрос — «сколько всего сейчас в ночном режиме», — и даёт
@@ -4686,136 +4669,25 @@ function renderNightPill(st) {
     nightPill.textContent = `${n} ${n === 1 ? 'вкладка' : 'вкладок'} в ночном`;
     nightPill.title = 'Столько вкладок в ночном режиме: решают обратимое сами, на дорогом'
       + ' останавливаются. Клик — забрать все себе.';
-  } else if (!nightNow.on && rows) {
-    const t = dg.totals || {};
-    nightPill.hidden = false;
-    nightPill.textContent = `отчёт — ${t.standing || 0} стоят, ${t.decided || 0} решений`;
-    nightPill.title = `Без вас прошло ${t.night || '—'}, вкладок ${t.tabs || 0}. Клик — отчёт.`;
   } else {
     nightPill.hidden = true;
   }
-  paintNightMarks(nightNow.digest);
   renderGate();
 }
 
-function openNightModal() {
-  if (document.querySelector('.modal-overlay .modal.night')) return;
-  const dg = nightNow.digest;
-  const t = (dg && dg.totals) || {};
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal night">
-      <div class="modal-title">Что было без вас</div>
-      <div class="night-sum"></div>
-      <div class="night-body"></div>
-      <div class="modal-actions">
-        <button class="modal-cancel night-keep">Оставить значок</button>
-        <button class="modal-ok neutral night-read">Прочитано</button>
-      </div>
-    </div>`;
-  overlay.querySelector('.night-sum').textContent = dg
-    ? `Без вас ${t.night || '—'}, вкладок ${t.tabs || 0}. Решений без вас ${t.decided || 0}, стоят ${t.standing || 0}.`
-    : 'Отчёта пока нет.';
-  const body = overlay.querySelector('.night-body');
-  const quiet = [];
-  for (const c of ((dg && dg.tabs) || [])) {
-    // Вкладка, о которой ночи сказать нечего, карточки не заслуживает: их бывает двадцать, и
-    // сводка из них превращается в стену «тихо». Такие уходят одной строкой в конец.
-    if (c.state === 'quiet' && !c.need.length && !c.did.length && !c.note) { quiet.push(c.name || 'вкладка'); continue; }
-    // Карточка целиком — одна кнопка: утром почти всё, что здесь написано, кончается словами
-    // «пойду посмотрю», и лишний поиск вкладки по имени тут ни к чему.
-    const box = document.createElement('button');
-    box.className = 'night-card' + (c.state ? ' st-' + c.state : '');
-    const head = document.createElement('div');
-    head.className = 'nc-head';
-    const name = document.createElement('span');
-    name.className = 'nc-name';
-    name.textContent = c.name || 'вкладка';
-    const badge = document.createElement('span');
-    badge.className = 'nc-badge';
-    badge.textContent = c.badge + (c.wait ? ` · ${c.wait}` : '');
-    head.append(name, badge);
-    box.appendChild(head);
-    // «На тебе» — выше «без тебя»: садясь за стол, человек сперва разбирает то, что стоит.
-    for (const [rows, title, cls] of [[c.need, 'На вас', 'need'], [c.did, 'Без вас', 'did']]) {
-      if (!rows || !rows.length) continue;
-      const sec = document.createElement('div');
-      sec.className = 'nc-sec ' + cls;
-      const h = document.createElement('div');
-      h.className = 'nc-sec-title';
-      h.textContent = title;
-      sec.appendChild(h);
-      for (const r of rows) {
-        const line = document.createElement('div');
-        line.className = 'nc-row';
-        const text = document.createElement('span');
-        text.className = 'nc-text';
-        text.textContent = r.text || '';
-        line.appendChild(text);
-        if (r.meta) {
-          const meta = document.createElement('span');
-          meta.className = 'nc-meta';
-          meta.textContent = r.meta;
-          line.appendChild(meta);
-        }
-        sec.appendChild(line);
-      }
-      box.appendChild(sec);
-    }
-    if (c.note) {
-      const note = document.createElement('div');
-      note.className = 'nc-note';
-      note.textContent = 'не трогали: ' + c.note;
-      box.appendChild(note);
-    }
-    if (c.id && sessions.has(String(c.id))) {
-      box.addEventListener('click', () => { overlay.remove(); activate(String(c.id)); });
-    } else {
-      box.disabled = true;
-    }
-    body.appendChild(box);
-  }
-  if (quiet.length) {
-    const q = document.createElement('div');
-    q.className = 'night-quiet';
-    q.textContent = 'Тихо: ' + quiet.join(', ');
-    body.appendChild(q);
-  }
-  if (!body.children.length) {
-    const e = document.createElement('div');
-    e.className = 'night-empty';
-    e.textContent = 'Прошло тихо: никто не встал и ничего за вас не решали.';
-    body.appendChild(e);
-  }
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector('.night-keep').addEventListener('click', close);
-  overlay.querySelector('.night-read').addEventListener('click', async () => {
-    close();
-    // «Прочитал» гасит значок и метки, но не файл: перечитать вчерашнее утро человек вправе,
-    // а звать его второй раз незачем.
-    try { renderNightPill(await window.swarm.night.dismiss()); } catch (_) { /* значок доживёт до следующего состояния */ }
-  });
-  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
-}
-
 nightPill.addEventListener('click', async () => {
-  // Значок говорит одно из трёх, и клик делает ровно то, что на нём написано.
+  // Значок говорит одно из двух, и клик делает ровно то, что на нём написано.
   if (!nightNow.on && autoTabsHere()) {
     const ids = [];
     for (const [id, s] of sessions) if (s && s.auto) ids.push(id);
     for (const id of ids) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
-    // Отчёт соберётся сам, как только не останется ни одной автономной вкладки, — и придёт
-    // сюда обычным состоянием (night:state). Открывать окно поверх клика не нужно.
     return;
   }
   if (nightNow.on) {
     // Снять ночь — та же дверь, что у списка «где я»: положение одно на всё приложение.
-    try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) { /* ниже всё равно спросим */ }
-    try { renderNightPill(await window.swarm.night.state()); } catch (_) { /* без сводки, но окно откроем */ }
+    try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) { /* значок пересчитается состоянием */ }
+    try { renderNightPill(await window.swarm.night.state()); } catch (_) { /* дождёмся night:state */ }
   }
-  openNightModal();
 });
 
 window.swarm.night.onState(renderNightPill);
