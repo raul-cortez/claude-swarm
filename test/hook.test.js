@@ -118,7 +118,25 @@ test('PreToolUse for a normal tool → busy', () => {
 });
 
 test('an event we do not care about emits nothing', () => {
-  assert.strictEqual(runHook({ hook_event_name: 'SessionStart' }), null);
+  assert.strictEqual(runHook({ hook_event_name: 'PreCompact' }), null);
+});
+
+// Старт разговора статуса не даёт, а маркер шлёт: в нём id новой сессии и путь стенограммы.
+// Только так приложение узнаёт про /clear — иначе оно продолжает читать расход умершего
+// разговора (см. newConversation в main.js).
+test('SessionStart называет приложению новый разговор', () => {
+  const sig = runHook({ hook_event_name: 'SessionStart', session_id: 'sid-new', transcript_path: '/tmp/sid-new.jsonl' });
+  assert.strictEqual(sig.token, 'hello');
+  assert.strictEqual(sig.sessionId, 'sid-new');
+  assert.strictEqual(sig.transcript, '/tmp/sid-new.jsonl');
+});
+
+// А статуса у него нет: детектор такого токена не знает, и вкладка остаётся какой была.
+test('токен старта разговора статуса не назначает', () => {
+  const { applyHook } = require('../detector');
+  const d = { hookState: { status: 'waiting', kind: 'question', box: true, at: 1 } };
+  assert.strictEqual(applyHook(d, 'hello', 2), false);
+  assert.deepStrictEqual(d.hookState, { status: 'waiting', kind: 'question', box: true, at: 1 });
 });
 
 test('a generic Notification (no type) emits nothing', () => {
@@ -313,7 +331,7 @@ test('without Telegram mode the payload is exactly what it was before', () => {
 
 test('an event we do not care about still produces nothing', () => {
   const m = H.loadMatcher(() => null);
-  assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart' }, m, ['s1']), null);
+  assert.strictEqual(H.outputFor({ hook_event_name: 'PreCompact' }, m, ['s1']), null);
 });
 
 test('end to end: «за телефоном» на диске запрещает коробку любой вкладке', () => {
@@ -573,17 +591,17 @@ test('свежей сессии сворм называет тот файл, к�
   assert.ok(out.hookSpecificOutput.additionalContext.includes(restart.answerName(sid)),
     'в строке названо имя файла');
   assert.match(out.hookSpecificOutput.additionalContext, /перезапустить себя сам/);
-  // Статуса старт сессии не даёт: вкладке он ничего нового про работу не говорит.
-  assert.strictEqual(out.terminalSequence, undefined);
 });
 
 test('выключенный перезапуск про самозвон молчит', () => {
   const off = { restart: { on: false } };
-  assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' },
-    null, [], 'desk', off), null);
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk', off);
+  assert.strictEqual(out.hookSpecificOutput, undefined, 'агенту не сказано ничего');
   // Файла режимов от прежней версии сворма (поля нет вовсе) — то же молчание.
   assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' },
-    null, [], 'desk', {}), null);
+    null, [], 'desk', {}).hookSpecificOutput, undefined);
+  // А приложению — сказано: имя разговора от галочки человека не зависит, оно нужно всегда.
+  assert.deepStrictEqual(Object.keys(out), ['terminalSequence']);
 });
 
 test('end to end: включённый перезапуск на диске доезжает до свежей сессии', () => {
@@ -601,10 +619,12 @@ test('end to end: включённый перезапуск на диске до
   // Выключили — и строка исчезла с того же диска, без пересборки чего-либо.
   fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
     JSON.stringify({ sessions: [], presence: 'desk', restart: { on: false } }));
-  assert.strictEqual(run().trim(), '');
+  assert.strictEqual(JSON.parse(run()).hookSpecificOutput, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Подагенту не рассказывают ни про перезапуск (гасить вкладку ему не за что), ни маркером
+// про новый разговор: его старт — не смена разговора вкладки, а шаг внутри чужого хода.
 test('подагенту про перезапуск вкладки не рассказывают', () => {
   assert.strictEqual(H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1', agent_id: 'a1' },
     null, [], 'desk', { restart: { on: true } }), null);

@@ -128,6 +128,39 @@ function ctxFromLine(line) {
   return Math.max(0, Math.min(100, pct));
 }
 
+// Сколько снимок расхода может отстать от только что перерисованной строки, оставаясь её
+// снимком. Оба пишет ОДИН и тот же запуск статуслайна, так что у своего разговора отставание
+// нулевое; минута — это запас на перерисовку строки без запуска (перенос по ширине окна).
+const CTX_SNAP_STALE_MS = 60_000;
+
+// Какому числу верить: снимку расхода или проценту с экрана.
+//
+// Обычно — снимку: он приходит от Клода числом, а строку с экрана мы собираем сами и можем
+// собрать не так (потому первым её и перестали читать). Но снимки лежат ПО ОДНОМУ НА СЕССИЮ, а
+// вкладка может сменить разговор без нас: /clear, `claude` руками, чужой /resume. Тогда мы
+// продолжаем читать файл умершего разговора — и полоска стоит заполненной на чистой вкладке, а
+// перезапуск просит погасить её по проценту, которого больше нет.
+//
+// Точно про смену разговора говорит хук (SessionStart, см. newConversation в main.js), но он
+// НЕОБЯЗАТЕЛЕН — точный статус человек включает галкой. Поэтому здесь второй, грубый признак,
+// работающий и без хуков: строка на экране только что перерисовалась, а снимок с той поры
+// состарился — значит он не от неё, то есть не от этого разговора.
+//
+// Когда разговор один и тот же, оба числа считает одна и та же функция из одних и тех же
+// данных (ctxUsed в swarm-statusline.js), так что спорить им не о чем: цена ошибки этого
+// правила — ноль, а без него вкладка врёт часами.
+function ctxPick(o) {
+  const s = o || {};
+  const line = s.line == null ? null : s.line;
+  const snapUsed = s.snap && s.snap.used != null ? s.snap.used : null;
+  if (snapUsed == null) return line;
+  if (line == null) return snapUsed;
+  const at = Number(s.snap.at) || 0;                    // секунды, как в самом снимке
+  const now = Number(s.now) || 0;
+  if (at && now && now - at * 1000 > CTX_SNAP_STALE_MS) return line;
+  return snapUsed;
+}
+
 // A selection row before the answer: "❯ 1. Yes". Claude Code paints ❯, but
 // Cursor / some terminals use an arrow (→ ▸ ▶) or a plain ">".
 const OPTION_RE = /^\s*[❯>→➜▸►▶]?\s*\d+\.\s/;
@@ -741,6 +774,6 @@ module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset,
-  contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine,
+  contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick,
   PICK_ROW_SRC,
 };

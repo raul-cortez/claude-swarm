@@ -418,7 +418,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, asksForInput, waitsForWork } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, asksForInput, waitsForWork } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent, hasPromptBox, trRunStale, RE_RUNNING } = require('./detector');
@@ -609,10 +609,41 @@ function extractStatusline(d) {
 // Строка остаётся ЗАПАСНЫМ путём — для вкладки, которой наш статуслайн не подставлен
 // (в команде уже стоит своё --settings, см. injectStatusline). Там процент берётся
 // только вплотную к полоске блоков (ctxFromLine), а не первый попавшийся.
+// И ВТОРЫМ МНЕНИЕМ она же: снимки лежат по одному на сессию, а вкладка меняет разговор и без
+// нас (/clear). Кому из двух верить, решает ctxPick — там же и почему.
 function ctxFillOf(d, line) {
   const u = readUsage(d.claudeSessionId);
-  if (u && u.ctx && u.ctx.used != null) return u.ctx.used;
-  return ctxFromLine(line);
+  const snap = u && u.ctx && u.ctx.used != null ? { used: u.ctx.used, at: u.at } : null;
+  return ctxPick({ snap, line: ctxFromLine(line), now: Date.now() });
+}
+
+// Во вкладке начался ДРУГОЙ разговор, и не нашими руками: человек нажал /clear, набрал `claude`
+// сам, поднял чужой /resume. Свой перезапуск сюда не попадает — там id новой сессии выбираем мы
+// и записываем заранее (см. restartFire), так что маркер приходит уже со «своим» именем.
+//
+// Всё, что мы знали о вкладке, знали о ПРОШЛОМ разговоре, а он только что кончился:
+//
+//   • расход контекста. Снимки лежат по одному на сессию (usageSnapshot), у новой своего ещё
+//     нет — и без этой строчки полоска стояла бы заполненной на чистой вкладке, а перезапуск
+//     просил бы погасить её по проценту, которого больше нет. Ровно это и видел человек после
+//     /clear: полная полоска и просьба о перезапуске в чистой вкладке.
+//   • автомат перезапуска: висящий вопрос, счётчик молчания, готовое разрешение. Разрешение
+//     давал агент прошлого разговора и про свою работу — новому оно не принадлежит.
+//   • непрочитанное: долг «человек этого не видел» принадлежит разговору, который умер (та же
+//     причина, что и при нашем перезапуске, см. unread.reset там же).
+function newConversation(id, d, prev) {
+  d.ctxPct = null;
+  d.statusline = '';          // пусто ≠ прежней строке, значит следующий такт пересчитает
+  restartClearPending(d);
+  d.rs = restart.initial();
+  d.unread = unread.reset(d.unread);
+  // И уговор «отвечаешь коротко и в телегу»: он живёт в первом сообщении разговора и умирает
+  // вместе с ним. Телеграмный /clear это уже снимал у себя (см. forgets в tgTypeClaudeCommand),
+  // а тот же /clear с клавиатуры — нет, и следующее сообщение с телефона приходило без уговора.
+  d.tgPrimed = false;
+  d.tgLastSent = '';
+  if (prev) restartLog(`вкладка ${id}: разговор сменился (${prev} → ${d.claudeSessionId})`
+    + ' — расход и перезапуск считаю заново');
 }
 
 function feedDetector(id, chunk) {
@@ -628,6 +659,7 @@ function feedDetector(id, chunk) {
     // has its own pty), but the transcript reader does: it's the exact file name. This
     // is how a RESUMED session — where we didn't choose the id — still binds precisely.
     if (sig.sessionId && sig.sessionId !== d.claudeSessionId) {
+      const prevSession = d.claudeSessionId || '';
       d.claudeSessionId = sig.sessionId;
       // The tab's conversation changed under us (/clear, a `claude` typed by hand, a
       // /resume inside the terminal). Tell the renderer so the id it saves for the next
@@ -638,6 +670,7 @@ function feedDetector(id, chunk) {
       // вкладки с мандатом «работай без меня»: хук знает её только по id разговора, и без
       // перезаписи мандат новой сессии не действовал бы вовсе.
       if (d.tgMode || d.auto) tgWriteModes();
+      newConversation(id, d, prevSession);
     }
     // А это АДРЕС разговора, названный самим Клодом. Точнее любых наших вычислений: путь
     // складывался как ~/.claude/projects/<слаг>/<id>.jsonl, и у вкладки с другим

@@ -980,6 +980,39 @@ test('сообщение о сбросе лимита узнаётся и сте
   assert.strictEqual(S.limitReset(''), false);
 });
 
+// --- какому числу верить про заполнение контекста ----------------------------
+// Живой случай: человек чистит вкладку, разговор становится новым — а снимок расхода лежит
+// по одному на сессию, и приложение продолжает читать файл умершего. Полоска стоит полной на
+// чистой вкладке, и следом приходит просьба о перезапуске по проценту, которого больше нет.
+const SEC = (ms) => Math.floor(ms / 1000);
+
+test('свежий снимок главнее экрана', () => {
+  const now = 1_700_000_000_000;
+  assert.strictEqual(S.ctxPick({ snap: { used: 42, at: SEC(now) }, line: 80, now }), 42);
+});
+
+test('состарившийся снимок уступает строке с экрана', () => {
+  const now = 1_700_000_000_000;
+  assert.strictEqual(S.ctxPick({ snap: { used: 66, at: SEC(now - 10 * 60_000) }, line: 3, now }), 3);
+});
+
+test('без числа на экране остаётся снимок, даже старый', () => {
+  const now = 1_700_000_000_000;
+  assert.strictEqual(S.ctxPick({ snap: { used: 66, at: SEC(now - 10 * 60_000) }, line: null, now }), 66);
+});
+
+test('без снимка берём экран, а без обоих — ничего', () => {
+  assert.strictEqual(S.ctxPick({ snap: null, line: 12, now: 1 }), 12);
+  assert.strictEqual(S.ctxPick({ snap: null, line: null, now: 1 }), null);
+  assert.strictEqual(S.ctxPick(), null);
+});
+
+// Снимок без времени (файл от прежней версии) старым не считаем: иначе он молча перестал бы
+// работать вовсе, а он и есть точный источник.
+test('снимок без времени остаётся главным', () => {
+  assert.strictEqual(S.ctxPick({ snap: { used: 42, at: 0 }, line: 80, now: 1_700_000_000_000 }), 42);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
