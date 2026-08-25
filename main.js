@@ -4455,6 +4455,7 @@ function autoCount() {
   for (const d of det.values()) if (d.auto && !d.dead) n++;
   return n;
 }
+
 // Отчёта за ночь больше нет (см. night.js), а его файлы остались лежать в userData. Удаляем
 // разово и молча: читать их некому, а держать в чужой папке мусор прошлой версии — невежливо.
 function dropNightFiles() {
@@ -4845,8 +4846,7 @@ function nightOnKeyboard() {
 }
 
 ipcMain.handle('night:state', () => nightState());
-// Свои формулировки ночи. Пусто — заготовка: пустое поле здесь честнее кнопки «сбросить»,
-// потому что не оставляет третьего состояния «своё, но пустое».
+
 // Мандат вкладке из окна: меню карточки и кнопка «забрать себе» в гейте ввода.
 ipcMain.handle('tab:setAuto', (_e, { id, auto } = {}) => setTabAuto(id, auto, 'окно'));
 
@@ -4871,6 +4871,8 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   return true;
 });
 
+// Свои формулировки ночи. Пусто — заготовка: пустое поле здесь честнее кнопки «сбросить»,
+// потому что не оставляет третьего состояния «своё, но пустое».
 ipcMain.handle('night:setTexts', (_e, raw) => {
   const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 1200);
   const t = raw || {};
