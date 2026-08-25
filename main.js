@@ -637,6 +637,10 @@ function newConversation(id, d, prev) {
   restartClearPending(d);
   d.rs = restart.initial();
   d.unread = unread.reset(d.unread);
+  // И пометка на карточке, если вкладка стояла с разрешением на руках: причина исчезла вместе с
+  // разрешением. Сама она бы не ушла — такт меняет её только вместе с решением автомата, а у
+  // чистого автомата решений нет (см. holdWas в restartTick).
+  if (d.rsHold) { d.rsHold = ''; safeSend('session:restartHold', { id, hold: '' }); }
   // И уговор «отвечаешь коротко и в телегу»: он живёт в первом сообщении разговора и умирает
   // вместе с ним. Телеграмный /clear это уже снимал у себя (см. forgets в tgTypeClaudeCommand),
   // а тот же /clear с клавиатуры — нет, и следующее сообщение с телефона приходило без уговора.
