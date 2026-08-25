@@ -45,6 +45,15 @@
 // отлаживается глазами.
 const ASK_TAGS = ['вопрос', 'question'];        // жду человека
 const WAIT_TAGS = ['фон', 'background'];        // жду свою фоновую задачу; человек не нужен
+// Третья метка, и она про КОНЕЦ РАБОТЫ, а не про ожидание. Нужна ровно одному: вкладке с
+// мандатом «работай без меня». Такая вкладка красится целиком в свой цвет, и по ней не
+// отличить «идёт третий час работы» от «всё сдано, можно читать итог»: между ходами агент
+// молчит, и молчание выглядит одинаково. Приложение этого знать не может — конец ЗАДАЧИ (а не
+// хода) виден только самому агенту, — поэтому он и говорит это сам.
+//
+// «Ход кончился» тегом не помечают: это событие приходит от хука и так. Здесь про другое —
+// «я больше сам не продолжу», то есть про то, чего в событии нет.
+const DONE_TAGS = ['готово', 'done'];           // задача кончилась целиком; сам не продолжу
 
 // Приставка. Без неё меткой было любое `[вопрос]` в тексте — и агент, пишущий про сам
 // протокол (в доке, в отчёте, в этой самой переписке), звал человека нечаянно. Приставка
@@ -58,6 +67,7 @@ const TAG_NS = 'swarm';
 // получает, обязан называть ту самую метку, которую мы потом ищем.
 const ASK_TAG = '[' + TAG_NS + ':' + ASK_TAGS[0] + ']';
 const WAIT_TAG = '[' + TAG_NS + ':' + WAIT_TAGS[0] + ']';
+const DONE_TAG = '[' + TAG_NS + ':' + DONE_TAGS[0] + ']';
 
 // Метка стоит В НАЧАЛЕ СТРОКИ, и это не косметика, а вторая половина защиты от путаницы.
 // Приставка спасает от случайного слова, место — от НАМЕРЕННОГО упоминания: агент, который
@@ -98,10 +108,12 @@ function tagLine(words) { return LINE_LEAD + tagAlt(words); }
 
 const ASK_TAG_SRC = tagAlt(ASK_TAGS);
 const WAIT_TAG_SRC = tagAlt(WAIT_TAGS);
+const DONE_TAG_SRC = tagAlt(DONE_TAGS);
 // Голая форма, без привязки к строке: ею метку ВЫЧИЩАЮТ из выжимки для подсказки и телеги,
 // а там неважно, где она стояла.
-const ANY_TAG_SRC = tagAlt(ASK_TAGS.concat(WAIT_TAGS));
-const ANY_TAG_LINE_SRC = tagLine(ASK_TAGS.concat(WAIT_TAGS));
+const ALL_TAGS = ASK_TAGS.concat(WAIT_TAGS, DONE_TAGS);
+const ANY_TAG_SRC = tagAlt(ALL_TAGS);
+const ANY_TAG_LINE_SRC = tagLine(ALL_TAGS);
 
 // --- ФРАЗЫ: путь совместимости --------------------------------------------------
 // Соглашение, которое было до тегов. Оставлено и поддерживается наравне: у людей эта
@@ -172,6 +184,7 @@ function normalizePhrases(list) {
 //   mark    — ЛЮБАЯ метка: тег с начала строки или фраза. По ней ищется последнее вхождение;
 //   tagAsk  — тег зова, привязанный к началу хвоста;
 //   tagWait — тег фоновой работы, там же;
+//   tagDone — тег «задача кончилась», там же;
 //   none    — фраза с хвостом «ничего/жди»;
 //   wait    — фраза с хвостом «жду …» в первом лице (см. WAIT_TAIL).
 // Теги идут в mark вместе с фразами: иначе последним вхождением оказалась бы фраза из
@@ -187,6 +200,7 @@ function phraseSources(list) {
     mark: `(?:${ANY_TAG_LINE_SRC}|${alt})`,
     tagAsk: `^${TAIL_LEAD}${ASK_TAG_SRC}`,
     tagWait: `^${TAIL_LEAD}${WAIT_TAG_SRC}`,
+    tagDone: `^${TAIL_LEAD}${DONE_TAG_SRC}`,
     none: `(?:${alt})${NONE_TAIL}`,
     wait: `(?:${alt})${WAIT_TAIL}`,
   };
@@ -199,6 +213,7 @@ function buildAskMatcher(list) {
     mark: new RegExp(src.mark, 'i'),
     tagAsk: new RegExp(src.tagAsk, 'i'),
     tagWait: new RegExp(src.tagWait, 'i'),
+    tagDone: new RegExp(src.tagDone, 'i'),
     none: new RegExp(src.none, 'i'),
     wait: new RegExp(src.wait, 'i'),
   };
@@ -227,6 +242,7 @@ function tailFrom(matcher, text) {
 // Что означает последняя фраза агента:
 //   'ask'  — зовёт: нужен ответ, выбор или решение;
 //   'wait' — от человека ничего, но работа продолжается сама (фоновая задача);
+//   'done' — задача кончилась целиком: агент сам не продолжит и ничего не ждёт;
 //   null   — фразы нет, либо она говорит «мне ничего не нужно» (ход закончен).
 function callKind(matcher, text) {
   const tail = tailFrom(matcher, text);
@@ -235,6 +251,10 @@ function callKind(matcher, text) {
   // за себя и разбора хвоста не требует: в этом вся его польза.
   if (matcher.tagAsk && matcher.tagAsk.test(tail)) return 'ask';
   if (matcher.tagWait && matcher.tagWait.test(tail)) return 'wait';
+  // Тег конца работы проверяем среди тегов, а не в конце: последней меткой он и стоит, а
+  // упасть в разбор фраз ниже значило бы вернуть 'ask' по правилу «метка есть, хвост не
+  // „ничего“» — то есть покрасить сдавшую работу вкладку в «ждёт ответа».
+  if (matcher.tagDone && matcher.tagDone.test(tail)) return 'done';
   if (matcher.wait && matcher.wait.test(tail)) return 'wait';
   if (matcher.none && matcher.none.test(tail)) return null;
   return 'ask';
@@ -248,6 +268,13 @@ function asksWith(matcher, text) {
 // True when the agent said it keeps working without you.
 function waitsWith(matcher, text) {
   return callKind(matcher, text) === 'wait';
+}
+
+// Агент сказал, что ЗАДАЧА кончилась: не ход, а вся работа — сам он больше не продолжит.
+// Смысл есть только у вкладки с мандатом: по этому и отличают «работает без меня» от
+// «отработала». См. DONE_TAGS.
+function saysDone(matcher, text) {
+  return callKind(matcher, text) === 'done';
 }
 
 // Агент сказал ПРЯМО, что от человека ничего не нужно: подпись есть, и она не зов — всё равно,
@@ -301,8 +328,9 @@ const DEFAULT_SOURCES = phraseSources(DEFAULT_ASK_PHRASES);
 
 return {
   DEFAULT_ASK_PHRASES, DEFAULT_SOURCES, MAX_PHRASES, MAX_LEN,
-  TAG_NS, ASK_TAGS, WAIT_TAGS, ASK_TAG, WAIT_TAG,
-  normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, saysNone, askExcerpt,
+  TAG_NS, ASK_TAGS, WAIT_TAGS, DONE_TAGS, ASK_TAG, WAIT_TAG, DONE_TAG,
+  normalizePhrases, phraseSources, buildAskMatcher, callKind, asksWith, waitsWith, saysDone, saysNone,
+  askExcerpt,
 };
 
 });

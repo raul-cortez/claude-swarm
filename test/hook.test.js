@@ -8,7 +8,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 const { extractHookSignals } = require('../osc');
-const { DEFAULT_SOURCES, DEFAULT_ASK_PHRASES, ASK_TAG, phraseSources } = require('../ask-phrases');
+const { DEFAULT_SOURCES, DEFAULT_ASK_PHRASES, ASK_TAG, DONE_TAG, phraseSources } = require('../ask-phrases');
 
 let passed = 0;
 const tests = [];
@@ -59,6 +59,15 @@ test('Stop whose last message calls the user → ask', () => {
 
 test('Stop with «Сейчас от тебя: ничего, жди …» → idle (not a question)', () => {
   const p = { hook_event_name: 'Stop', last_assistant_message: 'Сейчас от тебя: ничего, жди результата' };
+  assert.strictEqual(runHook(p).token, 'idle');
+});
+
+// Тег конца работы — третья метка, и по цвету статуса она ничего не меняет: работа сдана,
+// значит вкладка готова. Ловушка тут в разборе: не проверь хук этот тег среди тегов, он
+// упал бы в остаточное правило «метка есть, значит зов», и сдавшая работу вкладка встала бы
+// жёлтой «ждёт ответа».
+test('Stop с тегом конца работы → idle, а не ask', () => {
+  const p = { hook_event_name: 'Stop', session_id: 's1', last_assistant_message: '[swarm:готово]\nСдал работу: три файла, тесты зелёные.' };
   assert.strictEqual(runHook(p).token, 'idle');
 });
 
@@ -152,11 +161,15 @@ test('the hook fallback phrases are exactly ask-phrases.js defaults', () => {
   const out = execFileSync(process.execPath, ['-e', code], { encoding: 'utf8' });
   const fb = JSON.parse(out);
   assert.deepStrictEqual(
-    { mark: fb.mark, tagAsk: fb.tagAsk, tagWait: fb.tagWait, none: fb.none, wait: fb.wait },
+    { mark: fb.mark, tagAsk: fb.tagAsk, tagWait: fb.tagWait, tagDone: fb.tagDone, none: fb.none, wait: fb.wait },
     DEFAULT_SOURCES);
   // Метка, которую отказ называет агенту обратно, — третья копия тега (приложение,
   // регулярки хука, текст хука), поэтому прибита тоже.
   assert.strictEqual(fb.marker, ASK_TAG);
+  // Метка конца работы — такая же третья копия: приложение, регулярки хука, текст просьбы
+  // про итог. Разойтись им нельзя: агент, которого учат одному тегу, а ищут другой, сдаёт
+  // работу молча.
+  assert.strictEqual(fb.doneMarker, DONE_TAG);
 });
 
 test('a custom phrase file replaces the default marker', () => {

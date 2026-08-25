@@ -205,7 +205,13 @@ function decide(d, now, snap) {
 // So a hook's `perm`/`ask` and a live prompt box on screen both outrank it.
 function applyTranscript(d, v) {
   d.trState = v
-    ? { status: v.status, kind: v.kind || null, at: v.at || 0, text: v.text || '', bg: !!v.bg }
+    ? {
+      status: v.status, kind: v.kind || null, at: v.at || 0, text: v.text || '',
+      bg: !!v.bg,
+      // «Задача кончилась целиком» — слова самого агента, не вывод из статуса: по цвету
+      // статуса конец задачи и конец хода одинаковы (см. DONE_TAGS в ask-phrases.js).
+      done: !!v.done,
+    }
     : null;
 }
 

@@ -61,6 +61,25 @@ test('a quiet assistant text WITH a call phrase → ждёт: вопрос', () 
   assert.strictEqual(v.kind, 'question');
 });
 
+test('a quiet assistant text WITH the done tag → готов + отметка «работа сдана»', () => {
+  // Канал стенограммы — главный источник этой отметки: там текст хода лежит целиком, а не
+  // тем куском, что уцелел на экране. Проверяем и ЛОВУШКУ порядка: 'done' истинно, и без
+  // своей ветки такой ход уехал бы в «ждёт ответа» по общему `if (call)`.
+  const A = require('../ask-phrases');
+  const m = A.buildAskMatcher(A.DEFAULT_ASK_PHRASES);
+  const v = T.classify(T.parseEntries(assistant([{ type: 'text', text: '[swarm:готово]\nСдал работу.' }], 5000)),
+    NOW, (t) => A.callKind(m, t));
+  assert.strictEqual(v.status, 'ready');
+  assert.strictEqual(v.done, true);
+  assert.strictEqual(v.why, 'text + done tag');
+});
+
+test('обычный тихий ход отметки «работа сдана» не ставит', () => {
+  const v = verdict(assistant([{ type: 'text', text: 'Сделал шаг, иду дальше.' }], 5000));
+  assert.strictEqual(v.status, 'ready');
+  assert.ok(!v.done);
+});
+
 test('thinking-only entries never read as a finished turn text', () => {
   const v = verdict(assistant([{ type: 'thinking', thinking: 'Сейчас от тебя: путь' }], 5000));
   assert.strictEqual(v.status, 'ready', 'thinking is invisible to the user, so it cannot call them');

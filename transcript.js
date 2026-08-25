@@ -143,7 +143,7 @@ const READY_DEBOUNCE_MS = 1200;
 // The verdict. `asks(text)` reads a finished turn's own words (the user's call phrases —
 // see ask-phrases.js); pass a function so this module stays free of that config. It
 // answers with 'ask' (the agent needs you), 'wait' (it needs nothing but keeps working —
-// a background task will wake it), or nothing. A plain `true` still means 'ask', so an
+// a background task will wake it), 'done' (не ход кончился, а вся задача), or nothing. A plain `true` still means 'ask', so an
 // older caller keeps working. Returns null when the transcript says nothing yet.
 //   { status, kind, why, at, text, bg? }
 function classify(entries, now, asks) {
@@ -181,6 +181,14 @@ function classify(entries, now, asks) {
   // но и задачу вкладке давать рано — фон её разбудит.
   if (call === 'wait') {
     return { status: 'running', kind: null, why: 'text + wait phrase', at, text, bg: true };
+  }
+  // «Задача кончилась» — тот же «готов» по цвету статуса: работа сдана, отвечать нечего. Но
+  // факт запоминаем отдельным полем: вкладке с мандатом «работай без меня» именно он и
+  // отличает «работает третий час» от «отработала» (см. DONE_TAGS в ask-phrases.js). Стоять
+  // эта ветка обязана ПЕРЕД `if (call)`: 'done' истинно, и без неё сдавшая работу вкладка
+  // красилась бы в «ждёт ответа».
+  if (call === 'done') {
+    return { status: 'ready', kind: null, why: 'text + done tag', at, text, done: true };
   }
   if (call) {
     return { status: 'waiting', kind: 'question', why: 'text + call phrase', at, text };

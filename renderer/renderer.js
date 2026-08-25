@@ -417,7 +417,7 @@ function statusName(s) {
 const KIND_LABEL = { permission: 'разрешение', question: 'вопрос' };
 function waitLabel(s) { return KIND_LABEL[s && s.waitKind] || 'ждёт ответа'; }
 
-window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind, sure }) => {
+window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind, sure, done }) => {
   const s = sessions.get(id);
   if (!s || !s.alive) return;
 
@@ -447,6 +447,10 @@ window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind,
   // Пришло это от хука/стенограммы (факт) или со скрёба экрана (догадка) — от этого
   // зависит, буферизуем ли «работает». См. applyStatus.
   s.sure = !!sure;
+  // Вкладка сдала работу — своими словами, тегом конца задачи. Днём это ничего не меняет
+  // (зелёная вкладка и так значит «свободна»), а вот у отданной вкладки это единственное
+  // отличие «работает без меня» от «отработала»: см. paintAuto.
+  if (!!done !== !!s.done) { s.done = !!done; paintAuto(s); }
   applyStatus(s, { notify: true });
   // Плашка владения называет и то, чего вкладка ждёт: пока она просит разрешение, нажатия
   // в неё уходят (см. autoNow), и человек должен видеть, что это не поломка.
@@ -1851,7 +1855,16 @@ function showSettingsModal(tab) {
             решает всё, что легко переделать, а на дорогом решении останавливается и ждёт вашего
             возвращения. Включить его одной вкладке — полумесяц на её карточке (или
             <span class="set-mono">/night</span> в её теме в телеграме), карточка станет фиолетовой;
-            всем сразу — луна в нижней панели. Вернётесь — сворм покажет, кто что решил без вас.</p>
+            всем сразу — луна в нижней панели. Закончив задачу, вкладка позеленеет и напишет итог
+            — его вы и прочитаете, вернувшись.</p>
+          <p class="set-intro">Разрешения в такой вкладке сворм берёт на себя там, где переделать
+            дёшево: посмотреть в гит (<span class="set-mono">status</span>,
+            <span class="set-mono">diff</span>, <span class="set-mono">log</span>), добавить файлы
+            по именам и зафиксировать их. Иначе ночь вставала на промежуточном коммите и до утра
+            не двигалась. Всё остальное — <span class="set-mono">push</span>,
+            <span class="set-mono">tag</span>, <span class="set-mono">reset</span>,
+            <span class="set-mono">add -A</span> и любая не-гитовая команда — по-прежнему ждёт
+            вас.</p>
         </header>
         <section class="set-group">
           <div class="set-group-h">
@@ -2269,9 +2282,13 @@ function showSettingsModal(tab) {
     // Служебную строку ПОКАЗЫВАЕМ, но не даём править: агент должен знать, чем звать человека,
     // а человек — что эта строка есть и уедет в любом случае. Спрятать её значило бы врать про
     // то, что получит агент; положить в поле — вернуть ловушку, из-за которой она оттуда и уехала.
-    nightProtocolEl.textContent = st.protocol
-      ? `К обоим текстам сворм всегда добавит: «${st.protocol}»`
-      : '';
+    // Дописок две, и обе показываем: строка про метку зова уезжает к обоим текстам, просьба
+    // про итог — только к вопросу (night.askText), и по ней же вкладка отмечается сдавшей
+    // работу. Человек должен знать про обе — он правит текст, к которому их припишут.
+    nightProtocolEl.textContent = [
+      st.protocol ? `К обоим текстам сворм всегда добавит: «${st.protocol}»` : '',
+      st.summary ? `А к вопросу — просьбу про итог: «${st.summary}»` : '',
+    ].filter(Boolean).join(' ');
     const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
     nightNote.textContent = own.length
       ? `Свой текст: ${own.join(' и ')}.`
@@ -4034,18 +4051,38 @@ function applyTabAuto(id, on) {
   const s = sessions.get(String(id));
   if (!s) return;
   s.auto = !!on;
-  s.tab.classList.toggle('is-auto', !!on);
-  s.tab.title = on
-    ? 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
-      + ' не уходит — полумесяц или кнопка в плашке над терминалом, чтобы забрать себе.'
-    : '';
-  const moon = s.tab.querySelector('.moon');
-  if (moon) {
-    moon.title = on ? 'Забрать себе: сейчас работает без вас' : 'Ночной режим: пусть работает без вас';
-    moon.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
+  paintAuto(s);
   persistTabs();
   renderGate();
+}
+
+// Вид отданной вкладки. Красится она ЦЕЛИКОМ — цвет отвечает «чья она», а не «что с агентом»,
+// — и из-за этого у ночного режима был слепой угол: четыре отданные вкладки выглядят одинаково
+// и когда все четыре работают, и когда три уже сдали работу. Между ходами агент молчит, и
+// молчание не отличить от конца задачи.
+//
+// Отличает их слово самого агента (тег конца задачи, см. DONE_TAGS в ask-phrases.js): пришло
+// оно — карточка зеленеет, оставаясь отданной (полумесяц на месте, печать в неё по-прежнему не
+// уходит). Заработала снова — снова ночная.
+function paintAuto(s) {
+  if (!s || !s.tab) return;
+  const on = !!s.auto;
+  const done = on && !!s.done;
+  s.tab.classList.toggle('is-auto', on);
+  s.tab.classList.toggle('is-done', done);
+  s.tab.title = !on ? ''
+    : done
+      ? 'Ночной режим, работа сдана: агент сказал, что задача кончилась, — откройте вкладку и'
+        + ' прочитайте итог. Вкладка всё ещё отдана: печать в неё не уходит, забрать её —'
+        + ' полумесяц или кнопка в плашке над терминалом.'
+      : 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
+        + ' не уходит — полумесяц или кнопка в плашке над терминалом, чтобы забрать себе.';
+  const moon = s.tab.querySelector('.moon');
+  if (moon) {
+    moon.title = !on ? 'Ночной режим: пусть работает без вас'
+      : done ? 'Забрать себе: работа сдана' : 'Забрать себе: сейчас работает без вас';
+    moon.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
 }
 
 // Клик по полумесяцу. Решение принимает main (он же владеет общим положением и журналом),
@@ -4651,6 +4688,17 @@ function autoTabsHere() {
   return n;
 }
 
+// «4 вкладок» — заметная небрежность на самом видном месте панели. Формы русского счёта:
+// 1 вкладка, 2–4 вкладки, 5+ вкладок (и 11–14 — тоже «вкладок»).
+function tabsWord(n) {
+  const t = n % 100;
+  if (t >= 11 && t <= 14) return 'вкладок';
+  const o = n % 10;
+  if (o === 1) return 'вкладка';
+  if (o >= 2 && o <= 4) return 'вкладки';
+  return 'вкладок';
+}
+
 function renderNightPill(st) {
   if (st) nightNow = st;
   if (nightNow.on && nightNow.typed) {
@@ -4666,9 +4714,9 @@ function renderNightPill(st) {
     // одну кнопку забрать всё назад: по одной вкладке это десять кликов по полумесяцам.
     const n = autoTabsHere();
     nightPill.hidden = false;
-    nightPill.textContent = `${n} ${n === 1 ? 'вкладка' : 'вкладок'} в ночном`;
+    nightPill.textContent = `${n} ${tabsWord(n)} в ночном`;
     nightPill.title = 'Столько вкладок в ночном режиме: решают обратимое сами, на дорогом'
-      + ' останавливаются. Клик — забрать все себе.';
+      + ' останавливаются. Клик — забрать все себе, с подтверждением.';
   } else {
     nightPill.hidden = true;
   }
@@ -4678,8 +4726,18 @@ function renderNightPill(st) {
 nightPill.addEventListener('click', async () => {
   // Значок говорит одно из двух, и клик делает ровно то, что на нём написано.
   if (!nightNow.on && autoTabsHere()) {
+    // Счётчик выглядит как сообщение, а не как кнопка, и промах по нему стоил бы разом всех
+    // отданных вкладок: они бросают работу без человека и встают ждать его на каждом шаге.
+    // Поэтому спрашиваем, и вопрос называет число — сколько именно вкладок это заберёт.
     const ids = [];
     for (const [id, s] of sessions) if (s && s.auto) ids.push(id);
+    if (!ids.length) return;
+    const ok = await confirmModal(
+      `Забрать себе ${ids.length} ${tabsWord(ids.length)}? Они выйдут из ночного режима и`
+        + ' перестанут решать без вас — на каждом шаге будут ждать вашего ответа.',
+      'Забрать все',
+    );
+    if (!ok) return;
     for (const id of ids) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
     return;
   }

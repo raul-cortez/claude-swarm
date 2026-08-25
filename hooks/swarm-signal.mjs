@@ -28,12 +28,14 @@ import { realpathSync, readFileSync, readdirSync } from 'node:fs';
 // регулярками с русской морфологией, и разница между «жди результата» и «жду замер»
 // держалась на лице глагола.
 const FALLBACK = {
-  mark: '(?:(?:^|\\r?\\n)[ \\t]*(?:[⏺●]\\s*)?[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*(?:\\[\\s*(?:swarm\\s*:\\s*)?(?:вопрос|question|фон|background)\\s*\\])|Сейчас от тебя)',
+  mark: '(?:(?:^|\\r?\\n)[ \\t]*(?:[⏺●]\\s*)?[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*(?:\\[\\s*(?:swarm\\s*:\\s*)?(?:вопрос|question|фон|background|готово|done)\\s*\\])|Сейчас от тебя)',
   tagAsk: '^(?:\\r?\\n)?[ \\t]*(?:[⏺●]\\s*)?[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*(?:\\[\\s*(?:swarm\\s*:\\s*)?(?:вопрос|question)\\s*\\])',
   tagWait: '^(?:\\r?\\n)?[ \\t]*(?:[⏺●]\\s*)?[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*(?:\\[\\s*(?:swarm\\s*:\\s*)?(?:фон|background)\\s*\\])',
+  tagDone: '^(?:\\r?\\n)?[ \\t]*(?:[⏺●]\\s*)?[ \\t]*(?:\\*{1,2}|_{1,2}|`)?[ \\t]*(?:\\[\\s*(?:swarm\\s*:\\s*)?(?:готово|done)\\s*\\])',
   none: '(?:Сейчас от тебя)[\\s:.\\u2014*_`~-]*(?:ничего|жд[иёе]|ждать|ждите|подожди(?:те)?|дождись|дождитесь|не\\s+(?:нужно|требуется|надо))',
   wait: '(?:Сейчас от тебя)[\\s:.,\\u2014*_`~-]*(?:ничего[\\s:.,\\u2014*_`~-]*)?(?:жду|ждём|ждем|дождусь|дожидаюсь|ожидаю)(?![а-яёА-ЯЁa-zA-Z])',
   marker: '[swarm:вопрос]',   // то, чем метку НАЗЫВАЮТ агенту (отказ от коробки, ночное правило)
+  doneMarker: '[swarm:готово]', // то, чем НАЗЫВАЮТ агенту метку конца работы (просьба про итог)
 };
 
 function loadMatcher(readJson) {
@@ -52,6 +54,9 @@ function loadMatcher(readJson) {
   // он протокол, а не пользовательская настройка.
   const tagAsk = (src && typeof src.tagAsk === 'string' && src.tagAsk) || FALLBACK.tagAsk;
   const tagWait = (src && typeof src.tagWait === 'string' && src.tagWait) || FALLBACK.tagWait;
+  // Тег конца работы приехал позже остальных: файл, записанный прежней версией приложения,
+  // про него не знает, и тогда берётся заглушка — иначе метка читалась бы как зов.
+  const tagDone = (src && typeof src.tagDone === 'string' && src.tagDone) || FALLBACK.tagDone;
   // Старый файл не знает про теги и в mark их не перечисляет — тогда берём заглушку
   // целиком: потерять тег хуже, чем потерять чужую фразу, потому что тегам мы УЧИМ.
   const markSrc = (src && typeof src.tagAsk === 'string') ? mark : FALLBACK.mark;
@@ -62,6 +67,7 @@ function loadMatcher(readJson) {
       mark: new RegExp(markSrc, 'i'),
       tagAsk: new RegExp(tagAsk, 'i'),
       tagWait: new RegExp(tagWait, 'i'),
+      tagDone: new RegExp(tagDone, 'i'),
       none: new RegExp(none, 'i'),
       wait: new RegExp(wait, 'i'),
       marker,
@@ -71,6 +77,7 @@ function loadMatcher(readJson) {
       mark: new RegExp(FALLBACK.mark, 'i'),
       tagAsk: new RegExp(FALLBACK.tagAsk, 'i'),
       tagWait: new RegExp(FALLBACK.tagWait, 'i'),
+      tagDone: new RegExp(FALLBACK.tagDone, 'i'),
       none: new RegExp(FALLBACK.none, 'i'),
       wait: new RegExp(FALLBACK.wait, 'i'),
       marker,
@@ -95,8 +102,9 @@ function messageText(m) {
 }
 
 // Чем кончился ход, по словам самого агента: 'ask' — зовёт человека, 'wait' — от человека
-// ничего, но работа продолжается сама (запущена фоновая задача, она и разбудит), null —
-// закончил. Разбираем хвост от ПОСЛЕДНЕЙ фразы: сообщение бывает длинным, и «ничего» из
+// ничего, но работа продолжается сама (запущена фоновая задача, она и разбудит), 'done' —
+// кончилась вся задача, а не ход (метка нужна вкладке с мандатом: см. DONE_TAGS в
+// ask-phrases.js), null — закончил. Разбираем хвост от ПОСЛЕДНЕЙ фразы: сообщение бывает длинным, и «ничего» из
 // середины не должно отменять зов в конце (та же tailFrom в ask-phrases.js).
 function closingKind(matcher, text) {
   const t = messageText(text);
@@ -116,6 +124,7 @@ function closingKind(matcher, text) {
   // Порядок и смысл повторяют ask-phrases.js callKind, совпадение сверяется тестом.
   if (matcher.tagAsk && matcher.tagAsk.test(tail)) return 'ask';
   if (matcher.tagWait && matcher.tagWait.test(tail)) return 'wait';
+  if (matcher.tagDone && matcher.tagDone.test(tail)) return 'done';
   if (matcher.wait && matcher.wait.test(tail)) return 'wait';
   if (matcher.none && matcher.none.test(tail)) return null;
   return 'ask';
@@ -163,6 +172,8 @@ function tokenFor(p, matcher) {
       switch (matcher ? closingKind(matcher, p.last_assistant_message) : null) {
         case 'ask': return 'ask';
         case 'wait': return 'bgw';
+        // 'done' — тот же «готов»: цвет статуса от конца ЗАДАЧИ не меняется, меняется
+        // только вид вкладки с мандатом, а его считает приложение по тексту хода.
         default: return 'idle';
       }
     case 'PermissionRequest': return 'perm';          // approval prompt → разрешение
@@ -253,11 +264,12 @@ const nightRuleBody = () => [
 // который человек правит, переписанное под свой уклад правило уносило её с собой, и вкладка
 // Итог задачи. Дубликат night.js summaryNote — у хука нет доступа к модулям приложения (та же
 // причина, что у правила и порогов), сверяется тестом.
-const summaryNote = () => [
-  'Задача кончилась — напиши итог одним сообщением:',
-  'что сделано; что ты решил сам вместо человека и почему;',
+const summaryNote = (doneTag) => [
+  `Задача кончилась — начни сообщение отдельной строкой с тегом ${doneTag || FALLBACK.doneMarker}`,
+  'и в нём напиши итог: что сделано; что ты решил сам вместо человека и почему;',
   'что осталось и чем это проверять.',
-  'Человек прочитает его, открыв вкладку, — другого рассказа о твоей работе у него нет.',
+  'Человек прочитает итог, открыв вкладку, — другого рассказа о твоей работе у него нет,',
+  'а по тегу вкладка в списке отметится как сдавшая работу.',
 ].join(' ');
 
 // стояла зелёной с вопросом до утра. Дубликат night.js protocol/withProtocol, сверяется тестом.
@@ -438,6 +450,79 @@ function denyReasonFor(presence, marker, nightCustom, auto) {
   return (presence === 'night' || auto) ? nightRuleText(nightCustom, m) : denyReason(m);
 }
 
+// --- дешёвые команды: что отданная вкладка делает без спроса --------------------
+// Запрос разрешения — единственная остановка, которую ночь не умела обойти: рамку рисует Клод,
+// и вкладка встаёт в ней до утра. На необратимом так и надо. А на ПРОМЕЖУТОЧНОМ КОММИТЕ это
+// потерянная ночь: агент зафиксировал шаг, чтобы идти дальше, и не пошёл никуда.
+//
+// Поэтому у мандата есть короткий список того, что он разрешает сам, и разрешение выдаётся
+// ЗДЕСЬ — ответом хука, до остановки. Дубликат night.js permitDecision (у хука нет доступа к
+// модулям приложения — та же причина, что у правила и порогов), сверяется тестом.
+const PERMIT_GIT = ['add', 'commit', 'status', 'diff', 'log', 'show'];
+const PERMIT_BAD_LONG = ['--all', '--amend', '--force', '--no-verify', '--update'];
+const PERMIT_BAD_SHORT = /^-[a-zA-Z]*[aAuf]/;
+// Ключи, которые открывают ДИАЛОГ или редактор: `git add -p`, `git commit -e`. Разрешить такую
+// команду значит подвесить вкладку изнутри — рамки разрешений нет, а на экране стоит вопрос,
+// которого никто не ждёт. Только у add и commit: у log, diff и show `-p` — это «покажи
+// патч», и запрещать его незачем.
+const PERMIT_WRITES = ['add', 'commit'];
+const PERMIT_TALKY_LONG = ['--patch', '--interactive', '--edit'];
+const PERMIT_TALKY_SHORT = /^-[a-zA-Z]*[ipe]/;
+const PERMIT_SHELL = /[;&|<>\n(){}]/;
+const PERMIT_SUBST = /\$\(|\$\{|`/;
+const PERMIT_QUOTED = /'[^']*'|"[^"]*"/g;
+const PERMIT_HEREDOC = /\$\(\s*cat\s+<<'([A-Za-z_][A-Za-z0-9_]*)'\n[\s\S]*?\n\1\s*\)/g;
+
+function permitDecision(ctx) {
+  const c = ctx || {};
+  if (!c.auto) return { act: 'stand', why: 'вкладка не в ночном режиме' };
+  if (c.tool !== 'Bash') return { act: 'stand', why: 'не команда оболочки' };
+  const raw = String(c.command == null ? '' : c.command).trim();
+  if (!raw) return { act: 'stand', why: 'нет команды' };
+  const noHeredoc = raw.replace(PERMIT_HEREDOC, ' ');
+  if (PERMIT_SUBST.test(noHeredoc)) return { act: 'stand', why: 'в команде есть подстановка' };
+  const bare = noHeredoc.replace(PERMIT_QUOTED, ' ');
+  if (PERMIT_SHELL.test(bare)) return { act: 'stand', why: 'в команде больше одной команды' };
+  const words = bare.split(/\s+/).filter(Boolean);
+  if (words[0] !== 'git') return { act: 'stand', why: 'не git' };
+  const sub = words[1] || '';
+  if (!PERMIT_GIT.includes(sub)) return { act: 'stand', why: `git ${sub || '?'} не из дешёвых` };
+  for (const w of words.slice(2)) {
+    if (PERMIT_BAD_LONG.includes(w)) return { act: 'stand', why: `ключ ${w} решает не за ночь` };
+    if (PERMIT_WRITES.includes(sub) && PERMIT_TALKY_LONG.includes(w)) {
+      return { act: 'stand', why: `ключ ${w} открыл бы диалог в вкладке` };
+    }
+    if (w.startsWith('--')) continue;
+    if (w.startsWith('-') && PERMIT_BAD_SHORT.test(w)) {
+      return { act: 'stand', why: `ключ ${w} решает не за ночь` };
+    }
+    if (PERMIT_WRITES.includes(sub) && w.startsWith('-') && PERMIT_TALKY_SHORT.test(w)) {
+      return { act: 'stand', why: `ключ ${w} открыл бы диалог в вкладке` };
+    }
+    if (sub === 'add' && (w === '.' || w === ':/' || w === '*')) {
+      return { act: 'stand', why: 'add без имён файлов забирает чужое' };
+    }
+  }
+  return { act: 'allow', why: `git ${sub}` };
+}
+
+// Разрешаем ли эту команду сами. Мандат обязателен: за клавиатурой человек отвечает сам, а с
+// телефона ему приходит кнопка (мост отправляет запрос разрешения в чат) — там решает он.
+function permitsCommand(payload, presence, auto) {
+  if (!payload || payload.hook_event_name !== 'PreToolUse') return null;
+  if (!(auto || presence === 'night')) return null;
+  const inp = payload.tool_input || {};
+  const d = permitDecision({ auto: true, tool: payload.tool_name, command: inp.command });
+  return d.act === 'allow' ? d : null;
+}
+
+// Что агент прочитает в ответе на разрешённую команду. Молчать нельзя: пусть в стенограмме
+// останется, ПОЧЕМУ разрешение не спрашивали у человека.
+const permitReason = (why) => `Вкладка работает без человека, и «${why}» — из дешёвых:`
+  + ' посмотреть, добавить в индекс, зафиксировать. Разрешение на это мандат даёт сам, чтобы'
+  + ' ночь не стояла на промежуточном коммите. Всё остальное (push, tag, reset и любая не-git'
+  + ' команда) по-прежнему ждёт человека.';
+
 // The whole stdout payload for one event. terminalSequence sits at the top level (where
 // this hook has always put it) AND inside hookSpecificOutput, because which one a given
 // Claude Code version reads is not worth betting a status on — the token is idempotent,
@@ -462,6 +547,9 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // инструмента, внутри хода, и работа продолжается — просто без пятерых, которые всё равно
   // умерли бы на середине. Круглосуточно, а не только ночью: умирают они одинаково.
   const gate = deny ? null : gatesSubagent(payload, ex.usage, nowSec);
+  // Разрешение на дешёвую команду. Считается только когда отказывать не за что: отказ и
+  // разрешение — одно и то же поле ответа, и спорить им нельзя.
+  const permit = (deny || gate) ? null : permitsCommand(payload, presence, auto);
   // Отказ (любой) значит «ход продолжается», а не «агент ждёт»: рамку мы только что
   // запретили, и агент сейчас пойдёт писать прозой или делать шаг сам.
   const seq = markerFor(payload, matcher, (deny || gate) ? 'busy' : null);
@@ -479,7 +567,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   const intro = (payload && payload.hook_event_name === 'SessionStart'
     && !isSubagent(payload) && ex.restart && ex.restart.on)
     ? selfRestartNote(restartFileFor(sid)) : '';
-  if (!seq && !deny && !gate && !note && !intro) return null;
+  if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;
   if (deny || gate) {
@@ -489,6 +577,13 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
       permissionDecisionReason: gate
         ? gate.reason
         : denyReasonFor(presence, matcher && matcher.marker ? matcher.marker : FALLBACK.marker, ex.nightRule, auto),
+    };
+    if (seq) out.hookSpecificOutput.terminalSequence = seq;
+  } else if (permit) {
+    out.hookSpecificOutput = {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      permissionDecisionReason: permitReason(permit.why),
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   } else if (intro) {
@@ -626,5 +721,6 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
-  nightRule, nightRuleText, summaryNote, gatesSubagent, usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
+  usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor };

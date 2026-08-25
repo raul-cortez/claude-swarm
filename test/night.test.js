@@ -121,6 +121,21 @@ test('вкладка простояла две минуты — спрашива
   assert.strictEqual(night.phaseDecision({}, readyCtx()).act, 'ask');
 });
 
+test('вкладка сказала «работа кончилась» — не спрашиваем вовсе', () => {
+  // Это не догадка по статусу, а её собственные слова (тег конца задачи в последнем ходе):
+  // спрашивать «кончилась или порог фазы» уже нечего. Отметка не запирающая — заработает
+  // снова, и `done` перестанет приходить.
+  const d = night.phaseDecision({}, readyCtx({ done: true }));
+  assert.strictEqual(d.act, 'stand');
+  assert.match(d.why, /работа кончилась/);
+});
+
+test('просьба про итог называет тег конца работы', () => {
+  const t = night.askText('', '[swarm:вопрос]', '[swarm:готово]');
+  assert.ok(t.includes('[swarm:готово]'), t);
+  assert.ok(night.summaryNote('[swarm:готово]').includes('[swarm:готово]'));
+});
+
 test('минуту простоя не считаем простоем', () => {
   const d = night.phaseDecision({}, readyCtx({ readyAt: NOW - 60_000 }));
   assert.strictEqual(d.act, 'skip');
@@ -316,6 +331,92 @@ test('ночное правило в хуке слово в слово совп�
 test('просьба про итог в хуке слово в слово совпадает с night.js', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
   assert.strictEqual(H.summaryNote(), night.summaryNote());
+});
+
+// --- дешёвые команды ----------------------------------------------------------
+// Разрешение — единственная остановка, которую ночь не обходила: на промежуточном коммите
+// вкладка стояла до утра. Список короткий, и КАЖДЫЙ отказ здесь важнее любого разрешения:
+// цена лишнего «стой» — потерянная ночь, цена лишнего «делай» — чужая работа в коммите или
+// сделанный за человека push.
+const PERMIT_CASES = [
+  ['git status', 'allow'],
+  ['git diff --stat', 'allow'],
+  ['git log --oneline -n 5', 'allow'],
+  ['git show HEAD', 'allow'],
+  ['git add night.js test/night.test.js', 'allow'],
+  ['git commit -m "fix: тесты; заодно линт"', 'allow'],
+  ['git commit -m "первая строка\n\nвторая строка"', 'allow'],
+  // Самая частая форма длинного сообщения. Ограничитель в кавычках — внутри текста оболочка
+  // не исполняет ничего, поэтому это данные, а не команда.
+  ["git commit -m \"$(cat <<'EOF'\nfix: правка\n\nCo-Authored-By: X\nEOF\n)\"", 'allow'],
+  // …а без кавычек у ограничителя текст разворачивается — такую команду не разбираем.
+  ['git commit -m "$(cat <<EOF\n$(rm -rf x)\nEOF\n)"', 'stand'],
+  ['git commit -m "$(whoami)"', 'stand'],
+  ['git commit -m `id`', 'stand'],
+  // Чужая работа в одном дереве: рядом правят другие агенты и человек.
+  ['git add -A', 'stand'],
+  ['git add .', 'stand'],
+  ['git add --all', 'stand'],
+  ['git commit -am wip', 'stand'],
+  ['git commit --amend -m x', 'stand'],
+  ['git commit --no-verify -m x', 'stand'],
+  // Цепочка начинается с дешёвого слова и кончается тем, чего мандат не разрешает.
+  ['git commit -m ok && git push', 'stand'],
+  ['git status; rm -rf build', 'stand'],
+  ['git push origin main', 'stand'],
+  ['git reset --hard', 'stand'],
+  ['git tag v1.0.0', 'stand'],
+  ['rm -rf build', 'stand'],
+  ['npm publish', 'stand'],
+  // Диалог внутри вкладки: рамки разрешений нет, а команда всё равно ждёт нажатия.
+  ['git add -p', 'stand'],
+  ['git commit -e -m x', 'stand'],
+  ['git commit --interactive', 'stand'],
+  // …а у log, diff и show `-p` значит «покажи патч», и запрещать его незачем.
+  ['git log -p -3', 'allow'],
+  ['git diff -p', 'allow'],
+];
+
+test('дешёвые команды разрешаем, остальное оставляем ждать человека', () => {
+  for (const [cmd, act] of PERMIT_CASES) {
+    const d = night.permitDecision({ auto: true, tool: 'Bash', command: cmd });
+    assert.strictEqual(d.act, act, `${cmd} → ${d.act} (${d.why})`);
+  }
+});
+
+test('без мандата и не для команды оболочки не разрешаем ничего', () => {
+  assert.strictEqual(night.permitDecision({ auto: false, tool: 'Bash', command: 'git status' }).act, 'stand');
+  assert.strictEqual(night.permitDecision({ auto: true, tool: 'Edit', command: 'git status' }).act, 'stand');
+  assert.strictEqual(night.permitDecision({ auto: true, tool: 'Bash', command: '' }).act, 'stand');
+  assert.strictEqual(night.permitDecision({}).act, 'stand');
+});
+
+test('список дешёвых команд в хуке решает так же, как в night.js', async () => {
+  const H = await import('../hooks/swarm-signal.mjs');
+  for (const [cmd, act] of PERMIT_CASES) {
+    const d = H.permitDecision({ auto: true, tool: 'Bash', command: cmd });
+    assert.strictEqual(d.act, act, `хук: ${cmd} → ${d.act} (${d.why})`);
+    assert.deepStrictEqual(d, night.permitDecision({ auto: true, tool: 'Bash', command: cmd }), cmd);
+  }
+  assert.deepStrictEqual(H.PERMIT_GIT, night.PERMIT_GIT, 'один и тот же список команд');
+});
+
+test('разрешение даёт только мандат: за клавиатурой и с телефона решает человек', async () => {
+  const H = await import('../hooks/swarm-signal.mjs');
+  const p = {
+    hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 's1',
+    tool_input: { command: 'git commit -m ok' },
+  };
+  const decision = (presence, extra) => {
+    const out = H.outputFor(p, H.loadMatcher(), [], presence, extra || {});
+    const h = out && out.hookSpecificOutput;
+    return (h && h.permissionDecision) || null;
+  };
+  assert.strictEqual(decision('night'), 'allow', 'общая ночь — мандат у всех вкладок');
+  assert.strictEqual(decision('desk', { autoSessions: ['s1'] }), 'allow', 'отметка этой вкладки');
+  assert.strictEqual(decision('desk'), null, 'человек за клавиатурой отвечает сам');
+  assert.strictEqual(decision('phone'), null, 'с телефона ему приходит кнопка — решает он');
+  assert.strictEqual(decision('desk', { autoSessions: ['другая'] }), null, 'мандат у соседней вкладки');
 });
 
 test('пороги ворот в хуке те же, что в night.js', async () => {

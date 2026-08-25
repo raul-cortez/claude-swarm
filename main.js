@@ -168,7 +168,7 @@ function defaultWorkdir() {
 // provisioning failed (then we simply skip injection and behave as before).
 let STATUSLINE_SETTINGS = null;
 const { hookSettings } = require('./hook-config');
-const { DEFAULT_ASK_PHRASES, ASK_TAG, normalizePhrases, phraseSources, buildAskMatcher, callKind, saysNone, askExcerpt } = require('./ask-phrases');
+const { DEFAULT_ASK_PHRASES, ASK_TAG, DONE_TAG, normalizePhrases, phraseSources, buildAskMatcher, callKind, saysDone, saysNone, askExcerpt } = require('./ask-phrases');
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
@@ -748,9 +748,22 @@ setInterval(() => {
       // of the visible rows. The screen scrape stays as the fallback for a permission
       // box (which lives only on screen) and for unbound tabs.
       const question = next.status === 'waiting' ? (d.trText || extractQuestion(snap)) : null;
+      // СДАЛА ЛИ ВКЛАДКА ВСЮ РАБОТУ — по словам самого агента (тег [swarm:готово]).
+      //
+      // Нужно это одной вкладке: той, что работает без человека. Она крашена целиком в свой
+      // цвет, и по ней не отличить «идёт третий час» от «всё сдано, читай итог»: между ходами
+      // агент молчит, и молчание в обоих случаях одинаковое. Вывести это из статуса нельзя —
+      // конец ЗАДАЧИ виден только агенту, — поэтому он говорит сам, а мы лишь читаем.
+      //
+      // Голос стенограммы главный: там текст хода лежит целиком и не зависит от того, что
+      // уехало за край экрана. Экран — запас для вкладки без разговора, и он ЗАСТАРЕВАЕТ:
+      // старая метка остаётся висеть в переписке, так что вкладка, отработавшая второй круг
+      // молча, останется зелёной. Цена этой ошибки — вид карточки, а не действие.
+      const done = next.status === 'ready' && !next.bg
+        && (d.trState ? !!d.trState.done : saysDone(ASK_MATCHER, snap));
       if (next.status !== d.status || next.detail !== d.detail
           || statusline !== d.statusline || question !== d.question || sub !== d.sub
-          || kind !== d.waitingKind) {
+          || kind !== d.waitingKind || done !== !!d.done) {
         const prev = d.status;
         const prevDetail = d.detail;
         // «Работает» и «работает в фоне» — один статус, но разные новости, а статус между
@@ -765,7 +778,8 @@ setInterval(() => {
         d.question = question;
         d.sub = sub;
         d.waitingKind = kind;
-        safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure });
+        d.done = done;
+        safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure, done });
         // Смена цвета — в журнал, вместе с показаниями всех каналов (см. statusWhy).
         if (next.status !== prev || next.detail !== prevDetail) {
           statusLog(`tab=${id}${d.name ? ' (' + d.name + ')' : ''} ${prev || '—'}/${prevDetail || '—'} → ${next.status}/${next.detail} | ${statusWhy(d, now, snap, sub)}`);
@@ -4548,6 +4562,13 @@ function nightMarker() {
   return ASK_TAG;
 }
 
+// Метка КОНЦА РАБОТЫ — вторая, и она про другое: не «жду тебя», а «задача кончилась, сам я
+// больше не продолжу». По ней вкладка с мандатом перестаёт быть просто «ночной» и становится
+// «отработавшей» (см. DONE_TAGS в ask-phrases.js).
+function doneMarker() {
+  return DONE_TAG;
+}
+
 // Отпечаток вопроса, на который мы толкали. Не хеш, а начало текста: журнал читают глазами,
 // и «толкали вот по этому вопросу» должно быть видно без расшифровки.
 function nightKey(d) {
@@ -4686,7 +4707,7 @@ function nightAskPhase(id, d) {
   st.askedAt = Date.now();
   st.asks = (st.asks || 0) + 1;
   st.askedTurn = d.turnStartedAt || st.askedAt;
-  nightType(id, night.askText(TG.nightAsk, nightMarker()));
+  nightType(id, night.askText(TG.nightAsk, nightMarker(), doneMarker()));
   tgLog(`авто: спросил вкладку ${id} про порог фазы`);
 }
 
@@ -4749,7 +4770,7 @@ setInterval(() => {
       else st.readyAt = 0;
       if (st.askedAt) continue;               // ждём, чем кончится прошлый вопрос
       const dec = night.phaseDecision(st, {
-        auto: autoOn(d), status: d.status, bg: d.bg, limited: !!st.wakeTimer,
+        auto: autoOn(d), status: d.status, bg: d.bg, limited: !!st.wakeTimer, done: !!d.done,
         now, bootAt: BOOT_AT, startedAt: d.startedAt, readyAt: st.readyAt,
         workedAt: d.turnEndedAt || 0, turn: d.turnStartedAt || 0,
       });
@@ -4783,6 +4804,11 @@ function nightState() {
     askDefault: night.askBody(),
     protocol: night.protocol(nightMarker()),
     tag: nightMarker(),
+    // Просьба про итог уезжает вместе с вопросом ВСЕГДА (night.askText), значит человек
+    // должен её видеть — по той же причине, по какой видна строка про метку: прятать то, что
+    // получит агент, значит врать про текст в поле.
+    summary: night.summaryNote(doneMarker()),
+    doneTag: doneMarker(),
   };
 }
 
