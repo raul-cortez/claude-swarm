@@ -4884,11 +4884,16 @@ setInterval(() => {
       if (d.status === 'running') { st.limitMute = false; st.resetMute = false; }
       // Сколько вкладка простаивает. Считаем здесь, а не в такте статуса: там это лишнее поле
       // в горячем цикле, а здесь — две строчки раз в двадцать секунд.
-      if (d.status === 'ready' && !d.bg) { if (!st.readyAt) st.readyAt = now; }
+      // !d.sub — экран мог отчитаться «готов» (зелёным), пока подагенты Task ещё считают в
+      // фоне: это как раз тот случай нижнего heuristic-а спиннера/потока байт, ради которого
+      // и завели countSubagents (см. комментарий над ней в screen.js). Без этой проверки
+      // таймер простоя стартовал бы, вкладка честно работает, а через две минуты ночь
+      // приходила спрашивать «почему остановилась».
+      if (d.status === 'ready' && !d.bg && !d.sub) { if (!st.readyAt) st.readyAt = now; }
       else st.readyAt = 0;
       if (st.askedAt) continue;               // ждём, чем кончится прошлый вопрос
       const dec = night.phaseDecision(st, {
-        auto: autoOn(d), status: d.status, bg: d.bg, limited: !!st.wakeTimer, done: !!d.done,
+        auto: autoOn(d), status: d.status, bg: d.bg, sub: d.sub || 0, limited: !!st.wakeTimer, done: !!d.done,
         // Сказала ли вкладка хоть слово в этой своей жизни. Голос стенограммы: пока в
         // разговоре нет ни одной реплики, вердикта нет вовсе (trState пуст), а «прошлая
         // жизнь» восстановленной вкладки его не даёт тоже — см. transcript.isPastLife.

@@ -184,6 +184,13 @@ test('ждущего фоновую задачу не перебиваем', () 
   assert.strictEqual(night.phaseDecision({}, readyCtx({ bg: true })).act, 'skip');
 });
 
+// Экран мог отчитаться «готов» раньше, чем подагенты Task закончили (byte-flow/спиннер
+// heuristic, см. countSubagents в screen.js) — вкладка не простаивает, она честно ждёт их.
+test('считающих подагентов не перебиваем, даже когда экран показал «готов»', () => {
+  assert.strictEqual(night.phaseDecision({}, readyCtx({ sub: 2 })).act, 'skip');
+  assert.strictEqual(night.phaseDecision({}, readyCtx({ sub: 0 })).act, 'ask', 'без подагентов вопрос как обычно');
+});
+
 test('стоящую на лимите не спрашиваем: её разбудит будильник', () => {
   assert.strictEqual(night.phaseDecision({}, readyCtx({ limited: true })).act, 'skip');
 });
