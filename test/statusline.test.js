@@ -12,6 +12,7 @@ const { execFileSync } = require('child_process');
 const {
   renderLine, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
+  subNameOf,
 } = require('../swarm-statusline');
 
 let passed = 0;
@@ -115,6 +116,34 @@ test('the line still renders without limits at all', () => {
   const line = strip(renderLine(payload(), NOW));
   assert.match(line, /Opus 5 │ some-project/);
   assert.match(line, /24%/);
+});
+
+// --- имя подписки в строке -----------------------------------------------------
+// Только имя, никаких чисел — числа уже в общей панели приложения (см. subNameOf выше).
+test('без имени строка не меняется вовсе — старый формат жив', () => {
+  const line = strip(renderLine(payload(), NOW, ''));
+  assert.match(line, /^Opus 5 │ some-project/, 'нет лишнего разделителя перед │');
+});
+
+test('с именем подписки оно встаёт между моделью и каталогом', () => {
+  const line = strip(renderLine(payload(), NOW, 'мой личный'));
+  assert.match(line, /^Opus 5 · мой личный │ some-project/);
+});
+
+test('subNameOf ищет карточку по home и не путает чужие', () => {
+  const cards = [
+    { home: '/h/.claude', name: 'рабочий' },
+    { home: '/h/.claude-my', name: 'личный' },
+  ];
+  assert.strictEqual(subNameOf(cards, '/h/.claude-my'), 'личный');
+  assert.strictEqual(subNameOf(cards, '/h/.claude'), 'рабочий');
+});
+
+test('subNameOf молчит, а не врёт, если карточки нет или в ней нет имени', () => {
+  assert.strictEqual(subNameOf([], '/h/.claude'), '');
+  assert.strictEqual(subNameOf(null, '/h/.claude'), '');
+  assert.strictEqual(subNameOf([{ home: '/h/.claude', name: '' }], '/h/.claude'), '');
+  assert.strictEqual(subNameOf([{ home: '/h/.claude', name: 'х' }], ''), '', 'пустой home — молчим');
 });
 
 // --- /usage: те же числа, но как данные и как текст в чат ---------------------

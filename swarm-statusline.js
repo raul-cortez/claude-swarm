@@ -319,14 +319,41 @@ function usageReport(rows, nowSec) {
   return out.join('\n');
 }
 
+// Имя подписки — то же, что видит агент в usageNote (hooks/swarm-signal.mjs, subName), но
+// человеку до сих пор было негде увидеть его ПО ВКЛАДКЕ: общая панель подписок не привязана к
+// активной вкладке, а числа в этой строке мы сами убрали в пользу той панели (см. комментарий
+// над FOREIGN_MS). Только имя, без чисел — они уже показаны в панели, дублировать нечего.
+// Чистая часть отдельно от чтения файла — как pickUsage/readUsage у хука, — чтобы её можно
+// было пиновать тестом без файла на диске.
+function subNameOf(cards, home) {
+  const h = String(home || '').trim();
+  if (!h) return '';
+  for (const c of Array.isArray(cards) ? cards : []) {
+    if (String((c && c.home) || '') !== h) continue;
+    const name = String((c && c.name) || '').trim();
+    if (name) return name;
+  }
+  return '';
+}
+
+// main.js пишет карточки подписок рядом со скриптом (subsWriteCards), тем же приёмом, что usage/.
+function subNameFor(home) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'swarm-subs.json'), 'utf8'));
+    return subNameOf(raw && raw.cards, home);
+  } catch (_) { /* файла нет или пуст — молчим про имя, как и про числа при их отсутствии */ }
+  return '';
+}
+
 // The whole line, from the JSON Claude Code sends on stdin. Pure so it's testable.
-function renderLine(data, nowSec) {
+function renderLine(data, nowSec, subName) {
   const model = data.model?.display_name || 'Claude';
   const cwd = data.workspace?.current_dir || process.cwd();
   const dir = path.basename(cwd);
   const session = data.session_id || '';
   const pin = renderPin(readPin(cwd, session));
   const used = ctxUsed(data.context_window);
+  const nameSeg = subName ? ` \x1b[2m·\x1b[0m \x1b[36m${subName}\x1b[0m` : '';
 
   let ctx = '';
   if (used != null) {
@@ -339,7 +366,7 @@ function renderLine(data, nowSec) {
     else ctx = ` \x1b[5;31m💀 ${bar} ${used}%\x1b[0m \x1b[2m${win}\x1b[0m`;
   }
 
-  return `\x1b[2m${model}\x1b[0m │ \x1b[2m${dir}\x1b[0m${ctx}${pin}`;
+  return `\x1b[2m${model}\x1b[0m${nameSeg} │ \x1b[2m${dir}\x1b[0m${ctx}${pin}`;
 }
 
 // Drop the snapshot next to this script, one file per session (see usageSnapshot).
@@ -371,8 +398,9 @@ function main() {
       // Снимок расхода пишем ДО чужой строки: он и есть то, ради чего этот скрипт обязан
       // отработать до конца — из него живут полоска на карточке, /usage в телеге и порог
       // перезапуска. Чужая команда после него не может отнять у приложения ничего.
-      writeUsage(usageSnapshot(data, nowSec, configRoot(data, process.env)));
-      process.stdout.write(composeLine(renderLine(data, nowSec), readForeign(data, input)));
+      const home = configRoot(data, process.env);
+      writeUsage(usageSnapshot(data, nowSec, home));
+      process.stdout.write(composeLine(renderLine(data, nowSec, subNameFor(home)), readForeign(data, input)));
     } catch (_) {
       // Bad/empty stdin must never make Claude show an error line — print nothing.
     }
@@ -385,4 +413,5 @@ if (require.main === module) main();
 module.exports = {
   renderLine, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
+  subNameFor, subNameOf,
 };
