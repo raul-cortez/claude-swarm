@@ -278,12 +278,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .ctx.ctx-mid .ctx-fill { background: var(--run); }
 .tab .ctx.ctx-hi  .ctx-fill { background: var(--danger); }
 /* sub-agent badge: bot icon + count (count shown only when >1) */
-/* «ждёт взгляда»: перезапуск получен и стоит, потому что здесь непрочитанный ответ. Цветом —
-   как ожидание, потому что это оно и есть: вкладка ждёт человека, только молча. Не сжимается
-   (flex: none) и не прячется вместе с подписью статуса: это не состояние, а просьба. */
-.tab .hold { flex: none; color: var(--waiting); font-size: var(--tab-sub-size); white-space: nowrap; }
-.tab .hold[hidden] { display: none; }
-
 .tab .agents { flex: none; margin-left: auto; display: flex; align-items: center; gap: 2px; color: var(--run); font-size: 10px; font-variant-numeric: tabular-nums; }
 .tab .agents[hidden] { display: none; }
 .tab .agents svg { width: 12px; height: 12px; flex: none; }
@@ -1718,8 +1712,9 @@ body.night-all .night-pill {
 #subs-menu .u-when { color: var(--muted); font-size: 11.5px; }
 
 /* --- страница «Подписки» -------------------------------------------------------
-   Карточка на подписку: строка запуска, имя, галка про панель. Живых чисел здесь нет —
-   настройка не сводка; единственное про расход — «остатков пока не видели». */
+   Карточка на подписку: строка запуска, имя, галка про панель. Живых чисел на самой карточке
+   нет — настройка не сводка. Форма панели видна в общем предпросмотре ниже списка карточек:
+   настоящими числами, если уже пришли, иначе условными (пунктирная рамка, .is-demo). */
 .subs-list { display: flex; flex-direction: column; gap: 10px; }
 .sub-row {
   border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
@@ -1738,6 +1733,13 @@ body.night-all .night-pill {
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
 }
 .subs-preview .subs-empty { color: var(--muted); font-size: 11.5px; margin-right: auto; }
+/* Пилюли здесь не кликаются — это форма, а не панель, поэтому курсор и подсветка при наведении
+   были бы враньём про интерактивность. */
+.subs-preview .usage-pill { cursor: default; }
+.subs-preview .usage-pill:hover { color: var(--muted); background: transparent; }
+/* Условные цифры (ещё не пришёл ни один настоящий ответ агента) — пунктир вместо сплошной
+   рамки и приглушённые числа, чтобы не путать с настоящим расходом. */
+.subs-preview .usage-pill.is-demo { border-style: dashed; opacity: .8; }
 
 /* Подсказка под именем подписки в окне выбора агента: имя крупно, строка запуска тускло. */
 .pick-item .pick-sub { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 11px; }

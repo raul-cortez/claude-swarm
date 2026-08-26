@@ -1236,7 +1236,6 @@ async function createSession(opts = {}) {
       </span>
       <span class="foot">
         <span class="sub">готов</span>
-        <span class="hold" hidden></span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
       </span>
     </span>
@@ -2645,19 +2644,26 @@ function showSettingsModal(tab) {
   function renderSubsPreview() {
     if (!subsPreviewEl) return;
     const view = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
-    const rows = SUBS_API.pills({
+    // Форма панели по правкам ПРЯМО СЕЙЧАС: если по подписке ещё не пришло ни одного
+    // настоящего числа, пилюля всё равно рисуется — на условных цифрах (SUBS_API.previewPills
+    // помечает их `demo: true`), чтобы было видно окна/цвет/имя, не дожидаясь первого ответа.
+    const rows = SUBS_API.previewPills({
       cards: draftCards(), accounts: subsAccounts, view, now: Date.now(),
     });
     subsPreviewEl.innerHTML = '';
     if (!rows.length) {
       const empty = document.createElement('span');
       empty.className = 'subs-empty';
-      // Пусто — это тоже ответ, и он честный: числа приходят от Клода и только по подписке.
-      empty.textContent = 'Показывать пока нечего: остатков ни по одной подписке ещё не видели.';
+      empty.textContent = 'Ни одна подписка не отмечена для панели.';
       subsPreviewEl.appendChild(empty);
       return;
     }
-    for (const p of rows) subsPreviewEl.appendChild(pillNode(p, rows.length > 1, ''));
+    for (const p of rows) {
+      const pill = pillNode(p, rows.length > 1, p.demo ? 'Условные цифры — настоящих ещё не видели' : '');
+      pill.classList.toggle('is-demo', !!p.demo);
+      pill.tabIndex = -1;
+      subsPreviewEl.appendChild(pill);
+    }
   }
   windowSel.addEventListener('change', renderSubsPreview);
   etaSel.addEventListener('change', renderSubsPreview);
@@ -5816,26 +5822,6 @@ window.swarm.onRestarted(({ id, n, sessionKey }) => {
 // Всё, что случилось по дороге и НЕ кончилось перезапуском: «не сейчас», нет ответа, отмена.
 // Без этого функция молчала бы ровно в тех случаях, когда человек и хочет знать, чем она занята.
 window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
-
-// Разрешение на перезапуск получено, а вкладка всё живёт. Причин у этого пять, и четыре из них
-// проходят сами за десять минут (вкладка работает, открыта рамка, считают сабагенты). Пятая — нет:
-// под непрочитанным ответом часы разрешения стоят намеренно, и вкладка будет ждать твоих глаз
-// хоть сутки. Со стороны это неотличимо от сломанной функции — вкладка живая, работа идёт, а
-// перезапуска нет, — поэтому она про это говорит. Открыть её или ответить ей: оба снимают пометку.
-const HOLD_LABEL = { unread: 'ждёт взгляда' };
-const HOLD_TITLE = {
-  unread: 'Перезапуск готов, но здесь лежит ответ, которого ты ещё не видел.'
-    + ' Открой вкладку или ответь ей — и она перезапустится.',
-};
-window.swarm.onRestartHold(({ id, hold }) => {
-  const s = sessions.get(String(id));
-  const el = s && s.tab.querySelector('.hold');
-  if (!el) return;
-  const label = HOLD_LABEL[hold] || '';
-  el.textContent = label;
-  el.title = HOLD_TITLE[hold] || '';
-  el.hidden = !label;
-});
 
 // Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
 // из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
