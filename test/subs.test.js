@@ -193,6 +193,34 @@ test('отсчёт до сброса говорит то же, что строк
   }
 });
 
+test('предпросмотр рисует пилюлю на условных цифрах, пока настоящих не видели', () => {
+  const p = subs.previewPills({ cards: [{ line: 'claude', name: 'рабочая' }], accounts: [], now: NOW });
+  assert.strictEqual(p.length, 1);
+  assert.strictEqual(p[0].demo, true);
+  assert.deepStrictEqual(p[0].items.map((i) => i.lab), ['5ч', '7д']);
+  assert.ok(p[0].items.every((i) => typeof i.spent === 'number'), 'форма видна и без настоящих чисел');
+});
+
+test('предпросмотр берёт настоящие числа, если они уже пришли', () => {
+  const p = subs.previewPills({
+    cards: [{ line: 'claude', name: 'рабочая' }],
+    accounts: [acc('/h/.claude', 65, 83, ['claude'])],
+    now: NOW,
+  });
+  assert.strictEqual(p[0].demo, false);
+  assert.deepStrictEqual(p[0].items.map((i) => i.spent), [65, 83]);
+});
+
+test('снятая галка убирает пилюлю из предпросмотра', () => {
+  const p = subs.previewPills({ cards: [{ line: 'claude', bar: false }], accounts: [], now: NOW });
+  assert.deepStrictEqual(p, []);
+});
+
+test('аккаунт без карточки в предпросмотре не выдумывается', () => {
+  const p = subs.previewPills({ cards: [], accounts: [acc('/h/.claude-my', null, null, ['claude-my'])], now: NOW });
+  assert.deepStrictEqual(p, [], 'карточку человек ещё не открыл — придумывать ей окна незачем');
+});
+
 test('вид чинится, если в настройках лежит чепуха', () => {
   assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope' }), { window: 'both', eta: 'tight' });
   assert.deepStrictEqual(subs.view(null), { window: 'both', eta: 'tight' });

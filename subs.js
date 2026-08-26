@@ -206,6 +206,12 @@ function windowRow(lab, limit, opts) {
   };
 }
 
+// Общий для pills()/previewPills(): итоговая рамка пилюли — самый строгий уровень её окон.
+function worstLevel(items) {
+  return items.reduce((acc2, it) => (it.level === 'crit' ? 'crit'
+    : (it.level === 'tight' && acc2 !== 'crit' ? 'tight' : acc2)), '');
+}
+
 // Пилюли для панели, по одной на подписку. Порядок — как в карточках: человек сам его выбрал,
 // а сортировка «по расходу» переставляла бы их под курсором ровно в тот момент, когда одна
 // из подписок подходит к концу.
@@ -246,15 +252,91 @@ function pills(state) {
       items = worst ? [worst] : [];
     }
     if (!items.length) continue;      // числа не пришли — пилюли нет вовсе
-    const level = items.reduce((acc2, it) => (it.level === 'crit' ? 'crit'
-      : (it.level === 'tight' && acc2 !== 'crit' ? 'tight' : acc2)), '');
     out.push({
       home: String(acc.home),
       label: own ? label(own) : aliasOfHome(acc.home),
       named: !!(own && String(own.name || '').trim()),
       items,
-      level,
+      level: worstLevel(items),
       at: Number(acc.at) || 0,
+    });
+  }
+  return out;
+}
+
+// Условные цифры для предпросмотра в настройках — только чтобы показать ФОРМУ пилюли (окна,
+// цвет рамки, время сброса), пока настоящих чисел ещё нет. Не расход: реальный расход приходит
+// только от Клода и только с первого ответа модели (см. заголовок файла).
+const DEMO = {
+  five: { spent: 42, left: 2 * 3600 + 30 * 60 },   // 2ч30м до сброса
+  seven: { spent: 58, left: 3 * 86400 + 12 * 3600 }, // 3д12ч до сброса
+};
+
+function demoWindowRow(lab, key, eta) {
+  const d = DEMO[key];
+  const level = levelOf(d.spent);
+  const wantEta = eta === 'always' || (eta === 'tight' && d.spent >= TIGHT);
+  return { lab, spent: d.spent, level, eta: wantEta ? fmtEta(d.left) : '', resetsAt: 0, demo: true };
+}
+
+// Предпросмотр в настройках: та же форма, что покажет панель, для карточек, которые правит
+// сейчас человек, — ДАЖЕ если по ним ещё не пришло ни одного настоящего числа (тогда окна
+// условные, см. DEMO, и пилюля помечена `demo: true`, чтобы рендерер не выдал их за расход).
+// Настоящие числа, если уже пришли, в предпросмотре тоже настоящие — обманывать смысла нет.
+function previewPills(state) {
+  const s = state || {};
+  const v = view(s.view);
+  const list = cards(s.cards);
+  const now = Number(s.now) || Date.now();
+  const accounts = (Array.isArray(s.accounts) ? s.accounts : []).filter((a) => a && a.home);
+  const out = [];
+  const used = new Set();
+
+  for (const c of list) {
+    if (c.bar === false) continue;
+    const acc = accounts.find((a) => matchIndex([c], a) === 0) || null;
+    if (acc) used.add(acc);
+    const realFive = acc ? windowRow('5ч', acc.five, { now, eta: v.eta }) : null;
+    const realSeven = acc ? windowRow('7д', acc.seven, { now, eta: v.eta }) : null;
+    const five = realFive || demoWindowRow('5ч', 'five', v.eta);
+    const seven = realSeven || demoWindowRow('7д', 'seven', v.eta);
+    let items;
+    if (v.window === 'five') items = [five];
+    else if (v.window === 'seven') items = [seven];
+    else if (v.window === 'worst') items = [five.spent >= seven.spent ? five : seven];
+    else items = [five, seven];
+    out.push({
+      home: acc ? String(acc.home) : '',
+      label: label(c),
+      named: !!String(c.name || '').trim(),
+      items,
+      level: worstLevel(items),
+      at: acc ? Number(acc.at) || 0 : 0,
+      demo: !(realFive || realSeven),
+    });
+  }
+
+  // Аккаунт без карточки (набрали руками в чистом терминале) — как в pills(): показываем,
+  // только если числа по нему уже настоящие пришли; выдумывать окна тому, чью карточку
+  // человек прямо сейчас даже не открыл, незачем.
+  for (const acc of accounts) {
+    if (used.has(acc)) continue;
+    const five = windowRow('5ч', acc.five, { now, eta: v.eta });
+    const seven = windowRow('7д', acc.seven, { now, eta: v.eta });
+    let items = [];
+    if (v.window === 'both') items = [five, seven].filter(Boolean);
+    else if (v.window === 'five') items = [five].filter(Boolean);
+    else if (v.window === 'seven') items = [seven].filter(Boolean);
+    else { const worst = (five && seven) ? (five.spent >= seven.spent ? five : seven) : (five || seven); items = worst ? [worst] : []; }
+    if (!items.length) continue;
+    out.push({
+      home: String(acc.home),
+      label: aliasOfHome(acc.home),
+      named: false,
+      items,
+      level: worstLevel(items),
+      at: Number(acc.at) || 0,
+      demo: false,
     });
   }
   return out;
@@ -319,7 +401,7 @@ function nameForHome(list, home) {
 return {
   TIGHT, CRIT, WINDOWS, ETAS, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
-  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, windowRow, pills, menuRows, nameForHome,
+  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, windowRow, pills, previewPills, menuRows, nameForHome,
 };
 
 });
