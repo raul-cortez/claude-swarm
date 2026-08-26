@@ -192,6 +192,46 @@ function fmtWhen(atMs, nowMs) {
   return `${DAYS[d.getDay()]}, ${clock}`;
 }
 
+// Числительное + правильная форма слова: «1 час»/«2 часа»/«5 часов». Обычное русское
+// склонение — по последней цифре, но 11-14 всегда «много», сколько бы раз это ни повторилось
+// в старших разрядах.
+function pluralRu(n, forms) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return forms[0];
+  if (n10 >= 2 && n10 <= 4 && !(n100 >= 12 && n100 <= 14)) return forms[1];
+  return forms[2];
+}
+
+// «через 2 часа 15 минут» — отсчёт словами, а не часами на стене. Для списка по клику это
+// нужно там, где до сброса меньше суток: пятичасовое окно всегда такое, недельное — в
+// последние сутки перед сбросом (см. fmtResetWhen). Секунды — шум на этом масштабе, как и в
+// fmtEta, поэтому округляем до минут.
+function fmtRel(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (!h && !m) return 'через минуту';
+  const hPart = h ? `${h} ${pluralRu(h, ['час', 'часа', 'часов'])}` : '';
+  const mPart = m ? `${m} ${pluralRu(m, ['минуту', 'минуты', 'минут'])}` : '';
+  return 'через ' + [hPart, mPart].filter(Boolean).join(' ');
+}
+
+const DAY_SECONDS = 86400;
+
+// Что печатать в списке по клику для ОДНОГО окна. Пятичасовое — всегда словами («через 2 часа
+// 15 минут»): часы на стене для окна короче суток надо пересчитывать в уме. Недельное — гибко:
+// меньше суток до сброса — тот же счёт словами, иначе точное время (fmtWhen: «завтра в 09:30»
+// или «в четверг, 14:00») — там до сброса далеко, и час на стене планировать удобнее отсчёта.
+function fmtResetWhen(atMs, nowMs, alwaysRel) {
+  const at = Number(atMs);
+  if (!isFinite(at) || at <= 0) return '';
+  const now = Number(nowMs) || Date.now();
+  const leftSec = (at - now) / 1000;
+  if (alwaysRel || (leftSec > 0 && leftSec < DAY_SECONDS)) return fmtRel(leftSec);
+  return fmtWhen(at, now);
+}
+
 // Одно окно к показу: { lab, spent, level, eta }. Пусто — окна нет в снимке (Клод присылает
 // их только по подписке), и тогда показывать нечего: ноль вместо неизвестного — вранье.
 function windowRow(lab, limit, opts) {
@@ -376,8 +416,8 @@ function menuRows(state) {
       five,
       seven,
       when: {
-        five: five ? fmtWhen(five.resetsAt, now) : '',
-        seven: seven ? fmtWhen(seven.resetsAt, now) : '',
+        five: five ? fmtResetWhen(five.resetsAt, now, true) : '',
+        seven: seven ? fmtResetWhen(seven.resetsAt, now, false) : '',
       },
     };
   };
@@ -407,7 +447,8 @@ function nameForHome(list, home) {
 return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
-  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, windowRow, pills, previewPills, menuRows, nameForHome,
+  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, pluralRu, windowRow,
+  pills, previewPills, menuRows, nameForHome,
 };
 
 });

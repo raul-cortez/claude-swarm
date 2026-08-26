@@ -162,15 +162,43 @@ test('в списке есть и подписка без чисел, и акк�
   assert.deepStrictEqual(rows.map((r) => r.known), [false, true, true]);
 });
 
-test('в списке — точное время сброса, а не отсчёт', () => {
+// Пятичасовое окно в списке — ВСЕГДА словами («через N часов/минут»): часы на стене для окна
+// короче суток надо пересчитывать в уме. Недельное, когда до сброса ещё далеко (здесь — трое
+// суток), остаётся точным временем: далёкий сброс планировать удобнее по часам на стене.
+test('в списке пятичасовое окно — отсчётом словами, недельное далёкое — точным временем', () => {
   const rows = subs.menuRows({
     cards: [{ line: 'claude', name: 'рабочая' }],
     accounts: [acc('/h/.claude', 10, 20, ['claude'])],
     now: NOW,
   });
-  assert.ok(/^в \d\d:\d\d$/.test(rows[0].when.five), 'сброс сегодня — часами: ' + rows[0].when.five);
+  assert.strictEqual(rows[0].when.five, 'через 1 час', 'пятичасовое — словами');
   assert.ok(/^(в|во) \S+, \d\d:\d\d$/.test(rows[0].when.seven), 'сброс через дни — днём недели: ' + rows[0].when.seven);
-  assert.strictEqual(rows[0].five.eta, '', 'в списке отсчёта нет вовсе');
+  assert.strictEqual(rows[0].five.eta, '', 'в списке отсчёта-цифрами (fmtEta) нет вовсе');
+});
+
+// Тот же гибкий выбор для недельного окна, если до сброса меньше суток: точное время сюда не
+// добралось бы, поэтому и оно переходит на отсчёт словами, как пятичасовое.
+test('недельное окно тоже отсчётом словами, если до сброса меньше суток', () => {
+  const soon = (home) => ({
+    home, five: null, seven: { spent: 40, resetsAt: SEC + 3 * 3600 + 900 }, at: SEC, lines: ['claude'],
+  });
+  const rows = subs.menuRows({
+    cards: [{ line: 'claude', name: 'рабочая' }],
+    accounts: [soon('/h/.claude')],
+    now: NOW,
+  });
+  assert.strictEqual(rows[0].when.seven, 'через 3 часа 15 минут');
+});
+
+test('fmtRel склоняет часы и минуты по числу, и молчит про нулевую часть', () => {
+  assert.strictEqual(subs.fmtRel(3600), 'через 1 час');
+  assert.strictEqual(subs.fmtRel(2 * 3600), 'через 2 часа');
+  assert.strictEqual(subs.fmtRel(5 * 3600), 'через 5 часов');
+  assert.strictEqual(subs.fmtRel(15 * 60), 'через 15 минут');
+  assert.strictEqual(subs.fmtRel(60), 'через 1 минуту');
+  assert.strictEqual(subs.fmtRel(2 * 3600 + 15 * 60), 'через 2 часа 15 минут');
+  assert.strictEqual(subs.fmtRel(0), 'через минуту', 'меньше минуты — не «через 0 минут»');
+  assert.strictEqual(subs.fmtRel(11 * 3600), 'через 11 часов', '11 — тоже «часов», не «часа»');
 });
 
 test('«завтра» названо завтрашним днём, а не днём недели', () => {
