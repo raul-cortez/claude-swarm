@@ -250,11 +250,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .label { color: var(--text); font-size: var(--tab-label-size); font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab .folder { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .tab .folder:empty { display: none; }
-/* Дайджест вкладки: чем агент занят прямо сейчас, его же словами (см. digestNote в
-   hooks/swarm-signal.mjs). Одна строка с многоточием — как .label, но приглушённая: это
-   пояснение, а не заголовок. Полный текст остаётся в title. */
-.tab .digest { color: var(--muted); font-size: var(--tab-sub-size); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab .digest[hidden] { display: none; }
 .tab .folder svg, .group-head svg { width: 11px; height: 11px; flex: none; }
 /* Bottom row of the card: status text on the left, sub-agent badge pushed to the
    right on the SAME line — the badge used to sit on its own row and inflate the
@@ -2062,6 +2057,35 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
 }
 .link-tip.show { opacity: 1; }
 
+/* --- дайджест вкладки: полоска над терминалом ------------------------------
+   Пара строк, которые агент сам пишет о том, чем занят (см. digestNote в
+   hooks/swarm-signal.mjs) — видно, только открыв вкладку, а не листая список.
+   Ровно ДВЕ строки (line-clamp, см. .digest-text), а не одна с многоточием, —
+   «пара строк» и задумывалась как две. Высота теперь по содержимому (было
+   30px под одну строку), поэтому все сдвиги ниже (.term-holder.digested,
+   body.has-digest #gate-strip и их pult-варианты) меряются заново стендом,
+   а не копируются с высоты гейта, как было для однострочной версии. */
+#digest-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+#digest-strip[hidden] { display: none; }
+.digest-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+}
+body.pult-on #digest-strip { top: 34px; }
 /* --- граница владения: плашка над отданной вкладкой ------------------------
    Вкладку, отданную агенту, человек не печатает, и узнать об этом он должен ДО того, как
    наберёт фразу. Раньше здесь была модалка — она всплывала на каждое движение мыши (доклады
@@ -2124,3 +2148,15 @@ body.pult-on #gate-strip { top: 34px; }
 }
 body.pult-on .term-holder.gated { top: 76px; }
 .term-holder.gated .xterm { opacity: 0.62; }
+/* Дайджест теперь в две строки (см. #digest-strip) — его высота больше не совпадает с
+   гейтом, и эти числа мерены стендом заново под РЕАЛЬНУЮ высоту двухстрочной полоски.
+   Комбинация (.digested.gated) сильнее любого из двух правил по специфичности (три
+   класса против двух), порядок здесь не имеет значения. */
+.term-holder.digested { top: 58px; }
+body.pult-on .term-holder.digested { top: 92px; }
+.term-holder.digested.gated { top: 100px; }
+body.pult-on .term-holder.digested.gated { top: 134px; }
+/* Дайджест — первая полоска, гейт под ней: про смысл вкладки говорим раньше, чем про
+   право печатать. */
+body.has-digest #gate-strip { top: 58px; }
+body.has-digest.pult-on #gate-strip { top: 92px; }

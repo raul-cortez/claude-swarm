@@ -1234,7 +1234,6 @@ async function createSession(opts = {}) {
         <span class="ctx-track"><span class="ctx-fill"></span></span>
         <span class="ctx-num"></span>
       </span>
-      <span class="digest" hidden></span>
       <span class="foot">
         <span class="sub">готов</span>
         <span class="hold" hidden></span>
@@ -3146,7 +3145,11 @@ function showSettingsModal(tab) {
       digestOn = digestI.checked;
       localStorage.setItem('swarm.digest', digestOn ? '1' : '0');
       window.swarm.setDigest({ enabled: digestOn });
-      if (!digestOn) setAllDigests('');   // выключили — снимаем текст с карточек сразу
+      if (!digestOn) {
+        // Выключили — снимаем полоску сразу, не дожидаясь следующего такта main.
+        for (const s of sessions.values()) s.digestText = '';
+        renderDigestStrip();
+      }
     }
     pultEnabled = pultI.checked;
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
@@ -3228,6 +3231,7 @@ function activate(id, opts) {
   activeId = id;
   reportViewing();
   renderGate();
+  renderDigestStrip();
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
@@ -4561,6 +4565,7 @@ if (gateEl) {
   gateEl.querySelector('.gate-moon').innerHTML = ICONS.moon;
   gateEl.querySelector('.gate-take').addEventListener('click', () => takeGate(activeId));
 }
+const digestEl = document.getElementById('digest-strip');
 let gateBlocked = false;          // только что попробовали напечатать — плашка отвечает на это
 let gateBlockedTimer = null;
 
@@ -5832,20 +5837,28 @@ window.swarm.onRestartHold(({ id, hold }) => {
   el.hidden = !label;
 });
 
-// Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их из
-// файла в рабочей папке (digest.js), здесь только положить на карточку.
-function applyDigest(id, text) {
+// Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
+// из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
+// неактивной вкладки), а рисуем — только для активной: полоска одна на сцену, как у гейта.
+function setDigestText(id, text) {
   const s = sessions.get(String(id));
-  const el = s && s.tab.querySelector('.digest');
-  if (!el) return;
-  el.textContent = text || '';
-  el.title = text || '';
-  el.hidden = !text;
+  if (s) s.digestText = text || '';
+  if (id === activeId) renderDigestStrip();
 }
-function setAllDigests(text) {
-  for (const id of sessions.keys()) applyDigest(id, text);
+window.swarm.onDigest(({ id, text }) => setDigestText(id, text));
+
+function renderDigestStrip() {
+  if (!digestEl) return;
+  const s = sessions.get(activeId);
+  const text = (s && s.digestText) || '';
+  const was = !digestEl.hidden;
+  digestEl.hidden = !text;
+  document.body.classList.toggle('has-digest', !!text);
+  for (const [id, sess] of sessions) sess.holder.classList.toggle('digested', !!text && id === activeId);
+  digestEl.querySelector('.digest-text').textContent = text;
+  digestEl.title = text;
+  if (was !== !!text) refitActive();  // полоска появилась/ушла — терминалу сменилась высота
 }
-window.swarm.onDigest(({ id, text }) => applyDigest(id, text));
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 restoreTermPanel();

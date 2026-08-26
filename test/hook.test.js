@@ -682,6 +682,46 @@ test('end to end: включённый перезапуск на диске до
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- дайджест вкладки ---------------------------------------------------------
+// Тот же приём, что у самозвона: имя файла узнаёт хук из id разговора, а приложение читает
+// файл с тем же именем (digest.js) — и это единственное место, где расходятся пути к правде.
+test('свежей сессии сворм называет тот файл дайджеста, который сам читает', () => {
+  const digest = require('../digest');
+  const sid = '0d7f8c22-3b1a-4d55-9f10-aa1122334455';
+  assert.strictEqual(H.digestFileFor(sid), digest.fileName(sid));
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
+    null, [], 'desk', { digest: { on: true } });
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.ok(out.hookSpecificOutput.additionalContext.includes(digest.fileName(sid)),
+    'в строке названо имя файла');
+  assert.match(out.hookSpecificOutput.additionalContext, /дайджест вкладки/);
+});
+
+test('выключенный дайджест молчит, включённый перезапуск + дайджест печатают обе строки', () => {
+  const off = { digest: { on: false } };
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk', off);
+  assert.strictEqual(out.hookSpecificOutput, undefined, 'агенту не сказано ничего');
+  const both = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk',
+    { restart: { on: true }, digest: { on: true } });
+  assert.match(both.hookSpecificOutput.additionalContext, /перезапустить себя сам/);
+  assert.match(both.hookSpecificOutput.additionalContext, /дайджест вкладки/);
+});
+
+test('дайджест молчит про подагента — он живёт внутри чужого хода', () => {
+  const out = H.outputFor(
+    { hook_event_name: 'SessionStart', session_id: 's1', agent_id: 'sub-1' },
+    null, [], 'desk', { digest: { on: true } });
+  assert.ok(!out || out.hookSpecificOutput === undefined, 'подагенту про дайджест не сказано ничего');
+});
+
+test('digest.readText: берёт поле digest, режет по потолку, молчит на мусоре', () => {
+  const digest = require('../digest');
+  assert.strictEqual(digest.readText(JSON.stringify({ digest: '  делаю рефактор  ' })), 'делаю рефактор');
+  assert.strictEqual(digest.readText('не json'), '');
+  assert.strictEqual(digest.readText(JSON.stringify({ digest: 'x'.repeat(500) })).length, digest.MAX_LEN);
+  assert.strictEqual(digest.readText(JSON.stringify({})), '');
+});
+
 // Подагенту не рассказывают ни про перезапуск (гасить вкладку ему не за что), ни маркером
 // про новый разговор: его старт — не смена разговора вкладки, а шаг внутри чужого хода.
 test('подагенту про перезапуск вкладки не рассказывают', () => {

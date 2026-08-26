@@ -36,6 +36,7 @@
       "launch-line.js",
       "pty-write.js",
       "restart.js",
+      "digest.js",
       "subs.js",
       "unread.js",
       "night.js",

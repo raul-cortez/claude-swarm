@@ -176,6 +176,7 @@ const { envPassing, clearPrefix, tabEnv, shellFamily } = require('./launch-line'
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
 const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
+const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const unread = require('./unread');                 // «этот ответ человек ещё не видел» — держит перезапуск
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
@@ -2808,9 +2809,12 @@ function tgWriteModes() {
   // перезапуск сам» — с именем файла, которое считает сам из id разговора (restart.answerName).
   // Выключенная функция приезжает выключенной: обещать агенту дверь, которую сворм не откроет,
   // хуже, чем молчать.
+  // Включён ли дайджест вкладки. Та же оговорка, что у restart: выключенная функция приезжает
+  // хуку выключенной, а не молча пропадает, — иначе он обещал бы агенту дверь, которую сворм не
+  // откроет.
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
-    restart: { on: RESTART_ENABLED },
+    restart: { on: RESTART_ENABLED }, digest: { on: DIGEST_ENABLED },
   });
   if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
   try {
@@ -5451,6 +5455,66 @@ function restartAnswerFile(id, d) {
 // достаётся, и об этом мы говорим вслух, а не молчим.
 const RESTART_SHARED_NAME = '.swarm-restart.json';
 
+// --- дайджест вкладки ---------------------------------------------------------
+// Пара строк, которую агент сам пишет о том, чем занят СЕЙЧАС, — человек видит их на карточке
+// в списке вкладок, не открывая разговор. Механизм — уменьшенная копия эстафеты самоперезапуска:
+// файл в папке вкладки, который мы опрашиваем раз в такт, и строка на старте сессии, которая
+// говорит агенту, что такая возможность вообще есть (см. digestNote в hooks/swarm-signal.mjs).
+// Здесь нет ни автомата, ни порога — только «прочитать, если файл посвежел, и показать».
+let DIGEST_ENABLED = false;
+const DIGEST_TICK_MS = 30_000;
+
+// Файл лежит в папке вкладки, как и файл-ответ рестарта, и по той же причине: путь за пределами
+// рабочей папки Клод спрашивает отдельным разрешением. Назван по id разговора — ключа вкладки
+// хук не знает (см. restartSessionFile).
+function digestFileFor(d) {
+  const cwd = d && d.cwd;
+  const name = digest.fileName(d && d.claudeSessionId);
+  if (!name || !cwd || !fs.existsSync(cwd)) return '';
+  return path.join(cwd, name);
+}
+
+function digestTick(id, d) {
+  const file = digestFileFor(d);
+  if (!file) return;
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return; }
+  if (st.mtimeMs === d.digestMtime) return;      // не менялся с прошлого такта — читать незачем
+  d.digestMtime = st.mtimeMs;
+  let raw = '';
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
+  const text = digest.readText(raw);
+  if (text === (d.digestText || '')) return;
+  d.digestText = text;
+  safeSend('session:digest', { id, text });
+}
+
+setInterval(() => {
+  if (!DIGEST_ENABLED) return;
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead) continue;
+    try { digestTick(id, d); } catch (e) { reportMainError(e); }
+  }
+}, DIGEST_TICK_MS);
+
+ipcMain.on('settings:digest', (_e, opts = {}) => {
+  DIGEST_ENABLED = !!(opts && opts.enabled);
+  // Хук читает это из файла режимов: снятая галочка должна закрыть агенту и дверь дайджеста,
+  // а не только перестать опрашивать файл здесь.
+  tgWriteModes();
+  if (!DIGEST_ENABLED) {
+    // Текст на карточках гасим вместе с функцией — он писался при включённой галочке и без неё
+    // больше не обновится, то есть превратится в застывший обман о том, чем вкладка занята.
+    for (const [tid, d] of det) {
+      if (!d || !d.digestText) continue;
+      d.digestText = '';
+      d.digestMtime = 0;
+      safeSend('session:digest', { id: tid, text: '' });
+    }
+  }
+});
+
 function restartTabsInCwd(cwd) {
   let n = 0;
   for (const id of sessions.keys()) {
@@ -5530,8 +5594,9 @@ function restartSweepCwd(id, d) {
   const cwd = d && d.cwd;
   if (!cwd) return;
   const bySession = restartSessionFile(d);
+  const digestFile = digestFileFor(d);
   for (const f of [restartAnswerFile(id, d), path.join(cwd, restartHandoffName(id, d)),
-    ...(bySession ? [bySession] : [])]) {
+    ...(bySession ? [bySession] : []), ...(digestFile ? [digestFile] : [])]) {
     try { fs.unlinkSync(f); } catch (_) { /* нет — и хорошо */ }
   }
 }

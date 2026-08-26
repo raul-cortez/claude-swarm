@@ -140,6 +140,15 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:restartNote', handler);
   },
 
+  // Дайджест вкладки: пара строк о том, чем занят агент, читаются из файла в его рабочей папке
+  // (digest.js) и приходят сюда, чтобы лечь на карточку.
+  setDigest: (opts) => ipcRenderer.send('settings:digest', opts),
+  onDigest: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:digest', handler);
+    return () => ipcRenderer.removeListener('session:digest', handler);
+  },
+
   // main просит открыть вкладку (это /new из телеги: main не умеет делать xterm и DOM).
   onCreateTab: (cb) => {
     const handler = (_e, payload) => cb(payload);

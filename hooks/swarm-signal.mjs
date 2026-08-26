@@ -324,6 +324,27 @@ const restartFileFor = (sid) => {
   return id ? '.swarm-restart-' + id + '.json' : SHARED_ANSWER;
 };
 
+// --- дайджест вкладки ---------------------------------------------------------
+// Одна строка на старте сессии — как selfRestartNote, и по той же причине один раз: платит
+// за неё каждая сессия, значит написана она должна быть коротко. Учит не «что писать», а
+// «куда положить» — печатать о СМЫСЛЕ дайджеста агенту незачем, у него он и так есть.
+//
+// Имя файла — дубликат digest.fileName из приложения (модулей приложения здесь нет), сверяется
+// тестом.
+const digestFileFor = (sid) => {
+  const id = String(sid == null ? '' : sid).replace(/[^\w.-]/g, '_');
+  return id ? '.swarm-digest-' + id + '.json' : '';
+};
+
+const digestNote = (file) => [
+  '[сворм] Веди короткий дайджест вкладки — пару строк о том, чем занят СЕЙЧАС.',
+  'Его видит человек в списке вкладок со стороны, не открывая разговор, — другого способа узнать это у него нет.',
+  'Обновляй, когда меняется этап работы (не на каждый шаг), перезаписывая в своей рабочей папке файл',
+  `${file} с одним JSON-объектом:`,
+  '{"digest": "коротко, чем занят сейчас"}',
+  'Перезаписывать можно сколько угодно раз — я слежу за файлом и обновляю карточку сам.',
+].join('\n');
+
 // Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
 // его текст в тот же файл, где лежит «где я» (swarm-tgmode.json). Дубликат подстановки из
 // night.js ruleText — по той же причине, что и всё в этом файле: модулей приложения здесь нет.
@@ -580,9 +601,15 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
   // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
   // не говорим вовсе: он живёт внутри чужого хода и гасить вкладку ему не за что.
-  const intro = (payload && payload.hook_event_name === 'SessionStart'
-    && !isSubagent(payload) && ex.restart && ex.restart.on)
+  const isStart = payload && payload.hook_event_name === 'SessionStart' && !isSubagent(payload);
+  const restartIntro = (isStart && ex.restart && ex.restart.on)
     ? selfRestartNote(restartFileFor(sid)) : '';
+  // Тот же миг, что у самозвона, и по той же причине: галочка человека главнее, обещать агенту
+  // файл, который сворм не читает, нельзя. Подагенту не говорим: дайджест — про вкладку целиком,
+  // а не про то, чем занят один её сабагент.
+  const digestIntro = (isStart && ex.digest && ex.digest.on)
+    ? digestNote(digestFileFor(sid)) : '';
+  const intro = [restartIntro, digestIntro].filter(Boolean).join('\n\n');
   if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;
@@ -697,6 +724,7 @@ async function main() {
   let nightCustom = '';
   let autoSessions = [];
   let restartModes = null;
+  let digestModes = null;
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
     tgSessions = tg.sessions || [];
@@ -712,6 +740,9 @@ async function main() {
     // Включён ли перезапуск. Нет поля (файл от прежней версии) — молчим про самозвон: обещать
     // дверь, которой может не быть, хуже, чем не обещать. Имя файла считаем сами, из id разговора.
     restartModes = (tg.restart && typeof tg.restart === 'object') ? tg.restart : null;
+    // Включён ли дайджест вкладки. Та же логика, что у restartModes: файла от прежней версии
+    // сворма нет — молчим, обещанная дверь, которую сворм не откроет, хуже, чем не обещать.
+    digestModes = (tg.digest && typeof tg.digest === 'object') ? tg.digest : null;
   } catch (_) { /* none */ }
   // Карточки подписок — ради их ИМЁН: агент должен знать не только «7д 84%», но и чья это
   // подписка. Файла нет (приложение старше) — молчим про имя, числа от этого не страдают.
@@ -733,7 +764,7 @@ async function main() {
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
-        { usage, nightRule: nightCustom, autoSessions, restart: restartModes, subCards });
+        { usage, nightRule: nightCustom, autoSessions, restart: restartModes, digest: digestModes, subCards });
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -766,4 +797,4 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
-  selfRestartNote, restartFileFor };
+  selfRestartNote, restartFileFor, digestNote, digestFileFor };
