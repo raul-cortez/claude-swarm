@@ -2154,15 +2154,19 @@ body.pult-on #gate-strip { top: 34px; }
 }
 body.pult-on .term-holder.gated { top: 76px; }
 .term-holder.gated .xterm { opacity: 0.62; }
-/* Дайджест теперь в две строки (см. #digest-strip) — его высота больше не совпадает с
-   гейтом, и эти числа мерены стендом заново под РЕАЛЬНУЮ высоту двухстрочной полоски.
+/* Дайджест — одна или две строки (line-clamp в #digest-strip), высота живая, а не
+   фиксированная. --digest-h ставит renderDigestStrip() в renderer.js по РЕАЛЬНОЙ высоте
+   полоски после каждой смены текста; 58px здесь — только запасное значение на случай, если
+   переменная ещё не пришла (первая отрисовка). Раньше здесь стояло голое число, снятое
+   стендом под двухстрочный текст, — короткий однострочный дайджест кончался раньше, чем
+   «начиналась» зарезервированная под него высота, и до плашки/терминала оставался зазор.
    Комбинация (.digested.gated) сильнее любого из двух правил по специфичности (три
    класса против двух), порядок здесь не имеет значения. */
-.term-holder.digested { top: 58px; }
-body.pult-on .term-holder.digested { top: 92px; }
-.term-holder.digested.gated { top: 100px; }
-body.pult-on .term-holder.digested.gated { top: 134px; }
+.term-holder.digested { top: var(--digest-h, 58px); }
+body.pult-on .term-holder.digested { top: calc(34px + var(--digest-h, 58px)); }
+.term-holder.digested.gated { top: calc(var(--digest-h, 58px) + 42px); }
+body.pult-on .term-holder.digested.gated { top: calc(34px + var(--digest-h, 58px) + 42px); }
 /* Дайджест — первая полоска, гейт под ней: про смысл вкладки говорим раньше, чем про
    право печатать. */
-body.has-digest #gate-strip { top: 58px; }
-body.has-digest.pult-on #gate-strip { top: 92px; }
+body.has-digest #gate-strip { top: var(--digest-h, 58px); }
+body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }

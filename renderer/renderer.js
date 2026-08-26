@@ -6009,6 +6009,12 @@ function renderDigestStrip() {
   for (const [id, sess] of sessions) sess.holder.classList.toggle('digested', !!text && id === activeId);
   digestEl.querySelector('.digest-text').textContent = text;
   digestEl.title = text;
+  // Высота полоски меняется вместе с текстом (одна строка короче, чем две, а line-clamp
+  // разрешает обе) — плашка владения и терминал под ней сдвигаются в CSS переменной
+  // --digest-h, а не подобранным на стенде числом. Раньше числа (58px и т.д.) были ростом
+  // ДВУХ строк, и короткий текст в одну строку оставлял пустой зазор до плашки: полоска
+  // кончалась раньше, чем «начиналась» её собственная зарезервированная высота.
+  if (text) document.documentElement.style.setProperty('--digest-h', digestEl.offsetHeight + 'px');
   if (was !== !!text) refitActive();  // полоска появилась/ушла — терминалу сменилась высота
 }
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
