@@ -311,9 +311,12 @@ const ICONS = {
   // «panel-bottom» / «panel-right» — текущая стыковка панели терминала.
   dockBottom: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/>'),
   dockSide: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>'),
-  // «layout-panel-top» / «layout-panel-left» — текущее расположение вкладок панели.
-  tabsTop: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),
-  tabsLeft: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>'),
+  // «more-horizontal» / «more-vertical» — расположение вкладок панели. Нарочно ДРУГОЙ
+  // рисунок, не «прямоугольник с линией», как у стыковки: та пара на глаз почти не
+  // отличалась друг от друга (только сдвигом линии на несколько пикселей) — три точки
+  // в ряд / столбиком читаются однозначно и не путаются с иконками стыковки.
+  tabsTop: SVG('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
+  tabsLeft: SVG('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>'),
 };
 
 // Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
