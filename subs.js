@@ -44,13 +44,19 @@ const CRIT = 90;    // % израсходовано: пилюля красная
 // Отсчёт до сброса, наоборот, по умолчанию молчит: пока запаса хватает, он ничего не решает.
 const WINDOWS = ['both', 'worst', 'five', 'seven'];
 const ETAS = ['tight', 'always', 'never'];
-const VIEW = { window: 'both', eta: 'tight' };
+// Как выделять пилюлю, когда лимит на исходе (spent >= TIGHT). «numbers» по умолчанию: заливка
+// всей пилюли (`fill`) слишком режет глаз для панели, на которую смотрят мимоходом, а «не
+// выделять» (`none`) прячет сигнал совсем — цифры остаются нейтральными, что вопрос «сколько
+// осталось» задаёт снова экран настроек, а не глаз.
+const HIGHLIGHT = ['none', 'numbers', 'fill'];
+const VIEW = { window: 'both', eta: 'tight', highlight: 'numbers' };
 
 function view(raw) {
   const v = raw && typeof raw === 'object' ? raw : {};
   return {
     window: WINDOWS.includes(v.window) ? v.window : VIEW.window,
     eta: ETAS.includes(v.eta) ? v.eta : VIEW.eta,
+    highlight: HIGHLIGHT.includes(v.highlight) ? v.highlight : VIEW.highlight,
   };
 }
 
@@ -399,7 +405,7 @@ function nameForHome(list, home) {
 }
 
 return {
-  TIGHT, CRIT, WINDOWS, ETAS, VIEW,
+  TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, windowRow, pills, previewPills, menuRows, nameForHome,
 };

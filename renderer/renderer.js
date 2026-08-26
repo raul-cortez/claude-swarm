@@ -342,6 +342,15 @@ let activeId = null;
 // live terminal of the picked one. Not a session: it has no pty. See
 // docs/superpowers/specs/2026-07-15-pult-design.md.
 let pultEnabled = localStorage.getItem('swarm.pult') !== '0'; // Settings → Вид
+// Тот же паттерн — видимые кнопки нижней панели, которые не всем нужны сразу все: панель
+// захламляется, когда человек использует одну-две из пяти функций, а видит все пять.
+// Умолчание у каждой — включено (это уже работавшие всегда кнопки, тумблер только даёт
+// выключить лишнее), непустая проверка на '0' — как у пульта.
+let termPanelEnabled = localStorage.getItem('swarm.termPanelOn') !== '0';
+let nightPillEnabled = localStorage.getItem('swarm.nightPillOn') !== '0';
+let usagePillsEnabled = localStorage.getItem('swarm.usagePillsOn') !== '0';
+let presencePillEnabled = localStorage.getItem('swarm.presencePillOn') !== '0';
+let cmdMenuEnabled = localStorage.getItem('swarm.cmdMenuOn') !== '0';
 let pultOn = false;      // pult mode active right now
 let pultPick = null;     // id of the agent whose terminal the pult shows
 let pultTimer = null;    // 1s tick, only while pultOn — chips show a live timer
@@ -836,7 +845,11 @@ function pickAgent() {
         hint.textContent = SUBS_API.line(a);
         b.appendChild(hint);
       }
-      b.addEventListener('click', () => close(launchList[i]));
+      // Только {cmd, flags} — resolveLaunch большего не просит. Раньше сюда уходила ВСЯ
+      // карточка (launchList[i]), и вместе с cmd/flags в createSession() просачивалось её
+      // ИМЯ ПОДПИСКИ — оно там читается ещё и как имя новой вкладки (main ставит его топику в
+      // Телеграме), так что вкладка называлась «рабочая» вместо имени папки.
+      b.addEventListener('click', () => close({ cmd: a.cmd, flags: a.flags }));
       list.appendChild(b);
     });
     // A clean shell (no command) is always available as the last option.
@@ -1586,6 +1599,15 @@ function showSettingsModal(tab) {
             </div>
             <select class="set-input set-select" id="set-subs-eta"></select>
           </div>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Когда лимит на исходе</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Как выделять пилюлю, когда израсходовано больше
+                ${SUBS_API.TIGHT}%.</span>
+            </div>
+            <select class="set-input set-select" id="set-subs-highlight"></select>
+          </div>
           <div class="set-head"><span class="set-label">Предпросмотр</span></div>
           <div class="subs-preview" id="set-subs-preview"></div>
           <span class="set-hint">Свои остатки и имя своей подписки агент видит всегда — они
@@ -1682,6 +1704,56 @@ function showSettingsModal(tab) {
             </label>
             <button type="button" class="set-q" aria-label="подсказка">?</button>
             <span class="set-hint" hidden>Вкладка ${key('0')} с очередью агентов, которые ждут ответа.</span>
+          </div>
+        </section>
+        <section class="set-group">
+          <div class="set-group-h">Нижняя панель</div>
+          <p class="set-intro">Что показывать в строке снизу. Своя настройка на каждую —
+            панель не должна показывать то, чем не пользуешься.</p>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-bar-terminal" />
+              <span class="set-check-tx">Терминал</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Кнопка пристыковываемой панели терминала и ${key('J')}.
+              Выключишь — панель закроется, если была открыта.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-bar-night" />
+              <span class="set-check-tx">Ночной режим</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Луна — сколько вкладок работает без тебя и дверь
+              «отдать все разом». Отданная вкладка всё равно видна по цвету карточки.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-bar-subs" />
+              <span class="set-check-tx">Подписки</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Остатки лимитов по отмеченным подпискам (Настройки →
+              Подписки). Выключить здесь — быстрее, чем снимать галки с каждой карточки.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-bar-presence" />
+              <span class="set-check-tx">«Где я»</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>За компом или за телефоном — переключатель для моста
+              в Телеграм. Появляется только когда бот привязан.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-bar-cmd" />
+              <span class="set-check-tx">Команды</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Кнопка «команды» и ${key('K')} — список быстрых команд
+              со своими хоткеями.</span>
           </div>
         </section>
       </div>
@@ -2544,6 +2616,16 @@ function showSettingsModal(tab) {
   });
   const pultI = overlay.querySelector('#set-pult');
   pultI.checked = pultEnabled;
+  const barTerminalI = overlay.querySelector('#set-bar-terminal');
+  const barNightI = overlay.querySelector('#set-bar-night');
+  const barSubsI = overlay.querySelector('#set-bar-subs');
+  const barPresenceI = overlay.querySelector('#set-bar-presence');
+  const barCmdI = overlay.querySelector('#set-bar-cmd');
+  barTerminalI.checked = termPanelEnabled;
+  barNightI.checked = nightPillEnabled;
+  barSubsI.checked = usagePillsEnabled;
+  barPresenceI.checked = presencePillEnabled;
+  barCmdI.checked = cmdMenuEnabled;
 
   // Вопрос «когда спрашивать» имеет смысл только при нескольких подписках — иначе выбирать
   // не из чего, и настройка была бы вопросом без вариантов.
@@ -2617,6 +2699,7 @@ function showSettingsModal(tab) {
   const subsPreviewEl = overlay.querySelector('#set-subs-preview');
   const windowSel = overlay.querySelector('#set-subs-window');
   const etaSel = overlay.querySelector('#set-subs-eta');
+  const highlightSel = overlay.querySelector('#set-subs-highlight');
   const WINDOW_NAMES = [
     ['both', 'оба окна'],
     ['worst', 'то, что ближе к концу'],
@@ -2627,6 +2710,11 @@ function showSettingsModal(tab) {
     ['tight', 'когда израсходовано больше ' + SUBS_API.TIGHT + '%'],
     ['always', 'всегда'],
     ['never', 'никогда'],
+  ];
+  const HIGHLIGHT_NAMES = [
+    ['none', 'не выделять'],
+    ['numbers', 'выделять только цифры'],
+    ['fill', 'заливка пилюли'],
   ];
   const fillSel = (sel, pairs, now) => {
     sel.innerHTML = '';
@@ -2640,10 +2728,11 @@ function showSettingsModal(tab) {
   };
   fillSel(windowSel, WINDOW_NAMES, subsView.window);
   fillSel(etaSel, ETA_NAMES, subsView.eta);
+  fillSel(highlightSel, HIGHLIGHT_NAMES, subsView.highlight);
 
   function renderSubsPreview() {
     if (!subsPreviewEl) return;
-    const view = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
+    const view = SUBS_API.view({ window: windowSel.value, eta: etaSel.value, highlight: highlightSel.value });
     // Форма панели по правкам ПРЯМО СЕЙЧАС: если по подписке ещё не пришло ни одного
     // настоящего числа, пилюля всё равно рисуется — на условных цифрах (SUBS_API.previewPills
     // помечает их `demo: true`), чтобы было видно окна/цвет/имя, не дожидаясь первого ответа.
@@ -2659,7 +2748,7 @@ function showSettingsModal(tab) {
       return;
     }
     for (const p of rows) {
-      const pill = pillNode(p, rows.length > 1, p.demo ? 'Условные цифры — настоящих ещё не видели' : '');
+      const pill = pillNode(p, rows.length > 1, p.demo ? 'Условные цифры — настоящих ещё не видели' : '', view.highlight);
       pill.classList.toggle('is-demo', !!p.demo);
       pill.tabIndex = -1;
       subsPreviewEl.appendChild(pill);
@@ -2667,6 +2756,7 @@ function showSettingsModal(tab) {
   }
   windowSel.addEventListener('change', renderSubsPreview);
   etaSel.addEventListener('change', renderSubsPreview);
+  highlightSel.addEventListener('change', renderSubsPreview);
 
   launchList.forEach((a) => subsRow(a));
   overlay.querySelector('#set-subs-add').addEventListener('click', () => {
@@ -3121,8 +3211,8 @@ function showSettingsModal(tab) {
     const cards = draftCards().map(cardOf).filter((a) => a.cmd);
     launchList = cards.length ? cards : [cardOf({ line: 'claude' })];
     saveLaunchList(); // also syncs `launch` + legacy keys to launchList[0]
-    const nextView = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
-    if (nextView.window !== subsView.window || nextView.eta !== subsView.eta) {
+    const nextView = SUBS_API.view({ window: windowSel.value, eta: etaSel.value, highlight: highlightSel.value });
+    if (nextView.window !== subsView.window || nextView.eta !== subsView.eta || nextView.highlight !== subsView.highlight) {
       subsView = nextView;
       saveSubsView();
       renderUsagePills();
@@ -3161,6 +3251,23 @@ function showSettingsModal(tab) {
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
     if (!pultEnabled) setPult(false); // no restart needed
     relayoutTabs();                   // adds or drops the Пульт tab
+    termPanelEnabled = barTerminalI.checked;
+    localStorage.setItem('swarm.termPanelOn', termPanelEnabled ? '1' : '0');
+    termPanelBtn.hidden = !termPanelEnabled;
+    if (!termPanelEnabled) closeTermPanel();
+    nightPillEnabled = barNightI.checked;
+    localStorage.setItem('swarm.nightPillOn', nightPillEnabled ? '1' : '0');
+    renderNightPill();
+    usagePillsEnabled = barSubsI.checked;
+    localStorage.setItem('swarm.usagePillsOn', usagePillsEnabled ? '1' : '0');
+    renderUsagePills();
+    presencePillEnabled = barPresenceI.checked;
+    localStorage.setItem('swarm.presencePillOn', presencePillEnabled ? '1' : '0');
+    renderPresencePill();
+    cmdMenuEnabled = barCmdI.checked;
+    localStorage.setItem('swarm.cmdMenuOn', cmdMenuEnabled ? '1' : '0');
+    cmdBtn.hidden = !cmdMenuEnabled;
+    if (!cmdMenuEnabled) closeCmdMenu();
     notifyOnReady = readyI.checked;
     notifyOnWaiting = waitingI.checked;
     notifyActive = activeI.checked;
@@ -3935,7 +4042,8 @@ function openTermPanel() {
 }
 
 function toggleTermPanel() {
-  if (termPanel.open) closeTermPanel(); else openTermPanel();
+  if (termPanel.open) closeTermPanel();
+  else if (termPanelEnabled) openTermPanel();   // выключено в Вид → Нижняя панель — ⌘J молчит
 }
 
 function setTermDock(dock) {
@@ -3976,6 +4084,7 @@ termPosBtn.addEventListener('click', () => setTermTabsPos(termPanel.tabsPos === 
 termDockBtn.addEventListener('click', () => setTermDock(termPanel.dock === 'bottom' ? 'side' : 'bottom'));
 termPanelBtn.querySelector('.ic').innerHTML = ICONS.terminal;
 termPanelBtn.addEventListener('click', toggleTermPanel);
+termPanelBtn.hidden = !termPanelEnabled;      // Вид → Нижняя панель → Терминал
 
 // Своя подписка на вывод/выход pty: панель — отдельная от sessions Map, и общая подписка на
 // window.swarm.onData (см. выше) её не видит — она бьёт мимо, по чужой Map, молча не находя id.
@@ -4244,8 +4353,8 @@ function outsideCloseCmd(e) {
 }
 
 function toggleCmdMenu() {
-  if (cmdMenu.classList.contains('hidden')) openCmdMenu();
-  else closeCmdMenu();
+  if (!cmdMenu.classList.contains('hidden')) closeCmdMenu();
+  else if (cmdMenuEnabled) openCmdMenu();   // выключено в Вид → Нижняя панель — ⌘K молчит
 }
 
 // --- diff overlay ------------------------------------------------------------
@@ -5241,9 +5350,14 @@ function renderPresencePill(st) {
   //
   // А вот без бота кнопки нет снова: ночной режим уехал отсюда на свою луну, и без телеги
   // выбирать здесь стало нечего.
-  presenceBot = !!(st && st.chatId != null);
-  presencePill.hidden = !presenceBot;
-  presenceNow = (st && st.presence) || 'desk';
+  //
+  // st пуст, когда зовут только применить настройку «Вид → Нижняя панель → Где я» — тогда
+  // положение и привязка бота не меняются, трогаем только видимость.
+  if (st) {
+    presenceBot = !!(st && st.chatId != null);
+    presenceNow = (st && st.presence) || 'desk';
+  }
+  presencePill.hidden = !presenceBot || !presencePillEnabled;
   paintPresence();
   const it = presenceItem(presenceNow);
   presencePill.classList.toggle('is-on', presenceNow !== 'desk');
@@ -5338,9 +5452,11 @@ function pillTitle(row) {
   return `${row.label} — ${parts.join(', ')}. Клик — список подписок.`;
 }
 
-function pillNode(p, withLabel, title) {
+function pillNode(p, withLabel, title, highlight) {
+  const showNum = highlight !== 'none';
+  const showFill = highlight === 'fill';
   const btn = document.createElement('button');
-  btn.className = 'usage-pill' + (p.level ? ' is-' + p.level : '');
+  btn.className = 'usage-pill' + (showFill && p.level ? ' is-' + p.level : '');
   btn.type = 'button';
   btn.dataset.home = p.home;
   btn.title = title || '';
@@ -5365,7 +5481,7 @@ function pillNode(p, withLabel, title) {
       btn.appendChild(dot);
     }
     const num = document.createElement('span');
-    num.className = 'u-num ' + (it.level || '');
+    num.className = 'u-num ' + (showNum ? (it.level || '') : '');
     num.textContent = it.spent + '%';
     const lab = document.createElement('span');
     lab.className = 'u-lab';
@@ -5373,7 +5489,7 @@ function pillNode(p, withLabel, title) {
     btn.append(num, lab);
     if (it.eta) {
       const eta = document.createElement('span');
-      eta.className = 'u-eta ' + (it.level || '');
+      eta.className = 'u-eta ' + (showNum ? (it.level || '') : '');
       eta.innerHTML = ICONS.clock;
       eta.appendChild(document.createTextNode(it.eta));
       btn.appendChild(eta);
@@ -5387,6 +5503,9 @@ function pillNode(p, withLabel, title) {
 // честнее нулей.
 function renderUsagePills() {
   if (!usagePills) return;
+  // Вид → Нижняя панель → Подписки: быстрее, чем снимать галку «показывать в панели» на
+  // каждой карточке по отдельности, и не трогает сами карточки/предпросмотр в настройках.
+  if (!usagePillsEnabled) { usagePills.hidden = true; closeSubsMenu(); return; }
   const st = subsState();
   // Папку конфига карточки узнают отсюда: вкладка отработала — в снимке написано, где она
   // живёт. Сохраняем только когда узнали что-то новое (learnHome возвращает тот же список,
@@ -5402,7 +5521,7 @@ function renderUsagePills() {
   usagePills.innerHTML = '';
   for (const p of rows) {
     const row = menu.find((m) => m.home === p.home);
-    usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p)));
+    usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p), subsView.highlight));
   }
   usagePills.hidden = !rows.length;
   if (!rows.length) closeSubsMenu();
@@ -5461,7 +5580,7 @@ function fillSubsMenu() {
       lab.className = 'u-lab';
       lab.textContent = w === 'five' ? '5 часов' : '7 дней';
       const num = document.createElement('span');
-      num.className = 'u-num ' + (it.level || '');
+      num.className = 'u-num ' + (subsView.highlight !== 'none' ? (it.level || '') : '');
       num.textContent = it.spent + '%';
       const when = document.createElement('span');
       when.className = 'u-when';
@@ -5552,7 +5671,9 @@ function renderNightPill(st) {
   // Кнопка стоит в панели ВСЕГДА: это единственная дверь к «отдать все вкладки разом», и
   // прятать её, пока ничего не отдано, значило бы прятать саму функцию. Раньше эта дверь была
   // пунктом в списке «где я» — там она спорила с вопросом «где человек» и путала обоих.
-  nightPill.hidden = false;
+  // Кроме одного случая — человек сам выключил её в Вид → Нижняя панель, потому что ночным
+  // режимом не пользуется вовсе; отданная вкладка тогда всё равно видна по цвету карточки.
+  nightPill.hidden = !nightPillEnabled;
   // Только луна, без подписи. Подпись («3 вкладки в ночном») висела в панели постоянно и была
   // размером с кнопку: она отвечала на вопрос, который человек задаёт раз в час, и занимала
   // место всё остальное время. Число ушло в подсказку и в пункты списка; сколько вкладок
@@ -5677,6 +5798,7 @@ window.swarm.night.state().then(renderNightPill).catch(() => {});
 document.getElementById('new-session-folder').addEventListener('click', createSessionInFolder);
 document.getElementById('settings-btn').addEventListener('click', () => showSettingsModal());
 cmdBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleCmdMenu(); });
+cmdBtn.hidden = !cmdMenuEnabled;              // Вид → Нижняя панель → Команды
 gitBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleGitMenu(); });
 gitDiffBtn.addEventListener('click', (e) => { e.stopPropagation(); openDiffOverlay(); });
 

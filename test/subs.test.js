@@ -88,7 +88,7 @@ test('«то, что ближе к концу» оставляет одно чи
 });
 
 test('вид чинится к обоим окнам, а не к прежнему одному числу', () => {
-  assert.deepStrictEqual(subs.view({}), { window: 'both', eta: 'tight' });
+  assert.deepStrictEqual(subs.view({}), { window: 'both', eta: 'tight', highlight: 'numbers' });
 });
 
 test('пороги те же, что у строки статуса и у ворот', () => {
@@ -222,9 +222,11 @@ test('аккаунт без карточки в предпросмотре не 
 });
 
 test('вид чинится, если в настройках лежит чепуха', () => {
-  assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope' }), { window: 'both', eta: 'tight' });
-  assert.deepStrictEqual(subs.view(null), { window: 'both', eta: 'tight' });
-  assert.deepStrictEqual(subs.view({ window: 'both', eta: 'never' }), { window: 'both', eta: 'never' });
+  assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope', highlight: 'nope' }),
+    { window: 'both', eta: 'tight', highlight: 'numbers' });
+  assert.deepStrictEqual(subs.view(null), { window: 'both', eta: 'tight', highlight: 'numbers' });
+  assert.deepStrictEqual(subs.view({ window: 'both', eta: 'never', highlight: 'fill' }),
+    { window: 'both', eta: 'never', highlight: 'fill' });
 });
 
 for (const [name, fn] of tests) {

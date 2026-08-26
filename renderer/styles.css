@@ -489,6 +489,10 @@ body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
   flex: none; width: 8px; height: 8px; color: var(--night);
 }
 .tab .dot-moon svg { width: 11px; height: 11px; }
+/* «Точка» выключена (Вкладки → Что показывать → Статус → заливка) — луна тоже отметка статуса
+   слева от подписи, и без точки ей стоять не на чем: ночь тогда видна по цвету всей карточки. */
+body.tab-no-dot .tab.is-auto:not(#set-tab-preview *) .dot-moon,
+#set-tab-preview.tab-no-dot .tab.is-auto .dot-moon { display: none; }
 /* Полоска контекста и бейдж сабагентов на ночной карточке тоже фиолетовые: ширина полоски и
    число агентов остаются, а вот их цвета — из палитры статусов, которой здесь не место. */
 .tab.is-auto .ctx.ctx-lo .ctx-fill,
