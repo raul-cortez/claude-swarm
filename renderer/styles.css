@@ -1524,6 +1524,10 @@ body.night-all .night-pill {
 }
 .night-pill.is-quiet:hover { color: var(--night); border-color: var(--night); background: color-mix(in srgb, var(--night) 14%, transparent); }
 
+/* Список у луны шире общего: его пункты называют режим по имени («включить ночной режим у
+   всех вкладок»), и в 340px такая строка ломается пополам ровно посередине названия. */
+#night-menu { min-width: 22rem; max-width: 24rem; }
+
 /* Пункт списка: иконка, название, пояснение под ними. */
 .presence-item { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center; }
 .presence-item .ic { display: inline-flex; color: var(--muted); }
