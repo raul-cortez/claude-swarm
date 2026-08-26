@@ -3783,6 +3783,7 @@ function attachTermRename(labelEl, id) {
   labelEl.title = 'Двойной клик — переименовать';
   labelEl.addEventListener('dblclick', (e) => {
     e.stopPropagation();
+    renaming = true; // same shared flag attachRename uses — activateTermTab respects it below
     labelEl.contentEditable = 'plaintext-only';
     labelEl.spellcheck = false;
     labelEl.focus();
@@ -3797,6 +3798,7 @@ function attachTermRename(labelEl, id) {
     e.stopPropagation(); // не давать сработать ⌘T и другим шорткатам поверх правки
   });
   labelEl.addEventListener('blur', () => {
+    renaming = false;
     labelEl.contentEditable = 'false';
     const text = labelEl.textContent.replace(/\s+/g, ' ').trim();
     labelEl.textContent = text || 'терминал';
@@ -3833,7 +3835,7 @@ function activateTermTab(id) {
   termTabsEl.querySelectorAll('.tp-tab').forEach((el) => el.classList.toggle('active', el.dataset.id === id));
   for (const t of termPanel.sessions.values()) t.holder.classList.toggle('active', t.id === id);
   s.fit.fit();
-  s.term.focus();
+  if (!renaming) s.term.focus(); // don't yank focus off a tab label mid-rename (see activate())
 }
 
 async function createTermTab(opts = {}) {
@@ -3841,6 +3843,10 @@ async function createTermTab(opts = {}) {
   // никому не нужна: смысл открытия панели и есть «дайте мне терминал».
   if (!termPanel.open) { termPanel.open = true; applyTermSize(loadTermSize()); renderTermChrome(); }
   const cwd = opts.cwd || termCwdForNewTab();
+  // Computed BEFORE the createSession await, from the size at call time — not after, where a
+  // second createTermTab() fired before the first's IPC round-trip landed would (in theory)
+  // read the same pre-.set() size and hand out the same default name twice.
+  const name = opts.name || `терминал ${termPanel.sessions.size + 1}`;
   const { term, fit } = makeXterm();
   const holder = document.createElement('div');
   holder.className = 'term-holder';
@@ -3869,7 +3875,6 @@ async function createTermTab(opts = {}) {
   });
   term.onResize(({ cols, rows }) => window.swarm.resize(id, cols, rows));
 
-  const name = opts.name || `терминал ${termPanel.sessions.size + 1}`;
   termPanel.sessions.set(id, { term, fit, holder, id, cwd: resolvedCwd, name });
   renderTermTabs();
   activateTermTab(id);
