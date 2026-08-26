@@ -2561,7 +2561,7 @@ function showSettingsModal(tab) {
     if (!subsPreviewEl) return;
     const view = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
     const rows = SUBS_API.pills({
-      cards: draftCards(), accounts: subsAccounts, mute: subsMute, view, now: Date.now(),
+      cards: draftCards(), accounts: subsAccounts, view, now: Date.now(),
     });
     subsPreviewEl.innerHTML = '';
     if (!rows.length) {
@@ -4860,25 +4860,18 @@ window.swarm.telegram.state().then(renderPresencePill).catch(() => {});
 const usagePills = document.getElementById('usage-pills');
 const subsMenu = document.getElementById('subs-menu');
 let subsAccounts = [];              // живой расход по аккаунтам, из главного процесса
-let subsMute = loadSubsMute();      // аккаунты БЕЗ карточки, которые человек убрал из панели
 let subsView = SUBS_API.view(loadJson('swarm.subsView'));
 
 function loadJson(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
 }
 
-function loadSubsMute() {
-  const raw = loadJson('swarm.subsMute');
-  return Array.isArray(raw) ? raw.map(String) : [];
-}
-
-function saveSubsMute() { localStorage.setItem('swarm.subsMute', JSON.stringify(subsMute)); }
 function saveSubsView() { localStorage.setItem('swarm.subsView', JSON.stringify(subsView)); }
 
 // Всё, из чего считаются и пилюли, и список, и предпросмотр в настройках. Одна функция, чтобы
 // три места не разошлись в том, что значит «показывать».
 function subsState() {
-  return { cards: launchList, accounts: subsAccounts, mute: subsMute, view: subsView, now: Date.now() };
+  return { cards: launchList, accounts: subsAccounts, view: subsView, now: Date.now() };
 }
 
 // Подсказка на пилюле: оба окна и точное время сброса. В самой пилюле стоит одно число — то,
@@ -4966,79 +4959,68 @@ function renderUsagePills() {
   if (!subsMenu.classList.contains('hidden')) fillSubsMenu();   // список открыт — обновим числа
 }
 
-// Список по клику: ВСЕ известные подписки с обоими окнами и точным временем сброса, галочками
-// отмечено, что висит в панели. Отмеченных может быть несколько — это набор, а не «одна из».
+// Список по клику: все подписки, оба окна, ТОЧНОЕ время сброса. Только рассказ — ни галочек,
+// ни настроек. Переключатель у подписки один, на её карточке в настройках: два выключателя
+// одного и того же задают человеку вопрос «какой главный», которого он не задавал.
+//
+// В панели стоит отсчёт («через 3д17ч»), здесь — часы («в пятницу, 14:00»): в панели человек
+// косится мимоходом, а сюда приходит планировать, и часы не надо перечитывать.
 function fillSubsMenu() {
   const rows = SUBS_API.menuRows(subsState());
   subsMenu.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'cmd-sep';
-  head.textContent = 'Показывать в панели';
+  head.textContent = 'Когда обновятся лимиты';
   subsMenu.appendChild(head);
-  for (const r of rows) {
-    const b = document.createElement('button');
-    b.className = 'cmd-item u-pick' + (r.on ? ' is-on' : '');
-    b.type = 'button';
-    const box = document.createElement('span');
-    box.className = 'u-box';
-    box.textContent = r.on ? '☑' : '☐';
-    const who = document.createElement('span');
-    who.className = 'u-who';
-    who.textContent = r.label;
-    const nums = document.createElement('span');
-    nums.className = 'u-nums';
-    nums.textContent = r.known
-      ? [r.five && `5ч ${r.five.spent}%`, r.seven && `7д ${r.seven.spent}%`].filter(Boolean).join(' · ')
-      : '';
-    const when = document.createElement('span');
-    when.className = 'u-when';
-    // Почему пусто, если пусто: окна приходят только по подписке и только с первого ответа
-    // модели, так что «ещё не видели» — это состояние, а не поломка.
-    when.textContent = r.known
-      ? 'обновится ' + [r.when.five, r.when.seven].filter(Boolean).join(' и ')
-      : 'остатков пока не видели — появятся после первого ответа агента';
-    b.append(box, who, nums, when);
-    b.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      toggleSubShown(r);
-      fillSubsMenu();
-    });
-    subsMenu.appendChild(b);
-  }
-  const sep = document.createElement('div');
-  sep.className = 'cmd-sep';
-  sep.textContent = 'Подписки';
-  const open = document.createElement('button');
-  open.className = 'cmd-item';
-  open.type = 'button';
-  const name = document.createElement('span');
-  name.className = 'cmd-name';
-  name.textContent = 'Настроить…';
-  const hint = document.createElement('span');
-  hint.className = 'cmd-hint';
-  hint.textContent = 'Имена, строки запуска, вид в панели.';
-  open.append(name, hint);
-  open.addEventListener('click', () => { closeSubsMenu(); showSettingsModal('subs'); });
-  subsMenu.append(sep, open);
-}
-
-// Галка «показывать в панели». У подписки с карточкой это её собственное поле (оно же стоит в
-// настройках), у аккаунта без карточки — список заглушённых: карточки, чтобы хранить в ней
-// галку, у него нет, а спрятать чужой `claude`, набранный руками, человек вправе.
-function toggleSubShown(row) {
-  if (row.line) {
-    const i = launchList.findIndex((a) => SUBS_API.line(a) === row.line);
-    if (i === -1) return;
-    launchList[i] = cardOf(Object.assign({}, launchList[i], { bar: !(launchList[i].bar !== false) }));
-    saveLaunchList();
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'cmd-empty';
+    empty.textContent = 'Подписок пока нет.';
+    subsMenu.appendChild(empty);
     return;
   }
-  if (!row.home) return;
-  const i = subsMute.indexOf(row.home);
-  if (i === -1) subsMute.push(row.home);
-  else subsMute.splice(i, 1);
-  saveSubsMute();
-  renderUsagePills();
+  for (const r of rows) {
+    const box = document.createElement('div');
+    box.className = 'u-row';
+    const who = document.createElement('div');
+    who.className = 'u-who';
+    who.textContent = r.label;
+    // Снятая галка иначе читалась бы как пропавшая подписка: в списке она на месте, просто
+    // с пометкой, что её расход в панели не висит.
+    if (!r.inBar) {
+      const off = document.createElement('span');
+      off.className = 'u-off';
+      off.textContent = 'не в панели';
+      who.appendChild(off);
+    }
+    box.appendChild(who);
+    if (!r.known) {
+      const note = document.createElement('div');
+      note.className = 'u-when';
+      // Окна приходят только по подписке и только с первого ответа модели — это состояние,
+      // а не поломка, и сказать о нём надо словами.
+      note.textContent = 'остатков пока не видели — появятся после первого ответа агента';
+      box.appendChild(note);
+    }
+    for (const w of ['five', 'seven']) {
+      const it = r[w];
+      if (!it) continue;
+      const line = document.createElement('div');
+      line.className = 'u-win';
+      const lab = document.createElement('span');
+      lab.className = 'u-lab';
+      lab.textContent = w === 'five' ? '5 часов' : '7 дней';
+      const num = document.createElement('span');
+      num.className = 'u-num ' + (it.level || '');
+      num.textContent = it.spent + '%';
+      const when = document.createElement('span');
+      when.className = 'u-when';
+      when.textContent = r.when[w] ? 'обновится ' + r.when[w] : '';
+      line.append(lab, num, when);
+      box.appendChild(line);
+    }
+    subsMenu.appendChild(box);
+  }
 }
 
 function openSubsMenu(anchor) {

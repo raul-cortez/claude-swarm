@@ -210,13 +210,13 @@ function windowRow(lab, limit, opts) {
 // а сортировка «по расходу» переставляла бы их под курсором ровно в тот момент, когда одна
 // из подписок подходит к концу.
 //
-// Аккаунт без карточки показываем тоже (см. aliasOfHome): это его расход. Спрятать такой
-// можно списком mute — галочка в списке по клику.
+// Аккаунт без карточки показываем тоже (см. aliasOfHome): это его расход, и промолчать о нём
+// хуже, чем назвать папкой. Убрать его из панели можно единственным способом — завести ему
+// карточку и снять галку: другого выключателя у подписки нет, и второго быть не должно.
 function pills(state) {
   const s = state || {};
   const v = view(s.view);
   const list = cards(s.cards);
-  const mute = new Set((Array.isArray(s.mute) ? s.mute : []).map(String));
   const now = Number(s.now) || Date.now();
   const out = [];
   const accounts = (Array.isArray(s.accounts) ? s.accounts : []).filter((a) => a && a.home);
@@ -232,8 +232,7 @@ function pills(state) {
   for (const acc of ordered) {
     const i = matchIndex(list, acc);
     const own = i === -1 ? null : list[i];
-    const shown = own ? own.bar !== false : !mute.has(String(acc.home));
-    if (!shown) continue;
+    if (own && own.bar === false) continue;
     const five = windowRow('5ч', acc.five, { now, eta: v.eta });
     const seven = windowRow('7д', acc.seven, { now, eta: v.eta });
     let items = [];
@@ -261,13 +260,13 @@ function pills(state) {
   return out;
 }
 
-// Строки для списка по клику: ВСЕ известные подписки, оба окна, точное время сброса и
-// состояние галочки. Пилюль может не быть ни одной (числа ещё не пришли), а список обязан
-// объяснить, почему в панели пусто, — иначе клик по пилюле некуда и сделать.
+// Строки для списка по клику: ВСЕ известные подписки, оба окна, точное время сброса. Список
+// только РАССКАЗЫВАЕТ — ни галочек, ни настроек в нём нет. Переключатель у подписки один, на её
+// карточке в настройках; два выключателя одного и того же — это вопрос «какой из них главный»,
+// который человеку задавать незачем.
 function menuRows(state) {
   const s = state || {};
   const list = cards(s.cards);
-  const mute = new Set((Array.isArray(s.mute) ? s.mute : []).map(String));
   const now = Number(s.now) || Date.now();
   const accounts = (Array.isArray(s.accounts) ? s.accounts : []).filter((a) => a && a.home);
   const rows = [];
@@ -280,7 +279,9 @@ function menuRows(state) {
       home: acc ? String(acc.home) : (own ? own.home : ''),
       line: own ? own.line : '',
       label: own ? label(own) : aliasOfHome(acc && acc.home),
-      on: own ? own.bar !== false : !mute.has(String(acc && acc.home)),
+      // Висит ли она сейчас в панели. Не переключатель, а пояснение к тому, что человек видит:
+      // снятая галка на карточке иначе выглядела бы как пропавшая подписка.
+      inBar: own ? own.bar !== false : true,
       // Есть ли что показывать. Нет — это не ошибка: окна приходят только по подписке и
       // только с первого ответа модели.
       known: !!(five || seven),

@@ -1586,14 +1586,25 @@ body.night-all .night-pill {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
-/* Список по клику: набор галочек, а не «одна из» — отмеченных подписок может быть несколько. */
-#subs-menu { min-width: 20rem; max-width: 24rem; }
-.u-pick { display: grid; grid-template-columns: 16px 1fr auto; gap: 2px 8px; align-items: center; }
-.u-pick .u-box { color: var(--muted); font-size: 13px; }
-.u-pick.is-on .u-box { color: var(--accent); }
-.u-pick .u-who { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
-.u-pick .u-nums { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.u-pick .u-when { grid-column: 2 / -1; color: var(--muted); font-size: 11px; opacity: .85; }
+/* Список по клику — РАССКАЗ, а не пульт: ни галочек, ни настроек. Строка на окно: сколько
+   израсходовано и когда обновится, часами (в панели стоит отсчёт, здесь — время на стене). */
+#subs-menu { min-width: 21rem; max-width: 26rem; }
+#subs-menu .u-row { padding: 7px 11px 9px; }
+#subs-menu .u-row + .u-row { border-top: 1px solid var(--border); }
+#subs-menu .u-who {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text); margin-bottom: 4px;
+}
+#subs-menu .u-off { color: var(--muted); font-family: var(--ui); font-size: 10.5px; opacity: .8; }
+#subs-menu .u-win {
+  display: grid; grid-template-columns: 4.5rem 2.6rem 1fr; gap: 8px; align-items: baseline;
+  font-size: 11.5px; color: var(--muted); padding: 1px 0;
+}
+#subs-menu .u-win .u-lab { font-family: var(--mono); font-size: 11px; opacity: .75; }
+#subs-menu .u-win .u-num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+#subs-menu .u-win .u-num.tight { color: var(--permission); }
+#subs-menu .u-win .u-num.crit { color: var(--danger); }
+#subs-menu .u-when { color: var(--muted); font-size: 11.5px; }
 
 /* --- страница «Подписки» -------------------------------------------------------
    Карточка на подписку: строка запуска, имя, галка про панель. Живых чисел здесь нет —

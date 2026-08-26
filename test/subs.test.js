@@ -124,22 +124,23 @@ test('нет чисел — нет пилюли (ноль вместо неиз�
   assert.deepStrictEqual(subs.pills({ cards: [{ line: 'claude' }], accounts: [], now: NOW }), []);
 });
 
-test('снятая галка убирает пилюлю, но подписку из списка не убирает', () => {
+test('снятая галка убирает пилюлю, но из списка подписку не убирает', () => {
+  // Список только рассказывает; исчезни в нём подписка — снятая галка читалась бы как «её нет».
   const cards = [{ line: 'claude', name: 'рабочая', bar: false }];
   const accounts = [acc('/h/.claude', 65, 83, ['claude'])];
   assert.deepStrictEqual(subs.pills({ cards, accounts, now: NOW }), []);
   const rows = subs.menuRows({ cards, accounts, now: NOW });
   assert.strictEqual(rows.length, 1);
-  assert.strictEqual(rows[0].on, false);
+  assert.strictEqual(rows[0].inBar, false, 'сказано, что в панели её нет');
   assert.strictEqual(rows[0].known, true);
 });
 
-test('аккаунт без карточки виден, пока его не заглушили', () => {
+test('аккаунт без карточки виден: это его расход', () => {
   const accounts = [acc('/h/.claude-my', 40, 50, ['claude-my'])];
   const p = subs.pills({ cards: [], accounts, now: NOW });
   assert.strictEqual(p.length, 1);
   assert.strictEqual(p[0].label, 'claude-my');
-  assert.deepStrictEqual(subs.pills({ cards: [], accounts, mute: ['/h/.claude-my'], now: NOW }), []);
+  assert.strictEqual(subs.menuRows({ cards: [], accounts, now: NOW })[0].inBar, true);
 });
 
 test('порядок пилюль — как в карточках, а не по расходу', () => {
