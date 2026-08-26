@@ -24,7 +24,7 @@ function waitCtx(over) {
 
 function readyCtx(over) {
   return Object.assign({
-    auto: true, status: 'ready', bg: false, limited: false,
+    auto: true, status: 'ready', bg: false, limited: false, spoke: true,
     now: NOW, bootAt: OLD, startedAt: OLD, readyAt: NOW - night.IDLE_MS - 1000,
     // Вкладка при нас поработала и замолчала — иначе спрашивать её не о чем.
     workedAt: NOW - night.IDLE_MS - 1000, turn: OLD,
@@ -119,6 +119,15 @@ test('сразу после запуска приложения ночь мол�
 
 test('вкладка простояла две минуты — спрашиваем про порог фазы', () => {
   assert.strictEqual(night.phaseDecision({}, readyCtx()).act, 'ask');
+});
+
+test('пустую вкладку не спрашиваем: её запуск — не ход', () => {
+  // Живой промах: вкладку открыли и отошли. Агент поднялся, экран дал «работает → готов» —
+  // и через две минуты вкладка, которой не давали ни задачи, ни слова, получила вопрос про
+  // порог фазы. Отличает её не время, а факт: в разговоре нет ни одной реплики.
+  const d = night.phaseDecision({}, readyCtx({ spoke: false }));
+  assert.strictEqual(d.act, 'skip');
+  assert.match(d.why, /ничего не сказала/);
 });
 
 test('вкладка сказала «работа кончилась» — не спрашиваем вовсе', () => {
@@ -331,6 +340,39 @@ test('ночное правило в хуке слово в слово совп�
 test('просьба про итог в хуке слово в слово совпадает с night.js', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
   assert.strictEqual(H.summaryNote(), night.summaryNote());
+});
+
+// --- общее положение считается по вкладкам -------------------------------------
+// Два переключателя на одно решение — это не гибкость, а гадание: карточка отмечена, общий
+// режим снят — она ночная или нет? Теперь слой один, и общее положение выводится из вкладок.
+
+test('отданы все вкладки — значит человека нет', () => {
+  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 3, manual: 'desk' }), night.NIGHT);
+  assert.strictEqual(night.presenceFor({ tabs: 1, autos: 1, manual: 'desk' }), night.NIGHT);
+});
+
+test('за телефоном «все отданы» не значит «меня нет»', () => {
+  // С телефона человеку пишет мост, и решить за него, что его нет, — значит замолчать ровно
+  // тогда, когда он ждёт новостей. Уйти совсем можно и оттуда, но это отдельное слово.
+  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 3, manual: 'phone' }), 'phone');
+  // А сказанное вслух «ночной режим» держится: вкладка, открытая ночью, рождается отданной,
+  // и считать её появление возвращением человека нельзя.
+  assert.strictEqual(night.presenceFor({ tabs: 4, autos: 4, manual: 'phone', presence: 'night' }), night.NIGHT);
+});
+
+test('забрали хоть одну — человек вернулся туда, откуда уходил', () => {
+  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 2, manual: 'desk' }), 'desk');
+  // Сказавший «я за телефоном» и забравший вкладку остаётся за телефоном: возвращать его
+  // за компьютер значило бы решить за него, где он находится.
+  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 2, manual: 'phone' }), 'phone');
+  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 0, manual: 'phone' }), 'phone');
+});
+
+test('вкладок нет — решать нечего, положение не трогаем', () => {
+  // Не мелочь: приложение просыпается с пустым списком и восстанавливает вкладки по одной.
+  // Правило «нет отданных — значит человек вернулся» погасило бы ночь в первую же миллисекунду.
+  assert.strictEqual(night.presenceFor({ tabs: 0, autos: 0, manual: 'desk' }), null);
+  assert.strictEqual(night.presenceFor({}), null);
 });
 
 // --- дешёвые команды ----------------------------------------------------------
