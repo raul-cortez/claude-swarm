@@ -789,7 +789,7 @@ function pickAgent() {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal pick-agent">
-        <div class="modal-msg">Какого агента запустить?</div>
+        <div class="modal-msg">Чем открыть вкладку?</div>
         <div class="pick-list"></div>
         <div class="modal-actions"><button class="modal-cancel">Отмена</button></div>
       </div>`;
