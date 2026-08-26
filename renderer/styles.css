@@ -484,7 +484,17 @@ body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
    подписью — словами, которые и так стоят в подвале карточки. Раньше здесь были кромка слева
    и кольцо вокруг точки: их было видно только тому, кто знает, что искать. */
 .tab.is-auto { --tab-c: var(--night); border-color: var(--night); background: color-mix(in srgb, var(--night) 22%, var(--panel-2)); }
-.tab.is-auto .dot { background: var(--night); box-shadow: none; }
+/* Точка статуса на отданной вкладке становится ЛУНОЙ. Раньше на её месте оставалась точка, а
+   луна была кнопкой в капсуле у правого края — и та капсула по ховеру растёт влево (появляются
+   разделитель и крестик): луна уезжала из-под пальца, а на её место приходило «закрыть
+   вкладку». Отметка состояния и кнопка теперь разные вещи и стоят в разных местах. */
+.tab.is-auto .dot { display: none; }
+.tab .dot-moon { display: none; }
+.tab.is-auto .dot-moon {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 8px; height: 8px; color: var(--night);
+}
+.tab .dot-moon svg { width: 11px; height: 11px; }
 /* Полоска контекста и бейдж сабагентов на ночной карточке тоже фиолетовые: ширина полоски и
    число агентов остаются, а вот их цвета — из палитры статусов, которой здесь не место. */
 .tab.is-auto .ctx.ctx-lo .ctx-fill,
@@ -510,7 +520,7 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
    ждут, работа сдана. Мандат при этом НЕ снят — полумесяц на месте, печать в вкладку
    по-прежнему не уходит, — поэтому кромка зелёная, а капсула с луной остаётся ночной. */
 .tab.is-auto.is-done { --tab-c: var(--ready); border-color: var(--ready); background: color-mix(in srgb, var(--ready) 16%, var(--panel-2)); }
-.tab.is-auto.is-done .dot { background: var(--ready); box-shadow: none; }
+.tab.is-auto.is-done .dot-moon { color: var(--ready); }
 .tab.is-auto.is-done .ctx.ctx-lo .ctx-fill,
 .tab.is-auto.is-done .ctx.ctx-mid .ctx-fill,
 .tab.is-auto.is-done .ctx.ctx-hi .ctx-fill { background: color-mix(in srgb, var(--ready) 75%, var(--text)); }
@@ -523,15 +533,12 @@ body.tab-no-fill .tab.is-auto.is-done:not(#set-tab-preview *),
   border-color: var(--ready);
 }
 
-/* Ночная карточка держит капсулу ВСЕГДА: луна на ней не кнопка под курсором, а состояние —
-   по ней и видно, что вкладка отдана. Крестик в этом случае прячется до наведения: тянувшийся
-   к луне не должен находить под пальцем «закрыть вкладку вместе с процессом».
-   Правый клик по карточке делает то же самое, но жест невидимый: под ним нет ничего, что
-   подсказало бы, что мандат вообще существует. */
-.tab.is-auto .tools { opacity: 1; border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
+/* Капсула на ночной карточке ведёт себя как на любой другой: появляется по ховеру целиком, обе
+   кнопки сразу и на своих обычных местах. Держать её видимой всегда (как было) значило звать
+   палец к луне, которая через миг уедет: капсула прижата к правому краю и по ховеру растёт
+   влево. Состояние теперь говорит луна вместо точки статуса — см. выше. */
+.tab.is-auto .tools { border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
 .tab.is-auto .moon { color: var(--night); }
-.tab.is-auto:not(:hover) .t-sep,
-.tab.is-auto:not(:hover) .close { display: none; }
 
 /* drag & drop — the moved item becomes a faint dashed slot; others reflow around it */
 .tab.dragging {
@@ -1505,24 +1512,31 @@ body.night-all .night-pill {
 
 /* Значок мандата: сколько вкладок работает без человека и не забыт ли включённый ночной режим.
    Вид как у значка обновления (тот же размер и место), цвет — ночной. */
+/* Луна — ЗНАЧОК, а не плашка с подписью. Подпись («3 вкладки в ночном») висела в панели
+   постоянно и была размером с кнопку: отвечала на вопрос, который человек задаёт раз в час, и
+   занимала место всё остальное время. Число теперь в подсказке и в пунктах списка. */
 .night-pill {
   -webkit-app-region: no-drag;
-  display: inline-flex; align-items: center;
-  border: 1px solid var(--night); color: var(--night);
-  background: color-mix(in srgb, var(--night) 14%, transparent);
-  border-radius: 6px; padding: 2px 8px; margin-right: 4px;
-  font-size: 11px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; color: var(--muted);
+  background: transparent;
+  border-radius: 6px; padding: 3px; margin-right: 2px;
+  cursor: pointer;
 }
 .night-pill[hidden] { display: none; }
-.night-pill:hover { background: color-mix(in srgb, var(--night) 26%, transparent); }
 .night-pill .ic { display: inline-flex; }
-.night-pill .ic svg { width: 13px; height: 13px; }
-.night-pill .tx { margin-left: 5px; }
-/* Ничего не отдано — луна стоит на месте, но не кричит: это дверь, а не новость. */
-.night-pill.is-quiet {
-  border-color: var(--border); color: var(--muted); background: transparent;
+.night-pill .ic svg { width: 14px; height: 14px; }
+.night-pill:hover { color: var(--night); background: color-mix(in srgb, var(--night) 14%, transparent); }
+/* Отдана хоть одна — луна горит ночным. Отданы все — ещё и подложка: панель в этот момент и
+   так синяя, но значок остаётся понятным, если смотреть на угол. */
+.night-pill:not(.is-quiet) { color: var(--night); }
+.night-pill.is-all {
+  border-color: color-mix(in srgb, var(--night) 55%, var(--border));
+  background: color-mix(in srgb, var(--night) 22%, transparent);
 }
-.night-pill.is-quiet:hover { color: var(--night); border-color: var(--night); background: color-mix(in srgb, var(--night) 14%, transparent); }
+/* Печатают, а ночь не снята — самый вероятный промах. Значок в этот момент обведён ярко:
+   панель крашеная, но за клавиатурой человек смотрит в терминал, а не на её край. */
+.night-pill.is-nag { border-color: var(--night); background: color-mix(in srgb, var(--night) 34%, transparent); }
 
 /* Список у луны шире общего: его пункты называют режим по имени («включить ночной режим у
    всех вкладок»), и в 340px такая строка ломается пополам ровно посередине названия. */
