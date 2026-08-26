@@ -67,7 +67,8 @@ test('папка конфига запоминается в карточке о�
     'второй раз список не пересобирается — рендерер по этому решает, сохранять ли');
 });
 
-test('пилюля показывает то окно, что ближе к концу по расходу', () => {
+test('по умолчанию в панели ОБА окна', () => {
+  // Человек смотрит в панель, чтобы знать свой запас целиком, а не худшую из двух цифр.
   const p = subs.pills({
     cards: [{ line: 'claude', name: 'рабочая' }],
     accounts: [acc('/h/.claude', 65, 83, ['claude'])],
@@ -75,7 +76,19 @@ test('пилюля показывает то окно, что ближе к ко
   });
   assert.strictEqual(p.length, 1);
   assert.strictEqual(p[0].label, 'рабочая');
+  assert.deepStrictEqual(p[0].items.map((i) => [i.lab, i.spent]), [['5ч', 65], ['7д', 83]]);
+});
+
+test('«то, что ближе к концу» оставляет одно число — по расходу, а не по длине окна', () => {
+  const p = subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],
+    view: { window: 'worst' }, now: NOW,
+  });
   assert.deepStrictEqual(p[0].items.map((i) => [i.lab, i.spent]), [['7д', 83]]);
+});
+
+test('вид чинится к обоим окнам, а не к прежнему одному числу', () => {
+  assert.deepStrictEqual(subs.view({}), { window: 'both', eta: 'tight' });
 });
 
 test('пороги те же, что у строки статуса и у ворот', () => {
@@ -86,28 +99,17 @@ test('пороги те же, что у строки статуса и у вор
 });
 
 test('время сброса появляется только у поджавшего окна', () => {
-  const one = subs.pills({ cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 30, ['claude'])], now: NOW });
-  assert.strictEqual(one[0].items[0].eta, '', 'спокойное окно отсчёта не просит');
-  const tight = subs.pills({ cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 88, ['claude'])], now: NOW });
-  assert.strictEqual(tight[0].items[0].eta, '3д');
-  const always = subs.pills({
-    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 30, ['claude'])],
-    view: { eta: 'always' }, now: NOW,
-  });
-  assert.strictEqual(always[0].items[0].eta, '3д', 'ближе к концу здесь недельное окно — его и отсчитываем');
-  const never = subs.pills({
-    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 95, ['claude'])],
-    view: { eta: 'never' }, now: NOW,
-  });
-  assert.strictEqual(never[0].items[0].eta, '');
+  const eta = (five, seven, view) => subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', five, seven, ['claude'])],
+    view, now: NOW,
+  })[0].items.map((i) => i.eta);
+  assert.deepStrictEqual(eta(20, 30), ['', ''], 'спокойные окна отсчёта не просят');
+  assert.deepStrictEqual(eta(20, 88), ['', '3д'], 'отсчёт только у того, что поджало');
+  assert.deepStrictEqual(eta(20, 30, { eta: 'always' }), ['1ч', '3д']);
+  assert.deepStrictEqual(eta(20, 95, { eta: 'never' }), ['', '']);
 });
 
-test('«оба окна» показывает два числа, «только 5ч» — одно', () => {
-  const both = subs.pills({
-    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],
-    view: { window: 'both' }, now: NOW,
-  });
-  assert.deepStrictEqual(both[0].items.map((i) => i.lab), ['5ч', '7д']);
+test('«только 5ч» оставляет одно окно, даже когда недельное хуже', () => {
   const five = subs.pills({
     cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],
     view: { window: 'five' }, now: NOW,
@@ -191,8 +193,8 @@ test('отсчёт до сброса говорит то же, что строк
 });
 
 test('вид чинится, если в настройках лежит чепуха', () => {
-  assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope' }), { window: 'worst', eta: 'tight' });
-  assert.deepStrictEqual(subs.view(null), { window: 'worst', eta: 'tight' });
+  assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope' }), { window: 'both', eta: 'tight' });
+  assert.deepStrictEqual(subs.view(null), { window: 'both', eta: 'tight' });
   assert.deepStrictEqual(subs.view({ window: 'both', eta: 'never' }), { window: 'both', eta: 'never' });
 });
 

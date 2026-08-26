@@ -2534,8 +2534,8 @@ function showSettingsModal(tab) {
   const windowSel = overlay.querySelector('#set-subs-window');
   const etaSel = overlay.querySelector('#set-subs-eta');
   const WINDOW_NAMES = [
-    ['worst', 'то, что ближе к концу'],
     ['both', 'оба окна'],
+    ['worst', 'то, что ближе к концу'],
     ['five', 'только пятичасовое'],
     ['seven', 'только недельное'],
   ];
