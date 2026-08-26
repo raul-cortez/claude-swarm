@@ -246,6 +246,7 @@ const termPanelBtn    = document.getElementById('term-panel-btn');
 const termAddBtn      = document.getElementById('term-add-btn');
 const termPosBtn      = document.getElementById('term-pos-btn');
 const termDockBtn     = document.getElementById('term-dock-btn');
+const termCollapseBtn = document.getElementById('term-collapse-btn');
 
 let gitInfo = null;      // last git:info for the ACTIVE folder (null until first fetch)
 let gitMsgTimer = null;  // auto-clear timer for the transient error plaque
@@ -314,12 +315,13 @@ const ICONS = {
   // «panel-bottom» / «panel-right» — текущая стыковка панели терминала.
   dockBottom: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/>'),
   dockSide: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>'),
-  // «more-horizontal» / «more-vertical» — расположение вкладок панели. Нарочно ДРУГОЙ
-  // рисунок, не «прямоугольник с линией», как у стыковки: та пара на глаз почти не
-  // отличалась друг от друга (только сдвигом линии на несколько пикселей) — три точки
-  // в ряд / столбиком читаются однозначно и не путаются с иконками стыковки.
-  tabsTop: SVG('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
-  tabsLeft: SVG('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>'),
+  // Расположение вкладок панели: «columns-3» / «rows-3» — три бок о бок читаются как ряд
+  // (вкладки сверху), три друг под другом — как столбик (вкладки слева). Не «прямоугольник
+  // с линией», как у стыковки: та пара на глаз почти не отличалась друг от друга (только
+  // сдвигом линии на несколько пикселей). И не три точки в ряд/столбик: они читались как
+  // скрытое меню («ещё» / kebab), а это переключатель, а не меню.
+  tabsTop: SVG('<rect width="4" height="18" x="3" y="3" rx="1"/><rect width="4" height="18" x="10" y="3" rx="1"/><rect width="4" height="18" x="17" y="3" rx="1"/>'),
+  tabsLeft: SVG('<rect width="18" height="4" x="3" y="3" rx="1"/><rect width="18" height="4" x="3" y="10" rx="1"/><rect width="18" height="4" x="3" y="17" rx="1"/>'),
 };
 
 // Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
@@ -4116,6 +4118,11 @@ termAddBtn.innerHTML = ICONS.plus;
 termAddBtn.addEventListener('click', () => createTermTab());
 termPosBtn.addEventListener('click', () => setTermTabsPos(termPanel.tabsPos === 'top' ? 'left' : 'top'));
 termDockBtn.addEventListener('click', () => setTermDock(termPanel.dock === 'bottom' ? 'side' : 'bottom'));
+// Тот же closeTermPanel(), что и у #term-panel-btn/⌘J снаружи — просто дотянуться до неё,
+// не выходя из самой панели. Крестик, а не «свернуть»-шеврон: закрывает панель, но не убивает
+// шеллы внутри (см. комментарий над closeTermPanel).
+termCollapseBtn.innerHTML = ICONS.close;
+termCollapseBtn.addEventListener('click', () => closeTermPanel());
 termPanelBtn.querySelector('.ic').innerHTML = ICONS.terminal;
 termPanelBtn.addEventListener('click', toggleTermPanel);
 termPanelBtn.hidden = !termPanelEnabled;      // Вид → Нижняя панель → Терминал
