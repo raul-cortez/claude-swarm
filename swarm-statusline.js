@@ -9,11 +9,17 @@
 // installed Node. Output is plain text with ANSI colour; the app reads it with the
 // colour stripped, so state is marked by GLYPHS, never by colour alone.
 //
-// Format: <model> │ <dir> ███░░░░░░░ 45% 1M │ 5ч 37% · 7д 62% │ 🔧 #162 task
-//                                             ^^^^^^^^^^^^^^^ subscription spent,
-//                                             same direction as the site's account page.
+// Format: <model> │ <dir> ███░░░░░░░ 45% 1M │ 🔧 #162 task
 //                                    ^^^^^ this % is what the app parses — it takes
 // the FIRST one in the line, so nothing carrying a % may go before the context bar.
+//
+// Расхода подписки в строке БОЛЬШЕ НЕТ, и это не потеря. Окна лимитов не про вкладку, а про
+// аккаунт: одни и те же числа честно повторялись в терминале столько раз, сколько открыто
+// вкладок этого конфига, и были видны только у той, что на экране. Теперь они в нижней панели
+// приложения — одной для всех (renderUsagePills в renderer.js, пороги в subs.js), а агент
+// получает их текстом в начало каждого хода, вместе с ИМЕНЕМ своей подписки (usageNote в
+// hooks/swarm-signal.mjs). Снимок расхода этот скрипт по-прежнему пишет — он и есть источник
+// для всех троих (см. writeUsage ниже).
 
 const fs = require('fs');
 const path = require('path');
@@ -95,7 +101,7 @@ function foreignCommandFrom(layers) {
 // полоску только тогда, когда наш процент в строке есть, — а до первого ответа модели окна
 // контекста ещё нет, и мы печатаем один «Opus 5 │ repo». Первым процентом в строке тогда
 // станет чужой (у кого-то там расход диска, у кого-то покрытие тестами), и вкладка нарисует
-// его как контекст. Ровно этот же порядок уже охраняет цифры лимитов ниже по файлу.
+// его как контекст.
 const NO_ANSI = /\x1b\[[0-9;]*m/g;
 function composeLine(ours, foreign) {
   const f = String(foreign || '').replace(/[\r\n]+.*$/s, '').trim();
@@ -172,11 +178,11 @@ function renderPin(pin) {
 // never have to be mentally inverted against each other — and round UP, because a
 // spend figure must not report less than has actually gone.
 //
-// The reset countdown appears only once the window is nearly spent: that's when
-// «how long until it refills» becomes the actionable number, and before that it
-// would just eat width. Nearly-spent is marked by a GLYPH (⚠), never by colour
-// alone — the app reads this line with ANSI stripped.
-const LIMIT_TIGHT = 75;  // % spent at which the reset countdown starts showing
+// Пороги остались ради ответа /usage в чате (usageReport ниже): «⚠» у окна, которое почти
+// кончилось. Те же числа стоят в subs.js (панель) и в hooks/swarm-signal.mjs (ворота на
+// подагентов) — разойдись они, и панель говорила бы «всё в порядке» там, где хук уже
+// запрещает агенту подагентов.
+const LIMIT_TIGHT = 75;
 const LIMIT_CRIT = 90;   // % spent at which the line says «about to run out»
 
 function usedPct(limit) {
@@ -195,29 +201,6 @@ function fmtEta(seconds) {
   if (d > 0) return h > 0 ? `${d}д${h}ч` : `${d}д`;
   if (h > 0) return m > 0 ? `${h}ч${m}м` : `${h}ч`;
   return `${m}м`;
-}
-
-function renderLimit(label, limit, nowSec) {
-  const spent = usedPct(limit);
-  if (spent == null) return null;
-  const resetsAt = limit && typeof limit.resets_at === 'number' ? limit.resets_at : null;
-  const eta = spent >= LIMIT_TIGHT && resetsAt != null && resetsAt > nowSec
-    ? ` ↻${fmtEta(resetsAt - nowSec)}` : '';
-  const text = `${label} ${spent}%${eta}`;
-  if (spent >= LIMIT_CRIT) return `\x1b[31m⚠ ${text}\x1b[0m`;
-  if (spent >= LIMIT_TIGHT) return `\x1b[33m${text}\x1b[0m`;
-  return `\x1b[2m${text}\x1b[0m`;
-}
-
-function renderLimits(rateLimits, nowSec) {
-  if (!rateLimits || typeof rateLimits !== 'object') return '';
-  const parts = [
-    renderLimit('5ч', rateLimits.five_hour, nowSec),
-    renderLimit('7д', rateLimits.seven_day, nowSec),
-  ].filter(Boolean);
-  if (!parts.length) return '';
-
-  return ` \x1b[2m│\x1b[0m ${parts.join(' \x1b[2m·\x1b[0m ')}`;
 }
 
 // How full the context is, as a number. Claude auto-compacts before the window is
@@ -356,13 +339,7 @@ function renderLine(data, nowSec) {
     else ctx = ` \x1b[5;31m💀 ${bar} ${used}%\x1b[0m \x1b[2m${win}\x1b[0m`;
   }
 
-  // Limits only alongside the context bar, and always after it: the app takes the
-  // FIRST % in the line as the context fill, so a limit % reaching it first would
-  // paint the wrong number on the tab. Both come from the same first API response,
-  // so in practice they appear together anyway — this just makes that load-bearing.
-  const limits = ctx ? renderLimits(data.rate_limits, nowSec) : '';
-
-  return `\x1b[2m${model}\x1b[0m │ \x1b[2m${dir}\x1b[0m${ctx}${limits}${pin}`;
+  return `\x1b[2m${model}\x1b[0m │ \x1b[2m${dir}\x1b[0m${ctx}${pin}`;
 }
 
 // Drop the snapshot next to this script, one file per session (see usageSnapshot).
@@ -406,6 +383,6 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  renderLine, renderLimits, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR,
+  renderLine, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
 };

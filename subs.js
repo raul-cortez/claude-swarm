@@ -1,0 +1,319 @@
+'use strict';
+// subs.js — ПОДПИСКИ: чем открываются вкладки и что из их расхода видно в нижней панели.
+// План: docs/superpowers/plans/2026-08-26-subscriptions-page-and-bar.md
+//
+// Подписка здесь — карточка: строка запуска, имя и галка «показывать остатки в панели».
+// Список карточек И ЕСТЬ список запуска: раньше он жил на странице «Запуск» безымянными
+// строчками команд, и человек, у которого два аккаунта Клода, видел в меню «+» два почти
+// одинаковых `claude` и `claude-my` без подсказки, какой из них личный.
+//
+// Главное решение модуля: МЫ НЕ РЕШАЕМ ПО ИМЕНИ, подписка это или нет. Догадка по стему
+// («claude», «cld», всё на «claude-») врёт ровно в интересных случаях: `claude-glm` и `cld` —
+// обёртки к чужим моделям, имя клодовое, а окон лимитов Anthropic у них нет; и наоборот,
+// алиас личного аккаунта человек может назвать как угодно. Настоящий признак приходит от
+// самого Клода: rate_limits есть только на подписке и только с первого ответа модели. Поэтому
+// галка живая у любой карточки, а пилюля появляется, когда пришли ЧИСЛА.
+//
+// Оттуда же карточка узнаёт свою папку конфига: вкладка отработала → в снимке расхода написан
+// её home → сопоставление «эта строка запуска живёт в этом конфиге» запомнено (learnHome).
+// Читать алиасы шелла для этого не нужно, а прочитать их и нечем.
+//
+// Только чистые функции: ни DOM, ни файлов, ни Electron. Снимки расхода читает main.js,
+// рисует пилюли renderer.js, а решения — «какую карточку показать, каким числом и с каким
+// временем сброса» — здесь, потому что их три читателя (панель, список по клику, предпросмотр
+// в настройках) и разойтись им нельзя.
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.SWARM_SUBS = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+
+// --- пороги -------------------------------------------------------------------
+// Те же числа, что у строки статуса (swarm-statusline.js) и у ворот на подагентов
+// (hooks/swarm-signal.mjs). Разойдись они — и панель говорила бы «всё в порядке» в тот
+// момент, когда хук уже запрещает агенту подагентов.
+const TIGHT = 75;   // % израсходовано: пилюля янтарная, время сброса становится нужным
+const CRIT = 90;    // % израсходовано: пилюля красная
+
+// Какое окно показывать в панели и когда показывать время сброса. Умолчания — самые тихие
+// из осмысленных: одно число вместо двух и отсчёт только тогда, когда он о чём-то говорит.
+const WINDOWS = ['worst', 'both', 'five', 'seven'];
+const ETAS = ['tight', 'always', 'never'];
+const VIEW = { window: 'worst', eta: 'tight' };
+
+function view(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  return {
+    window: WINDOWS.includes(v.window) ? v.window : VIEW.window,
+    eta: ETAS.includes(v.eta) ? v.eta : VIEW.eta,
+  };
+}
+
+// --- карточки -----------------------------------------------------------------
+// Строка запуска целиком, как её набрал человек: `claude-my --model sonnet`. Флаги отдельным
+// полем не держим намеренно — это была одна строка на странице «Запуск», человек правит её
+// как строку, и разбор на «команду и флаги» нужен только запуску (см. parseAgentLine там).
+function line(card) {
+  return String((card && card.line) || '').trim();
+}
+
+// Первое слово строки запуска. Оно же — ярлык по умолчанию: `claude-my` понятнее пустоты.
+function stemOf(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  return t.split(/\s+/)[0].replace(/^.*[/\\]/, '');
+}
+
+// Как звать эту подписку в интерфейсе: имя, если человек его дал, иначе строка запуска.
+// Пустое имя — норма, а не недозаполненность: у человека с одним аккаунтом называть нечего.
+function label(card) {
+  const name = String((card && card.name) || '').trim();
+  return name || line(card) || stemOf(line(card));
+}
+
+// Имя аккаунта, у которого карточки нет вовсе: человек набрал `claude` руками в чистом
+// терминале. Берём из папки конфига — `~/.claude-my` → `claude-my`. Такой расход всё равно
+// его расход, и молчать о нём хуже, чем назвать папкой.
+function aliasOfHome(home) {
+  const base = String(home || '').replace(/[/\\]+$/, '').replace(/^.*[/\\]/, '');
+  return base.replace(/^\./, '') || 'claude';
+}
+
+// Одна карточка из чего угодно: и из нового вида, и из прежнего списка запуска
+// ({ cmd, flags }) — тот лежит у каждого, кто уже пользуется приложением, и потерять его
+// значит открыть человеку вкладки не тем агентом.
+function card(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const text = r.line != null
+    ? String(r.line)
+    : [String(r.cmd || '').trim(), String(r.flags || '').trim()].filter(Boolean).join(' ');
+  return {
+    line: String(text || '').trim(),
+    name: String(r.name || '').trim(),
+    // Показывать остатки — по умолчанию ДА: человек, у которого подписка одна, не должен
+    // включать её расход руками, чтобы увидеть то, о чём и просил.
+    bar: r.bar === undefined ? true : !!r.bar,
+    // Выученная папка конфига. Пусто — ещё не видели ни одного хода этой строки.
+    home: String(r.home || '').trim(),
+  };
+}
+
+function cards(raw) {
+  const list = Array.isArray(raw) ? raw.map(card).filter((c) => c.line) : [];
+  return list;
+}
+
+// --- сопоставление карточка ↔ аккаунт -----------------------------------------
+// Аккаунт приходит из снимков расхода: { home, five, seven, at, lines } — где lines это
+// строки запуска вкладок, которые в этом конфиге работали. Ищем карточку сначала по
+// ЗАПОМНЕННОМУ home (точно), потом по строке запуска (так и запоминаем в первый раз).
+//
+// Сравниваем по стему, а не по всей строке: у одной подписки бывает несколько карточек
+// (`claude` и `claude --model opus`), и обе живут в одном конфиге.
+function matchIndex(list, account) {
+  const cs = Array.isArray(list) ? list : [];
+  const home = String((account && account.home) || '').trim();
+  if (home) {
+    const byHome = cs.findIndex((c) => c.home && c.home === home);
+    if (byHome !== -1) return byHome;
+  }
+  const stems = new Set((((account && account.lines) || [])).map((l) => stemOf(l)).filter(Boolean));
+  if (!stems.size) return -1;
+  return cs.findIndex((c) => stems.has(stemOf(c.line)));
+}
+
+// Запомнить папку конфига в карточке, узнав её из снимка. Возвращает НОВЫЙ список, если
+// что-то изменилось, и тот же — если нет: рендерер по этому и решает, сохранять ли.
+function learnHome(list, accounts) {
+  const cs = Array.isArray(list) ? list.slice() : [];
+  let changed = false;
+  for (const acc of Array.isArray(accounts) ? accounts : []) {
+    const home = String((acc && acc.home) || '').trim();
+    if (!home) continue;
+    const i = matchIndex(cs, acc);
+    if (i === -1 || cs[i].home === home) continue;
+    cs[i] = Object.assign({}, cs[i], { home });
+    changed = true;
+  }
+  return changed ? cs : list;
+}
+
+// --- что показывать в панели --------------------------------------------------
+function levelOf(spent) {
+  const n = Number(spent);
+  if (!isFinite(n)) return '';
+  if (n >= CRIT) return 'crit';
+  if (n >= TIGHT) return 'tight';
+  return '';
+}
+
+// «2ч14м» / «18м» / «3д4ч» — грубо намеренно: это отсчёт до сброса через часы или дни, и
+// секунды в нём были бы шумом. Двойник этой функции живёт в swarm-statusline.js (fmtEta) и
+// обязан говорить то же самое — статуслайн копируется в userData отдельным файлом и требовать
+// оттуда наш модуль нечем. За совпадением следит test/subs.test.js.
+function fmtEta(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return h > 0 ? `${d}д${h}ч` : `${d}д`;
+  if (h > 0) return m > 0 ? `${h}ч${m}м` : `${h}ч`;
+  return `${m}м`;
+}
+
+// Точное время сброса словами — для списка по клику. Там человек ищет «когда можно будет
+// работать», и часы на стене отвечают на это лучше отсчёта: отсчёт надо перечитывать.
+const DAYS = ['в воскресенье', 'в понедельник', 'во вторник', 'в среду', 'в четверг', 'в пятницу', 'в субботу'];
+
+function fmtWhen(atMs, nowMs) {
+  const at = Number(atMs);
+  if (!isFinite(at) || at <= 0) return '';
+  const d = new Date(at);
+  const clock = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const now = new Date(Number(nowMs) || Date.now());
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+    && d.getDate() === now.getDate();
+  if (sameDay) return `в ${clock}`;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const isTomorrow = d.getFullYear() === tomorrow.getFullYear() && d.getMonth() === tomorrow.getMonth()
+    && d.getDate() === tomorrow.getDate();
+  if (isTomorrow) return `завтра в ${clock}`;
+  return `${DAYS[d.getDay()]}, ${clock}`;
+}
+
+// Одно окно к показу: { lab, spent, level, eta }. Пусто — окна нет в снимке (Клод присылает
+// их только по подписке), и тогда показывать нечего: ноль вместо неизвестного — вранье.
+function windowRow(lab, limit, opts) {
+  const spent = limit && isFinite(Number(limit.spent)) ? Math.max(0, Math.min(100, Math.round(Number(limit.spent)))) : null;
+  if (spent == null) return null;
+  const level = levelOf(spent);
+  const nowSec = Math.floor((Number(opts && opts.now) || Date.now()) / 1000);
+  const resets = limit && isFinite(Number(limit.resetsAt)) ? Number(limit.resetsAt) : 0;
+  const left = resets > nowSec ? resets - nowSec : 0;
+  const mode = (opts && opts.eta) || VIEW.eta;
+  const wantEta = mode === 'always' || (mode === 'tight' && spent >= TIGHT);
+  return {
+    lab,
+    spent,
+    level,
+    eta: wantEta && left ? fmtEta(left) : '',
+    resetsAt: resets ? resets * 1000 : 0,
+  };
+}
+
+// Пилюли для панели, по одной на подписку. Порядок — как в карточках: человек сам его выбрал,
+// а сортировка «по расходу» переставляла бы их под курсором ровно в тот момент, когда одна
+// из подписок подходит к концу.
+//
+// Аккаунт без карточки показываем тоже (см. aliasOfHome): это его расход. Спрятать такой
+// можно списком mute — галочка в списке по клику.
+function pills(state) {
+  const s = state || {};
+  const v = view(s.view);
+  const list = cards(s.cards);
+  const mute = new Set((Array.isArray(s.mute) ? s.mute : []).map(String));
+  const now = Number(s.now) || Date.now();
+  const out = [];
+  const accounts = (Array.isArray(s.accounts) ? s.accounts : []).filter((a) => a && a.home);
+  // Сначала аккаунты в порядке карточек, потом безкарточные — иначе чужой `claude`, набранный
+  // руками, влезал бы в середину и переставлял привычные пилюли.
+  const ordered = [];
+  for (const c of list) {
+    const acc = accounts.find((a) => matchIndex([c], a) === 0);
+    if (acc && !ordered.includes(acc)) ordered.push(acc);
+  }
+  for (const a of accounts) if (!ordered.includes(a)) ordered.push(a);
+
+  for (const acc of ordered) {
+    const i = matchIndex(list, acc);
+    const own = i === -1 ? null : list[i];
+    const shown = own ? own.bar !== false : !mute.has(String(acc.home));
+    if (!shown) continue;
+    const five = windowRow('5ч', acc.five, { now, eta: v.eta });
+    const seven = windowRow('7д', acc.seven, { now, eta: v.eta });
+    let items = [];
+    if (v.window === 'both') items = [five, seven].filter(Boolean);
+    else if (v.window === 'five') items = [five].filter(Boolean);
+    else if (v.window === 'seven') items = [seven].filter(Boolean);
+    else {
+      // «то, что ближе к концу» — по расходу, а не по длине окна: недельное упирается
+      // раньше пятичасового ровно тогда, когда человек работал всю неделю.
+      const worst = (five && seven) ? (five.spent >= seven.spent ? five : seven) : (five || seven);
+      items = worst ? [worst] : [];
+    }
+    if (!items.length) continue;      // числа не пришли — пилюли нет вовсе
+    const level = items.reduce((acc2, it) => (it.level === 'crit' ? 'crit'
+      : (it.level === 'tight' && acc2 !== 'crit' ? 'tight' : acc2)), '');
+    out.push({
+      home: String(acc.home),
+      label: own ? label(own) : aliasOfHome(acc.home),
+      named: !!(own && String(own.name || '').trim()),
+      items,
+      level,
+      at: Number(acc.at) || 0,
+    });
+  }
+  return out;
+}
+
+// Строки для списка по клику: ВСЕ известные подписки, оба окна, точное время сброса и
+// состояние галочки. Пилюль может не быть ни одной (числа ещё не пришли), а список обязан
+// объяснить, почему в панели пусто, — иначе клик по пилюле некуда и сделать.
+function menuRows(state) {
+  const s = state || {};
+  const list = cards(s.cards);
+  const mute = new Set((Array.isArray(s.mute) ? s.mute : []).map(String));
+  const now = Number(s.now) || Date.now();
+  const accounts = (Array.isArray(s.accounts) ? s.accounts : []).filter((a) => a && a.home);
+  const rows = [];
+  const seen = new Set();
+
+  const rowOf = (own, acc) => {
+    const five = acc ? windowRow('5ч', acc.five, { now, eta: 'never' }) : null;
+    const seven = acc ? windowRow('7д', acc.seven, { now, eta: 'never' }) : null;
+    return {
+      home: acc ? String(acc.home) : (own ? own.home : ''),
+      line: own ? own.line : '',
+      label: own ? label(own) : aliasOfHome(acc && acc.home),
+      on: own ? own.bar !== false : !mute.has(String(acc && acc.home)),
+      // Есть ли что показывать. Нет — это не ошибка: окна приходят только по подписке и
+      // только с первого ответа модели.
+      known: !!(five || seven),
+      five,
+      seven,
+      when: {
+        five: five ? fmtWhen(five.resetsAt, now) : '',
+        seven: seven ? fmtWhen(seven.resetsAt, now) : '',
+      },
+    };
+  };
+
+  for (const own of list) {
+    const acc = accounts.find((a) => matchIndex([own], a) === 0) || null;
+    if (acc) seen.add(acc.home);
+    rows.push(rowOf(own, acc));
+  }
+  for (const acc of accounts) {
+    if (seen.has(acc.home)) continue;
+    rows.push(rowOf(null, acc));
+  }
+  return rows;
+}
+
+// Имя подписки для АГЕНТА: он получает числа хуком в начало хода и до сих пор не знал, чьи
+// они. Пусто — имени нет (карточки нет или человек его не дал), и тогда хук ничего не
+// придумывает: соврать про аккаунт хуже, чем промолчать.
+function nameForHome(list, home) {
+  const h = String(home || '').trim();
+  if (!h) return '';
+  const found = cards(list).find((c) => c.home === h && String(c.name || '').trim());
+  return found ? String(found.name).trim() : '';
+}
+
+return {
+  TIGHT, CRIT, WINDOWS, ETAS, VIEW,
+  view, card, cards, line, label, stemOf, aliasOfHome,
+  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, windowRow, pills, menuRows, nameForHome,
+};
+
+});

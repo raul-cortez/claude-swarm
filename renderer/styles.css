@@ -1552,6 +1552,74 @@ body.night-all .night-pill {
 .presence-item:disabled { cursor: default; opacity: .55; }
 .presence-item:disabled:hover { background: transparent; }
 
+/* --- расход подписки в нижней панели -------------------------------------------
+   Пилюля на подписку: одно число — то окно, что ближе к концу. Тихая до 75%, янтарная
+   рамка от 75%, красная от 90% — те же пороги, что у ворот на подагентов, чтобы панель
+   и хук не спорили. Цвет не единственный признак: рядом всегда стоит само число, а время
+   до сброса вылезает текстом, когда окно поджало. */
+.usage-pills { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
+.usage-pills[hidden] { display: none; }
+.usage-pill {
+  -webkit-app-region: no-drag; flex: none; white-space: nowrap; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  border-radius: 6px; padding: 2px 7px;
+  font-family: var(--mono); font-size: 11px;
+}
+.usage-pill:hover { color: var(--text); background: var(--panel-2); }
+.usage-pill .u-alias { opacity: .75; }
+.usage-pill .u-sep { opacity: .45; }
+.usage-pill .u-lab { opacity: .6; }
+.usage-pill .u-num { font-variant-numeric: tabular-nums; }
+.usage-pill .u-num.tight, .usage-pill .u-eta.tight { color: var(--permission); }
+.usage-pill .u-num.crit, .usage-pill .u-eta.crit { color: var(--danger); }
+.usage-pill .u-eta { opacity: .85; display: inline-flex; align-items: center; gap: 3px; }
+.usage-pill .u-eta svg { width: 10px; height: 10px; }
+.usage-pill .u-ic { display: inline-flex; opacity: .7; }
+.usage-pill .u-ic svg { width: 12px; height: 12px; }
+.usage-pill.is-tight {
+  border-color: color-mix(in srgb, var(--permission) 45%, var(--border));
+  background: color-mix(in srgb, var(--permission) 12%, transparent);
+}
+.usage-pill.is-crit {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+/* Список по клику: набор галочек, а не «одна из» — отмеченных подписок может быть несколько. */
+#subs-menu { min-width: 20rem; max-width: 24rem; }
+.u-pick { display: grid; grid-template-columns: 16px 1fr auto; gap: 2px 8px; align-items: center; }
+.u-pick .u-box { color: var(--muted); font-size: 13px; }
+.u-pick.is-on .u-box { color: var(--accent); }
+.u-pick .u-who { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+.u-pick .u-nums { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.u-pick .u-when { grid-column: 2 / -1; color: var(--muted); font-size: 11px; opacity: .85; }
+
+/* --- страница «Подписки» -------------------------------------------------------
+   Карточка на подписку: строка запуска, имя, галка про панель. Живых чисел здесь нет —
+   настройка не сводка; единственное про расход — «остатков пока не видели». */
+.subs-list { display: flex; flex-direction: column; gap: 10px; }
+.sub-row {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel));
+}
+.sub-row .sub-main { display: flex; align-items: center; gap: 8px; }
+.sub-row .sub-line { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.sub-row .sub-name { width: 9rem; flex: none; }
+.sub-row .sub-main .agent-del { flex: none; }
+.sub-row .sub-bar-row { margin-top: 8px; }
+.sub-row .sub-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.sub-row .sub-note[hidden] { display: none; }
+.subs-preview {
+  display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+  min-height: 30px; padding: 6px 8px; margin: 6px 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+}
+.subs-preview .subs-empty { color: var(--muted); font-size: 11.5px; margin-right: auto; }
+
+/* Подсказка под именем подписки в окне выбора агента: имя крупно, строка запуска тускло. */
+.pick-item .pick-sub { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
 /* --- update pill + modal ------------------------------------------------- */
 .update-pill {
   -webkit-app-region: no-drag;

@@ -174,6 +174,7 @@ const { systemPromptRule } = require('./agent-rules');
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
 const { envPassing, clearPrefix, tabEnv, shellFamily } = require('./launch-line');
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
+const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const unread = require('./unread');                 // «этот ответ человек ещё не видел» — держит перезапуск
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
@@ -308,6 +309,93 @@ function pruneUsage() {
       } catch (_) { /* исчез сам — тем лучше */ }
     }
   } catch (_) { /* папки ещё нет */ }
+}
+
+// --- подписки: живой расход в панель и имена агенту ---------------------------
+// Расход подписки был виден только В СТРОКЕ СТАТУСА каждой вкладки — то есть в терминале, по
+// одной копии на вкладку, и только пока эта вкладка на экране. А окна лимитов не про вкладку,
+// они про АККАУНТ: одни и те же числа честно повторялись во всех вкладках одного конфига.
+// Теперь они уехали в нижнюю панель — общую для всех, — и решения «какую подписку показать,
+// каким числом» принимает subs.js, а здесь только сбор фактов.
+//
+// Читаем те же снимки, что и /usage (см. readUsage): их пишет наша строка статуса, значит
+// числа приходят от самого Клода и не стоят ни одного запроса к API.
+const SUBS_PUSH_MS = 20_000;
+
+function usageSnapshots() {
+  const dir = path.join(app.getPath('userData'), statusline.USAGE_DIR);
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const out = [];
+  for (const n of names) {
+    if (!n.endsWith('.json')) continue;
+    try {
+      const snap = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+      if (snap && typeof snap === 'object') out.push(snap);
+    } catch (_) { /* половина файла — пропускаем, следующий такт перечитает */ }
+  }
+  return out;
+}
+
+// Аккаунты, по одному на КОНФИГ. Свежайший снимок, у КОТОРОГО ЕСТЬ ЧИСЛА, — та же оговорка,
+// что у ворот на подагентов (pickUsage в hooks/swarm-signal.mjs): снимок пишется и когда в нём
+// одно заполнение контекста (свежая сессия, вкладка на ключе вместо подписки), и такой файл,
+// легший последним, обнулял бы панель ровно в тот момент, когда расход и важен.
+//
+// `lines` — строки запуска живых вкладок этого конфига. По ним карточка подписки в первый раз
+// узнаёт свою папку (subs.learnHome): алиасы шелла нам не видны, а снимок вкладки говорит, где
+// она живёт, прямо.
+function subsAccounts() {
+  const byHome = new Map();
+  const homeOf = new Map();
+  for (const s of usageSnapshots()) {
+    const home = String(s.home || '');
+    if (!home) continue;
+    if (s.session) homeOf.set(String(s.session), home);
+    if (!s.five && !s.seven) continue;
+    const prev = byHome.get(home);
+    if (!prev || (Number(s.at) || 0) > (Number(prev.at) || 0)) byHome.set(home, s);
+  }
+  const lines = new Map();
+  for (const d of det.values()) {
+    if (d.dead || !d.claudeSessionId) continue;
+    const home = homeOf.get(String(d.claudeSessionId));
+    const line = String(d.launchCmd || '').trim();
+    if (!home || !line) continue;
+    const arr = lines.get(home) || [];
+    if (!arr.includes(line)) arr.push(line);
+    lines.set(home, arr);
+  }
+  const out = [];
+  for (const [home, s] of byHome) {
+    out.push({
+      home,
+      five: s.five || null,
+      seven: s.seven || null,
+      at: Number(s.at) || 0,
+      lines: lines.get(home) || [],
+    });
+  }
+  out.sort((a, b) => a.home.localeCompare(b.home));
+  return out;
+}
+
+function subsPush() { safeSend('subs:accounts', subsAccounts()); }
+
+// Карточки живут у рендерера (это же список запуска, и он спрашивает его на каждой новой
+// вкладке), а здесь нужны ради ХУКА: агент получает числа расхода в начало каждого хода и до
+// сих пор не знал, ЧЕЙ это расход. Пишем рядом с хуком, как swarm-tgmode.json, и только когда
+// что-то изменилось: файл читается на каждом ходе каждой вкладки.
+let subsWritten = '';
+
+function subsWriteCards(list) {
+  const cards = subs.cards(list).map((c) => ({ line: c.line, name: c.name, home: c.home }));
+  const body = JSON.stringify({ cards });
+  if (body === subsWritten) return;
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-subs.json'), body);
+    subsWritten = body;
+  } catch (e) { reportMainError(e); }
 }
 
 // The launcher of a command line — first real token, skipping `VAR=value` prefixes.
@@ -4944,6 +5032,12 @@ function nightOnKeyboard() {
 }
 
 ipcMain.handle('night:state', () => nightState());
+
+// Подписки. Числа окон окно спрашивает само (первая отрисовка панели) и получает такт за
+// тактом; карточки, наоборот, приезжают ОТ окна — там они и правятся, а нам нужны для хука.
+ipcMain.handle('subs:accounts', () => subsAccounts());
+ipcMain.handle('subs:setCards', (_e, cards) => { subsWriteCards(cards); return true; });
+setInterval(subsPush, SUBS_PUSH_MS);
 
 // Мандат вкладке из окна: меню карточки и кнопка «забрать себе» в гейте ввода.
 ipcMain.handle('tab:setAuto', (_e, { id, auto } = {}) => setTabAuto(id, auto, 'окно'));

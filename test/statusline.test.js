@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  renderLine, renderLimits, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport,
+  renderLine, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
 } = require('../swarm-statusline');
 
@@ -64,55 +64,30 @@ test('formats the reset countdown coarsely, by the largest two units', () => {
   assert.strictEqual(fmtEta(-5), '0м', 'a reset already due is not negative time');
 });
 
-test('renders both windows as spent percentages, verbatim from the payload', () => {
-  const out = strip(renderLimits({
-    five_hour: { used_percentage: 37, resets_at: NOW + 3600 },
+// --- расход подписки в строке БОЛЬШЕ НЕТ --------------------------------------
+// Окна лимитов не про вкладку, а про аккаунт: их числа переехали в нижнюю панель приложения
+// (одну для всех вкладок), а агенту их кладёт хук вместе с именем подписки. Под тестом теперь
+// обратное утверждение: в строке их нет ни при каких числах — иначе они вернулись бы вторым
+// местом, где то же самое показывается по-другому.
+test('лимитов в строке нет ни при каких числах', () => {
+  const line = strip(renderLine(payload({
+    five_hour: { used_percentage: 90, resets_at: NOW + 8040 },
     seven_day: { used_percentage: 62, resets_at: NOW + 86400 },
-  }, NOW));
-  assert.match(out, /5ч 37%/);
-  assert.match(out, /7д 62%/);
+  }), NOW));
+  assert.strictEqual(line.includes('5ч'), false, 'пятичасовое окно в строке: ' + line);
+  assert.strictEqual(line.includes('7д'), false, 'недельное окно в строке: ' + line);
+  assert.strictEqual(line.includes('⚠'), false, 'пометка «почти кончилось» — теперь дело панели');
 });
 
-test('hides the reset countdown while the window is still comfortable', () => {
-  const out = strip(renderLimits({ five_hour: { used_percentage: 37, resets_at: NOW + 3600 } }, NOW));
-  assert.strictEqual(out.includes('↻'), false);
-});
-
-test('shows the reset countdown once the window is nearly spent', () => {
-  const out = strip(renderLimits({ five_hour: { used_percentage: 90, resets_at: NOW + 8040 } }, NOW));
-  assert.match(out, /5ч 90%.*↻2ч14м/);
-});
-
-test('marks a nearly-spent window with a glyph, not colour alone', () => {
-  // The app reads this line with ANSI stripped, so colour cannot carry state.
-  const out = strip(renderLimits({ five_hour: { used_percentage: 95, resets_at: NOW + 600 } }, NOW));
-  assert.match(out, /⚠/);
-});
-
-test('a barely-touched window carries neither the glyph nor a countdown', () => {
-  const out = strip(renderLimits({ five_hour: { used_percentage: 11, resets_at: NOW + 9720 } }, NOW));
-  assert.strictEqual(out.includes('⚠'), false);
-  assert.strictEqual(out.includes('↻'), false);
-  assert.match(out, /5ч 11%/);
-});
-
-test('renders nothing when the limits are absent — no bare 0%', () => {
-  // No rate_limits at all: an API-key account, or before the first API response.
-  assert.strictEqual(renderLimits(undefined, NOW), '');
-  assert.strictEqual(renderLimits(null, NOW), '');
-  assert.strictEqual(renderLimits({}, NOW), '');
-});
-
-test('renders the window it has when only one of the two is reported', () => {
-  const out = strip(renderLimits({ five_hour: { used_percentage: 20 } }, NOW));
-  assert.match(out, /5ч 20%/);
-  assert.strictEqual(out.includes('7д'), false);
-});
-
-test('a past reset time drops the countdown instead of counting backwards', () => {
-  const out = strip(renderLimits({ five_hour: { used_percentage: 95, resets_at: NOW - 60 } }, NOW));
-  assert.match(out, /5ч 95%/);
-  assert.strictEqual(out.includes('↻'), false);
+test('снимок расхода при этом пишется как раньше — из него живут все трое', () => {
+  // Панель, ворота на подагентов и /usage кормятся снимком, а не строкой (см. usageSnapshot).
+  const snap = usageSnapshot(payload({
+    five_hour: { used_percentage: 90, resets_at: NOW + 8040 },
+    seven_day: { used_percentage: 62, resets_at: NOW + 86400 },
+  }), NOW, '/h/.claude');
+  assert.deepStrictEqual(snap.five, { spent: 90, resetsAt: NOW + 8040 });
+  assert.deepStrictEqual(snap.seven, { spent: 62, resetsAt: NOW + 86400 });
+  assert.strictEqual(snap.home, '/h/.claude', 'в каком КОНФИГЕ это израсходовано');
 });
 
 test('the context percentage stays the first % in the line', () => {
@@ -128,13 +103,12 @@ test('the context percentage stays the first % in the line', () => {
   assert.strictEqual(first[1], '24', 'the context fill, not a limit');
 });
 
-test('limits are withheld when there is no context bar to follow', () => {
-  // Without the context bar a limit % would be parsed AS the context fill.
+test('без полоски контекста в строке нет ни одного процента', () => {
+  // Любой процент, вышедший вперёд полоски, вкладка нарисует КАК контекст.
   const data = payload({ five_hour: { used_percentage: 37 } });
   data.context_window = { remaining_percentage: null };
   const line = strip(renderLine(data, NOW));
-  assert.strictEqual(line.includes('5ч'), false);
-  assert.strictEqual(line.includes('%'), false);
+  assert.strictEqual(line.includes('%'), false, line);
 });
 
 test('the line still renders without limits at all', () => {

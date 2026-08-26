@@ -26,7 +26,7 @@ const FILES = [
   'md.js', 'git.js', 'osc.js', 'pty-write.js', 'pty-loader.js', 'agent-rules.js', 'launch-line.js',
   'renderer/renderer.js', 'renderer/diffview.js', 'renderer/themes.js', 'renderer/tabstyle.js',
   'renderer/keybinds.js', 'renderer/logstore.js', 'renderer/resume.js', 'renderer/launch-word.js',
-  'renderer/termtalk.js',
+  'renderer/termtalk.js', 'subs.js',
 ];
 
 // Выкусываем всё, где скобки не считаются: комментарии, строки, шаблоны и РЕГУЛЯРКИ. Последние
@@ -148,6 +148,21 @@ test('подделка с осиротевшим блоком ловится', (
   fs.rmSync(tmp, { force: true });
   assert.strictEqual(before, FILES.length);
   assert.ok(found.includes(1), 'осиротевшая первая строка должна быть найдена, найдено: ' + found.join(','));
+});
+
+// Синтаксис — тем же контрактом, и по той же причине: файл с ошибкой разбора не оживает
+// ВЕСЬ, а `npm test` этого не видел вовсе. Живой случай: обратные кавычки в комментарии
+// ВНУТРИ шаблонной строки (разметка панели настроек собирается ею) оборвали строку — окно
+// поднималось без единого слушателя, и поймал это только оффскрин-стенд.
+test('каждый файл разбирается как скрипт', () => {
+  const vm = require('vm');
+  for (const rel of FILES) {
+    const src = fs.readFileSync(path.join(root, rel), 'utf8');
+    // Оборачиваем в функцию: main.js и модули — CommonJS, у них `return` на верхнем уровне
+    // законен, и без обёртки проверка ругалась бы на живой код.
+    try { new vm.Script('(function(require,module,exports,__dirname,__filename){' + src + '\n})', { filename: rel }); }
+    catch (e) { assert.fail(`${rel}: ${e.message}`); }
+  }
 });
 
 (async () => {

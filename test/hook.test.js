@@ -589,6 +589,34 @@ test('end to end: мандат одной вкладки читается с д�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Имя подписки в строке расхода. Числа агент видел и раньше — а чьи они, не знал: аккаунтов у
+// человека несколько, окна у них разные, и «7д 84%» без имени не отвечает, на чём агент работает.
+test('агент слышит имя своей подписки вместе с числами', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk', {
+    usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 }, home: '/h/.claude-my' },
+    subCards: [{ line: 'claude', name: 'рабочая', home: '/h/.claude' },
+      { line: 'claude-my', name: 'личная', home: '/h/.claude-my' }],
+    nowSec: 0,
+  });
+  const note = out.hookSpecificOutput.additionalContext;
+  assert.match(note, /подписке «личная»/, note);
+  assert.match(note, /5ч 93%/);
+  assert.strictEqual(note.includes('рабочая'), false, 'чужой аккаунт агенту не называем');
+});
+
+test('имени нет — про имя молчим, числа остаются', () => {
+  const usage = { five: { spent: 40 }, seven: { spent: 50 }, home: '/h/.claude' };
+  assert.match(H.usageNote(usage, 0, ''), /^Расход подписки прямо сейчас: 5ч 40%/);
+  assert.strictEqual(H.subName([{ line: 'claude', name: '', home: '/h/.claude' }], '/h/.claude'), '');
+  assert.strictEqual(H.subName([{ line: 'claude', name: 'рабочая', home: '/h/.claude' }], ''), '');
+});
+
+test('снимок несёт конфиг, в котором израсходовано', () => {
+  const snaps = [{ session: 'mine', at: 5, home: '/h/.claude-my', five: { spent: 10 } }];
+  assert.strictEqual(H.pickUsage(snaps, 'mine').home, '/h/.claude-my');
+});
+
 test('end to end: ворота отказывают подагенту по снимку расхода на диске', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-gate-')));
   const staged = path.join(dir, 'swarm-signal.mjs');

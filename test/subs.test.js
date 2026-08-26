@@ -1,0 +1,203 @@
+// Тесты подписок (subs.js). Под тестом ровно то, что нельзя проверить глазами в приложении:
+// миграция прежнего списка запуска (потеряем — человек откроет вкладки не тем агентом),
+// сопоставление карточки с аккаунтом (перепутаем — покажем расход чужой подписки под своим
+// именем) и «нет чисел ⇒ нет пилюли» (ноль вместо неизвестного — вранье о расходе).
+const assert = require('assert');
+const subs = require('../subs');
+const statusline = require('../swarm-statusline');
+
+let passed = 0;
+const tests = [];
+function test(name, fn) { tests.push([name, fn]); }
+
+const NOW = 1_700_000_000_000;           // мс
+const SEC = Math.floor(NOW / 1000);
+
+const acc = (home, five, seven, lines) => ({
+  home,
+  five: five == null ? null : { spent: five, resetsAt: SEC + 3600 },
+  seven: seven == null ? null : { spent: seven, resetsAt: SEC + 86400 * 3 },
+  at: SEC,
+  lines: lines || [],
+});
+
+test('прежний список запуска переезжает в карточки без потерь', () => {
+  const list = subs.cards([{ cmd: 'claude', flags: '' }, { cmd: 'claude-my', flags: '--model sonnet' }]);
+  assert.deepStrictEqual(list.map((c) => c.line), ['claude', 'claude-my --model sonnet']);
+  assert.deepStrictEqual(list.map((c) => c.name), ['', '']);
+  assert.deepStrictEqual(list.map((c) => c.bar), [true, true], 'остатки показываем без спроса');
+});
+
+test('пустая строка запуска карточкой не становится', () => {
+  assert.strictEqual(subs.cards([{ line: '   ' }, { cmd: '' }, { line: 'claude' }]).length, 1);
+});
+
+test('ярлык — имя, а без имени строка запуска', () => {
+  assert.strictEqual(subs.label({ line: 'claude-my --model sonnet', name: 'личная' }), 'личная');
+  assert.strictEqual(subs.label({ line: 'claude-my --model sonnet' }), 'claude-my --model sonnet');
+});
+
+test('аккаунт без карточки назван папкой конфига', () => {
+  assert.strictEqual(subs.aliasOfHome('/Users/x/.claude-my'), 'claude-my');
+  assert.strictEqual(subs.aliasOfHome('/Users/x/.claude'), 'claude');
+  assert.strictEqual(subs.aliasOfHome(''), 'claude');
+});
+
+test('карточка находится по запомненной папке, а не по имени команды', () => {
+  const list = subs.cards([{ line: 'cld', home: '/h/.claude-work' }, { line: 'claude' }]);
+  assert.strictEqual(subs.matchIndex(list, acc('/h/.claude-work', 10, 20)), 0);
+});
+
+test('в первый раз карточка находится по стему строки запуска', () => {
+  const list = subs.cards([{ line: 'claude' }, { line: 'claude-my --model sonnet' }]);
+  assert.strictEqual(subs.matchIndex(list, acc('/h/.claude-my', 5, 5, ['claude-my --model sonnet'])), 1);
+  assert.strictEqual(subs.matchIndex(list, acc('/h/.claude', 5, 5, ['claude --session-id x'])), 0);
+});
+
+test('чужой аккаунт ни к одной карточке не привязывается', () => {
+  const list = subs.cards([{ line: 'claude' }]);
+  assert.strictEqual(subs.matchIndex(list, acc('/h/.claude-my', 5, 5, ['codex'])), -1);
+});
+
+test('папка конфига запоминается в карточке один раз', () => {
+  const list = subs.cards([{ line: 'claude-my' }]);
+  const learned = subs.learnHome(list, [acc('/h/.claude-my', 5, 5, ['claude-my'])]);
+  assert.strictEqual(learned[0].home, '/h/.claude-my');
+  assert.strictEqual(subs.learnHome(learned, [acc('/h/.claude-my', 5, 5, ['claude-my'])]), learned,
+    'второй раз список не пересобирается — рендерер по этому решает, сохранять ли');
+});
+
+test('пилюля показывает то окно, что ближе к концу по расходу', () => {
+  const p = subs.pills({
+    cards: [{ line: 'claude', name: 'рабочая' }],
+    accounts: [acc('/h/.claude', 65, 83, ['claude'])],
+    now: NOW,
+  });
+  assert.strictEqual(p.length, 1);
+  assert.strictEqual(p[0].label, 'рабочая');
+  assert.deepStrictEqual(p[0].items.map((i) => [i.lab, i.spent]), [['7д', 83]]);
+});
+
+test('пороги те же, что у строки статуса и у ворот', () => {
+  assert.strictEqual(subs.levelOf(74), '');
+  assert.strictEqual(subs.levelOf(75), 'tight');
+  assert.strictEqual(subs.levelOf(89), 'tight');
+  assert.strictEqual(subs.levelOf(90), 'crit');
+});
+
+test('время сброса появляется только у поджавшего окна', () => {
+  const one = subs.pills({ cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 30, ['claude'])], now: NOW });
+  assert.strictEqual(one[0].items[0].eta, '', 'спокойное окно отсчёта не просит');
+  const tight = subs.pills({ cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 88, ['claude'])], now: NOW });
+  assert.strictEqual(tight[0].items[0].eta, '3д');
+  const always = subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 30, ['claude'])],
+    view: { eta: 'always' }, now: NOW,
+  });
+  assert.strictEqual(always[0].items[0].eta, '3д', 'ближе к концу здесь недельное окно — его и отсчитываем');
+  const never = subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 20, 95, ['claude'])],
+    view: { eta: 'never' }, now: NOW,
+  });
+  assert.strictEqual(never[0].items[0].eta, '');
+});
+
+test('«оба окна» показывает два числа, «только 5ч» — одно', () => {
+  const both = subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],
+    view: { window: 'both' }, now: NOW,
+  });
+  assert.deepStrictEqual(both[0].items.map((i) => i.lab), ['5ч', '7д']);
+  const five = subs.pills({
+    cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],
+    view: { window: 'five' }, now: NOW,
+  });
+  assert.deepStrictEqual(five[0].items.map((i) => i.spent), [65]);
+});
+
+test('нет чисел — нет пилюли (ноль вместо неизвестного — вранье)', () => {
+  assert.deepStrictEqual(subs.pills({
+    cards: [{ line: 'codex' }], accounts: [acc('/h/.claude', null, null, ['codex'])], now: NOW,
+  }), []);
+  assert.deepStrictEqual(subs.pills({ cards: [{ line: 'claude' }], accounts: [], now: NOW }), []);
+});
+
+test('снятая галка убирает пилюлю, но подписку из списка не убирает', () => {
+  const cards = [{ line: 'claude', name: 'рабочая', bar: false }];
+  const accounts = [acc('/h/.claude', 65, 83, ['claude'])];
+  assert.deepStrictEqual(subs.pills({ cards, accounts, now: NOW }), []);
+  const rows = subs.menuRows({ cards, accounts, now: NOW });
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].on, false);
+  assert.strictEqual(rows[0].known, true);
+});
+
+test('аккаунт без карточки виден, пока его не заглушили', () => {
+  const accounts = [acc('/h/.claude-my', 40, 50, ['claude-my'])];
+  const p = subs.pills({ cards: [], accounts, now: NOW });
+  assert.strictEqual(p.length, 1);
+  assert.strictEqual(p[0].label, 'claude-my');
+  assert.deepStrictEqual(subs.pills({ cards: [], accounts, mute: ['/h/.claude-my'], now: NOW }), []);
+});
+
+test('порядок пилюль — как в карточках, а не по расходу', () => {
+  const p = subs.pills({
+    cards: [{ line: 'claude', name: 'рабочая' }, { line: 'claude-my', name: 'личная' }],
+    accounts: [acc('/h/.claude-my', 90, 91, ['claude-my']), acc('/h/.claude', 5, 6, ['claude'])],
+    now: NOW,
+  });
+  assert.deepStrictEqual(p.map((x) => x.label), ['рабочая', 'личная']);
+});
+
+test('в списке есть и подписка без чисел, и аккаунт без карточки', () => {
+  const rows = subs.menuRows({
+    cards: [{ line: 'codex' }, { line: 'claude', name: 'рабочая' }],
+    accounts: [acc('/h/.claude', 10, 20, ['claude']), acc('/h/.claude-my', 30, 40, ['claude-my'])],
+    now: NOW,
+  });
+  assert.deepStrictEqual(rows.map((r) => r.label), ['codex', 'рабочая', 'claude-my']);
+  assert.deepStrictEqual(rows.map((r) => r.known), [false, true, true]);
+});
+
+test('в списке — точное время сброса, а не отсчёт', () => {
+  const rows = subs.menuRows({
+    cards: [{ line: 'claude', name: 'рабочая' }],
+    accounts: [acc('/h/.claude', 10, 20, ['claude'])],
+    now: NOW,
+  });
+  assert.ok(/^в \d\d:\d\d$/.test(rows[0].when.five), 'сброс сегодня — часами: ' + rows[0].when.five);
+  assert.ok(/^(в|во) \S+, \d\d:\d\d$/.test(rows[0].when.seven), 'сброс через дни — днём недели: ' + rows[0].when.seven);
+  assert.strictEqual(rows[0].five.eta, '', 'в списке отсчёта нет вовсе');
+});
+
+test('«завтра» названо завтрашним днём, а не днём недели', () => {
+  const noon = new Date(2026, 7, 26, 12, 0, 0).getTime();
+  const nextMorning = new Date(2026, 7, 27, 9, 30, 0).getTime();
+  assert.strictEqual(subs.fmtWhen(nextMorning, noon), 'завтра в 09:30');
+  assert.strictEqual(subs.fmtWhen(new Date(2026, 7, 26, 19, 40, 0).getTime(), noon), 'в 19:40');
+});
+
+test('имя подписки для агента берётся по папке конфига, а не по строке', () => {
+  const list = subs.cards([{ line: 'claude-my', name: 'личная', home: '/h/.claude-my' }, { line: 'claude' }]);
+  assert.strictEqual(subs.nameForHome(list, '/h/.claude-my'), 'личная');
+  assert.strictEqual(subs.nameForHome(list, '/h/.claude'), '', 'имени человек не дал — не придумываем');
+  assert.strictEqual(subs.nameForHome(list, ''), '');
+});
+
+test('отсчёт до сброса говорит то же, что строка статуса', () => {
+  for (const s of [0, 59, 60, 1080, 8040, 3600, 90_000, 86_400 * 3 + 3600 * 18]) {
+    assert.strictEqual(subs.fmtEta(s), statusline.fmtEta(s), 'разошлись на ' + s + ' с');
+  }
+});
+
+test('вид чинится, если в настройках лежит чепуха', () => {
+  assert.deepStrictEqual(subs.view({ window: 'nope', eta: 'nope' }), { window: 'worst', eta: 'tight' });
+  assert.deepStrictEqual(subs.view(null), { window: 'worst', eta: 'tight' });
+  assert.deepStrictEqual(subs.view({ window: 'both', eta: 'never' }), { window: 'both', eta: 'never' });
+});
+
+for (const [name, fn] of tests) {
+  try { fn(); passed++; }
+  catch (e) { console.error('FAIL: ' + name + '\n  ' + (e.message || e)); process.exitCode = 1; }
+}
+console.log(`subs: ${passed}/${tests.length}`);

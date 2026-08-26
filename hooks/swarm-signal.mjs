@@ -391,7 +391,17 @@ function gatesSubagent(payload, usage, nowSec) {
 
 // Строка расхода в начало хода: то же знание, но мягко — агент сам решает, звать ли пятерых.
 // Ворота ловят край, а это лечит причину: агент, который видит числа, до края не доходит.
-function usageNote(usage, nowSec) {
+//
+// С ИМЕНЕМ подписки. Числа агент видел и раньше, но не знал, ЧЕЙ это расход: у человека
+// несколько аккаунтов Клода (`CLAUDE_CONFIG_DIR`, алиасы вроде `claude-my`), окна у них разные,
+// и «7д 84%» без имени не отвечает на вопрос «а на чём я вообще работаю». Имя даёт человек
+// карточке подписки (Настройки → Подписки), приложение кладёт его файлом рядом с этим скриптом
+// (subsWriteCards в main.js), и находится оно по КОНФИГУ своей сессии — не по имени команды:
+// `claude-glm` и `cld` называются клодово, а лимитов Anthropic у них нет.
+//
+// Имени может не быть (человек его не дал, карточки нет, файл от прежней версии) — тогда
+// молчим о нём: придумать имя аккаунту хуже, чем не назвать его.
+function usageNote(usage, nowSec, name) {
   if (!usage) return '';
   const part = (label, l) => {
     if (!l || !Number.isFinite(l.spent)) return '';
@@ -400,7 +410,9 @@ function usageNote(usage, nowSec) {
   };
   const parts = [part('5ч', usage.five), part('7д', usage.seven)].filter(Boolean);
   if (!parts.length) return '';
-  return `Расход подписки прямо сейчас: ${parts.join(', ')}.`
+  const who = String(name || '').trim();
+  return (who ? `Ты работаешь на подписке «${who}». Её расход прямо сейчас: ` : 'Расход подписки прямо сейчас: ')
+    + `${parts.join(', ')}.`
     + ' Учитывай это, прежде чем запускать подагентов: на пределе они умрут на середине.';
 }
 
@@ -562,7 +574,8 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // и просить у него итог задним числом — значит будить вкладку ради того, что она сделала бы
   // сама, если бы знала. Подагенту не говорим: он живёт внутри чужого хода и итог не пишет.
   const wantsSummary = starts && !isSubagent(payload) && auto;
-  const note = [starts ? usageNote(ex.usage, nowSec) : '', wantsSummary ? summaryNote() : '']
+  const note = [starts ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
+    wantsSummary ? summaryNote() : '']
     .filter(Boolean).join('\n\n');
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
   // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
@@ -635,7 +648,27 @@ function pickUsage(snaps, sessionId) {
     .filter((s) => s.five || s.seven)
     .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))[0];
   if (!fresh) return null;
-  return { five: fresh.five || null, seven: fresh.seven || null, at: Number(fresh.at) || 0 };
+  // `home` — конфиг, в котором это израсходовано. По нему находится ИМЯ подписки для агента
+  // (см. subName): по имени команды его искать нельзя, `claude-glm` и `cld` называются
+  // клодово, а окон лимитов Anthropic у них нет.
+  return {
+    five: fresh.five || null, seven: fresh.seven || null,
+    at: Number(fresh.at) || 0, home: String(fresh.home || home || ''),
+  };
+}
+
+// Имя подписки, которое человек дал карточке (Настройки → Подписки). Приложение пишет их
+// рядом с этим скриптом, как и остальное своё состояние (swarm-tgmode.json). Файла нет — версия
+// приложения старше этой функции, и агент просто не услышит имени.
+function subName(cards, home) {
+  const h = String(home || '').trim();
+  if (!h) return '';
+  for (const c of Array.isArray(cards) ? cards : []) {
+    if (String((c && c.home) || '') !== h) continue;
+    const name = String((c && c.name) || '').trim();
+    if (name) return name;
+  }
+  return '';
 }
 
 function readUsage(sessionId) {
@@ -680,6 +713,13 @@ async function main() {
     // дверь, которой может не быть, хуже, чем не обещать. Имя файла считаем сами, из id разговора.
     restartModes = (tg.restart && typeof tg.restart === 'object') ? tg.restart : null;
   } catch (_) { /* none */ }
+  // Карточки подписок — ради их ИМЁН: агент должен знать не только «7д 84%», но и чья это
+  // подписка. Файла нет (приложение старше) — молчим про имя, числа от этого не страдают.
+  let subCards = [];
+  try {
+    const sub = await readJsonBeside('swarm-subs.json');
+    subCards = Array.isArray(sub && sub.cards) ? sub.cards : [];
+  } catch (_) { /* none */ }
   const matcher = loadMatcher(() => phrases);
   let input = '';
   process.stdin.setEncoding('utf8');
@@ -693,7 +733,7 @@ async function main() {
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
-        { usage, nightRule: nightCustom, autoSessions, restart: restartModes });
+        { usage, nightRule: nightCustom, autoSessions, restart: restartModes, subCards });
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -725,5 +765,5 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
-  usageNote, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor };

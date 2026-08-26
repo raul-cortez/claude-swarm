@@ -132,6 +132,7 @@ const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scope
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
+const SUBS_API = window.SWARM_SUBS;           // подписки: карточки запуска и что видно в панели
 const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (мышь, ответы) — не печать человека
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
@@ -290,6 +291,9 @@ const ICONS = {
   // Lucide "x" — закрыть вкладку. Рисованный, а не литера «×»: рядом с луной в одной
   // капсуле знак из шрифта заметно тяжелее и стоит не по центру круга.
   close: SVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  // Lucide «gauge» — расход подписки, и «clock» — время до сброса.
+  gauge: SVG('<path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'),
+  clock: SVG('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
   sunrise: SVG('<path d="M12 2v6"/><path d="m4.93 8.93 1.41 1.41"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m17.66 10.34 1.41-1.41"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/>'),
 };
 
@@ -724,17 +728,25 @@ function loadLaunch() {
   return { cmd: (cmd || '').trim() || 'claude', flags: (flags || '').trim() };
 }
 
+// Одна карточка списка запуска. Она же ПОДПИСКА (Настройки → Подписки): строка запуска, имя,
+// галка «показывать остатки в нижней панели», выученная папка конфига. Решения про подписки
+// живут в subs.js; здесь к карточке добавляются производные cmd/flags — ими живёт сам запуск
+// (resolveLaunch, createSession), и переписывать их на каждом вызове было бы дороже.
+function cardOf(raw) {
+  const c = SUBS_API.card(raw);
+  return Object.assign({}, c, parseAgentLine(c.line));
+}
+
 // Read the saved agent list. Absent → migrate from the single legacy launch, so
 // existing users keep their one command untouched. Always non-empty.
+// Прежний вид записи ({ cmd, flags }) читается тем же путём — см. subs.card: у каждого, кто
+// уже пользуется приложением, в localStorage лежит именно он, и потерять его значит открыть
+// человеку вкладки не тем агентом.
 function loadLaunchList() {
   let raw = null;
   try { raw = JSON.parse(localStorage.getItem('swarm.launchList') || 'null'); } catch (_) {}
-  const list = Array.isArray(raw)
-    ? raw
-      .map((a) => ({ cmd: (a && a.cmd || '').trim(), flags: (a && a.flags || '').trim() }))
-      .filter((a) => a.cmd)
-    : [loadLaunch()];
-  return list.length ? list : [{ cmd: 'claude', flags: '' }];
+  const list = (Array.isArray(raw) ? raw : [loadLaunch()]).map(cardOf).filter((a) => a.cmd);
+  return list.length ? list : [cardOf({ line: 'claude' })];
 }
 
 function saveLaunch() {
@@ -743,10 +755,15 @@ function saveLaunch() {
 }
 
 function saveLaunchList() {
-  localStorage.setItem('swarm.launchList', JSON.stringify(launchList));
+  const plain = launchList.map((a) => ({ line: a.line, name: a.name, bar: a.bar, home: a.home }));
+  localStorage.setItem('swarm.launchList', JSON.stringify(plain));
   // Keep the single-agent fallback + legacy keys in sync with the first entry.
   launch = launchList[0];
   saveLaunch();
+  // И главному процессу — ради ХУКА: агент получает числа расхода в начало каждого хода, а имя
+  // своей подписки к ним приезжает из этого файла (см. subsWriteCards в main.js).
+  try { window.swarm.subs.setCards(plain); } catch (_) { /* мост ещё не поднят — перепишем при следующем сохранении */ }
+  renderUsagePills();
 }
 
 function saveLaunchPick() {
@@ -780,7 +797,17 @@ function pickAgent() {
     launchList.forEach((a, i) => {
       const b = document.createElement('button');
       b.className = 'pick-item';
-      b.textContent = agentLabel(a);
+      // Имя подписки, если человек его дал: «личная» понятнее, чем `claude-my --model sonnet`.
+      // Строка запуска при этом не исчезает — она подсказкой под именем, иначе выбор между
+      // двумя одинаково названными подписками стал бы угадыванием.
+      const name = String(a.name || '').trim();
+      b.textContent = name || agentLabel(a);
+      if (name) {
+        const hint = document.createElement('span');
+        hint.className = 'pick-sub';
+        hint.textContent = SUBS_API.line(a);
+        b.appendChild(hint);
+      }
       b.addEventListener('click', () => close(launchList[i]));
       list.appendChild(b);
     });
@@ -1377,7 +1404,8 @@ function showSettingsModal(tab) {
     <div class="modal settings">
       <nav class="set-tabs" role="tablist">
         <div class="set-nav-h">Настройки</div>
-        <button class="set-tab" data-tab="launch">Запуск</button>
+        <button class="set-tab" data-tab="launch">Общее</button>
+        <button class="set-tab" data-tab="subs">Подписки</button>
         <button class="set-tab" data-tab="notify">Уведомления</button>
         <button class="set-tab" data-tab="appearance">Вид</button>
         <button class="set-tab" data-tab="tabs">Вкладки</button>
@@ -1391,8 +1419,9 @@ function showSettingsModal(tab) {
       <div class="set-body">
       <div class="set-panel" data-panel="launch">
         <header class="set-panel-h">
-          <h2 class="set-h">Запуск</h2>
-          <p class="set-intro">Что запускать в <b>новых</b> вкладках. Уже открытые сессии не трогаем.</p>
+          <h2 class="set-h">Общее</h2>
+          <p class="set-intro">Как ведут себя вкладки, чем бы они ни были открыты. Уже открытые сессии
+            не трогаем — настройки касаются <b>новых</b>.</p>
         </header>
         <section class="set-group">
           <div class="set-group-h">Новая вкладка</div>
@@ -1413,17 +1442,8 @@ function showSettingsModal(tab) {
         </section>
         <div id="set-agent-block">
           <section class="set-group">
-            <div class="set-group-h">
-              <span>Команды</span>
-              <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Команда вместе с флагами: <code>claude</code>,
-                <code>cld --model sonnet</code>, <code>claude-glm --dangerously-skip-permissions</code>…
-                При нескольких спросим при открытии вкладки — в списке будет и «Чистый терминал».</span>
-            </div>
-            <div class="agent-list" id="set-agent-list"></div>
-            <button type="button" class="set-check-btn agent-add" id="set-agent-add">+ Добавить команду</button>
+            <div class="set-group-h">Если открыть вкладку можно по-разному</div>
             <div class="set-field" id="set-pick-field">
-              <div class="set-head"><span class="set-label">Если команд несколько</span></div>
               <div class="set-row">
                 <label class="set-radio">
                   <input type="radio" name="set-pick" value="always" />
@@ -1485,6 +1505,54 @@ function showSettingsModal(tab) {
             </div>
           </section>
         </div>
+      </div>
+
+      <!-- Подписки. Эта страница И ЕСТЬ список запуска: раньше он лежал на «Запуске»
+           безымянными строчками команд, и человек с двумя аккаунтами Клода видел в меню «+»
+           два почти одинаковых claude и claude-my без подсказки, какой из них личный.
+           Живых чисел расхода здесь нет намеренно — настройка не сводка, числа в панели.
+           Внимание: разметка собирается ШАБЛОННОЙ СТРОКОЙ, поэтому обратных кавычек в
+           комментариях здесь быть не может — они оборвут её и убьют панель настроек. -->
+      <div class="set-panel" data-panel="subs">
+        <header class="set-panel-h">
+          <h2 class="set-h">Подписки</h2>
+          <p class="set-intro">Чем открываются <b>новые</b> вкладки. У каждой подписки своя папка
+            конфига и свои окна лимитов — расход одной не тратит другую.</p>
+        </header>
+        <section class="set-group">
+          <div class="subs-list" id="set-subs-list"></div>
+          <button type="button" class="set-check-btn agent-add" id="set-subs-add">+ Добавить</button>
+          <span class="set-hint" id="set-subs-hint">Строка запуска — команда вместе с флагами:
+            <code>claude</code>, <code>claude-my --model sonnet</code>,
+            <code>codex</code>. Имя — как её звать в меню «+», в нижней панели и в разговоре с
+            агентом; пусто — покажем строку запуска.</span>
+        </section>
+        <section class="set-group">
+          <div class="set-group-h">В нижней панели</div>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Окно</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Пятичасовое окно и недельное. «То, что ближе к концу» —
+                по расходу, а не по длине: недельное упирается раньше пятичасового ровно тогда,
+                когда вы работали всю неделю.</span>
+            </div>
+            <select class="set-input set-select" id="set-subs-window"></select>
+          </div>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Время сброса</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Отсчёт до обновления лимитов. Точное время видно всегда —
+                в списке по клику на подписке.</span>
+            </div>
+            <select class="set-input set-select" id="set-subs-eta"></select>
+          </div>
+          <div class="set-head"><span class="set-label">Предпросмотр</span></div>
+          <div class="subs-preview" id="set-subs-preview"></div>
+          <span class="set-hint">Свои остатки и имя своей подписки агент видит всегда — они
+            попадают в начало каждого его хода, независимо от этих галочек.</span>
+        </section>
       </div>
 
       <div class="set-panel" data-panel="notify">
@@ -1970,7 +2038,7 @@ function showSettingsModal(tab) {
   });
 
   const agentBlockEl = overlay.querySelector('#set-agent-block');
-  const agentListEl = overlay.querySelector('#set-agent-list');
+  const subsListEl = overlay.querySelector('#set-subs-list');
   const pickFieldEl = overlay.querySelector('#set-pick-field');
   // Режим для новых вкладок. Список приходит из main: подписи режимов живут в screen.js,
   // рядом с их распознаванием на экране, и второй список здесь разошёлся бы с ним молча.
@@ -2393,34 +2461,128 @@ function showSettingsModal(tab) {
   const pultI = overlay.querySelector('#set-pult');
   pultI.checked = pultEnabled;
 
-  // The pick-mode choice only matters with more than one command — hide otherwise.
-  const countAgents = () => [...agentListEl.querySelectorAll('.agent-cmd')]
+  // Вопрос «когда спрашивать» имеет смысл только при нескольких подписках — иначе выбирать
+  // не из чего, и настройка была бы вопросом без вариантов.
+  const countAgents = () => [...subsListEl.querySelectorAll('.sub-line')]
     .filter((i) => i.value.trim()).length;
   const syncPickVisibility = () => {
     pickFieldEl.classList.toggle('hidden', countAgents() <= 1);
   };
-  // One line per command ("cmd --flags"); split on save.
-  const addAgentRow = (agent = { cmd: '', flags: '' }) => {
+
+  // Карточка подписки: строка запуска, имя, галка «показывать остатки в панели». Живых чисел
+  // здесь НЕТ намеренно — настройка не сводка. Единственное, что карточка говорит про расход:
+  // «остатков пока не видели», и то лишь пока их правда не видели.
+  const subsRow = (cardIn) => {
+    const c = SUBS_API.card(cardIn || {});
     const row = document.createElement('div');
-    row.className = 'agent-row';
+    row.className = 'sub-row';
     row.innerHTML = `
-      <input class="set-input agent-cmd" type="text" spellcheck="false"
-             autocapitalize="off" autocorrect="off" placeholder="claude --model sonnet" />
-      <button type="button" class="agent-del" title="Удалить" aria-label="удалить">×</button>`;
-    row.querySelector('.agent-cmd').value = agentLabel(agent);
+      <div class="sub-main">
+        <input class="set-input sub-line" type="text" spellcheck="false" autocapitalize="off"
+               autocorrect="off" placeholder="claude-my --model sonnet" />
+        <input class="set-input sub-name" type="text" spellcheck="false" placeholder="имя" />
+        <button type="button" class="agent-del" title="Убрать" aria-label="убрать">×</button>
+      </div>
+      <label class="set-check sub-bar-row">
+        <input type="checkbox" class="sub-bar" />
+        <span class="set-check-tx">показывать остатки в нижней панели</span>
+      </label>
+      <span class="sub-note" hidden></span>`;
+    const lineI = row.querySelector('.sub-line');
+    const nameI = row.querySelector('.sub-name');
+    const barI = row.querySelector('.sub-bar');
+    lineI.value = c.line;
+    nameI.value = c.name;
+    barI.checked = c.bar !== false;
+    row.dataset.home = c.home || '';
+    // Знаем ли мы про эту строку хоть одно число. Не «подписка ли это по имени команды»:
+    // `claude-glm` и `cld` — обёртки к чужим моделям, имя клодовое, а окон лимитов нет.
+    // Признак приходит от самого Клода, с первым ответом модели (см. subs.js).
+    const known = () => {
+      const st = SUBS_API.menuRows(subsState()).find((r) => r.line === lineI.value.trim());
+      return !!(st && st.known);
+    };
+    const syncNote = () => {
+      const note = row.querySelector('.sub-note');
+      const ok = known();
+      note.hidden = ok || !barI.checked;
+      note.textContent = ok ? '' : 'остатков пока не видели — появятся после первого ответа агента';
+    };
     row.querySelector('.agent-del').addEventListener('click', () => {
       row.remove();
       syncPickVisibility();
+      renderSubsPreview();
     });
-    row.querySelector('.agent-cmd').addEventListener('input', syncPickVisibility);
-    agentListEl.appendChild(row);
+    lineI.addEventListener('input', () => { syncPickVisibility(); syncNote(); renderSubsPreview(); });
+    nameI.addEventListener('input', renderSubsPreview);
+    barI.addEventListener('change', () => { syncNote(); renderSubsPreview(); });
+    syncNote();
+    subsListEl.appendChild(row);
     return row;
   };
 
-  launchList.forEach((a) => addAgentRow(a));
-  overlay.querySelector('#set-agent-add').addEventListener('click', () => {
-    addAgentRow().querySelector('.agent-cmd').focus();
+  // Карточки, как они выглядят в панели ПРЯМО СЕЙЧАС, не дожидаясь «Сохранить»: предпросмотр
+  // должен показывать выбор человека, а не то, что было до правки.
+  const draftCards = () => [...subsListEl.querySelectorAll('.sub-row')].map((r) => ({
+    line: r.querySelector('.sub-line').value.trim(),
+    name: r.querySelector('.sub-name').value.trim(),
+    bar: r.querySelector('.sub-bar').checked,
+    home: r.dataset.home || '',
+  })).filter((c) => c.line);
+
+  const subsPreviewEl = overlay.querySelector('#set-subs-preview');
+  const windowSel = overlay.querySelector('#set-subs-window');
+  const etaSel = overlay.querySelector('#set-subs-eta');
+  const WINDOW_NAMES = [
+    ['worst', 'то, что ближе к концу'],
+    ['both', 'оба окна'],
+    ['five', 'только пятичасовое'],
+    ['seven', 'только недельное'],
+  ];
+  const ETA_NAMES = [
+    ['tight', 'когда израсходовано больше ' + SUBS_API.TIGHT + '%'],
+    ['always', 'всегда'],
+    ['never', 'никогда'],
+  ];
+  const fillSel = (sel, pairs, now) => {
+    sel.innerHTML = '';
+    for (const [val, name] of pairs) {
+      const o = document.createElement('option');
+      o.value = val;
+      o.textContent = name;
+      sel.appendChild(o);
+    }
+    sel.value = now;
+  };
+  fillSel(windowSel, WINDOW_NAMES, subsView.window);
+  fillSel(etaSel, ETA_NAMES, subsView.eta);
+
+  function renderSubsPreview() {
+    if (!subsPreviewEl) return;
+    const view = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
+    const rows = SUBS_API.pills({
+      cards: draftCards(), accounts: subsAccounts, mute: subsMute, view, now: Date.now(),
+    });
+    subsPreviewEl.innerHTML = '';
+    if (!rows.length) {
+      const empty = document.createElement('span');
+      empty.className = 'subs-empty';
+      // Пусто — это тоже ответ, и он честный: числа приходят от Клода и только по подписке.
+      empty.textContent = 'Показывать пока нечего: остатков ни по одной подписке ещё не видели.';
+      subsPreviewEl.appendChild(empty);
+      return;
+    }
+    for (const p of rows) subsPreviewEl.appendChild(pillNode(p, rows.length > 1, ''));
+  }
+  windowSel.addEventListener('change', renderSubsPreview);
+  etaSel.addEventListener('change', renderSubsPreview);
+
+  launchList.forEach((a) => subsRow(a));
+  overlay.querySelector('#set-subs-add').addEventListener('click', () => {
+    subsRow().querySelector('.sub-line').focus();
+    syncPickVisibility();
   });
+  renderSubsPreview();
   overlay.querySelectorAll('input[name="set-pick"]').forEach((r) => { r.checked = r.value === launchPick; });
   syncPickVisibility();
 
@@ -2832,10 +2994,10 @@ function showSettingsModal(tab) {
     if (kbCapturing) stopKbCapture();
     tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
     panels.forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== name));
-    if (name === 'launch') { const f = agentListEl.querySelector('.agent-cmd'); if (f) { f.focus(); f.select(); } }
+    if (name === 'subs') { const f = subsListEl.querySelector('.sub-line'); if (f) { f.focus(); f.select(); } }
   };
   tabs.forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
-  showTab(['notify', 'appearance', 'tabs', 'keys', 'telegram', 'updates'].includes(tab) ? tab : 'launch');
+  showTab(['subs', 'notify', 'appearance', 'tabs', 'keys', 'telegram', 'updates'].includes(tab) ? tab : 'launch');
 
   const close = () => {
     stopKbCapture();
@@ -2845,11 +3007,15 @@ function showSettingsModal(tab) {
     overlay.remove();
   };
   const save = () => {
-    const agents = [...agentListEl.querySelectorAll('.agent-cmd')]
-      .map((i) => parseAgentLine(i.value))
-      .filter((a) => a.cmd);
-    launchList = agents.length ? agents : [{ cmd: 'claude', flags: '' }];
+    const cards = draftCards().map(cardOf).filter((a) => a.cmd);
+    launchList = cards.length ? cards : [cardOf({ line: 'claude' })];
     saveLaunchList(); // also syncs `launch` + legacy keys to launchList[0]
+    const nextView = SUBS_API.view({ window: windowSel.value, eta: etaSel.value });
+    if (nextView.window !== subsView.window || nextView.eta !== subsView.eta) {
+      subsView = nextView;
+      saveSubsView();
+      renderUsagePills();
+    }
     launchMode = overlay.querySelector('input[name="set-mode"]:checked')?.value || 'agent';
     saveLaunchMode();
     launchPick = overlay.querySelector('input[name="set-pick"]:checked')?.value || 'folder';
@@ -4680,6 +4846,233 @@ presencePill.addEventListener('click', (e) => {
 });
 window.swarm.telegram.onState(renderPresencePill);
 window.swarm.telegram.state().then(renderPresencePill).catch(() => {});
+
+
+// --- расход подписки в нижней панели ----------------------------------------------------
+// Окна лимитов — не про вкладку, а про АККАУНТ: до сих пор они жили в строке статуса внутри
+// каждой вкладки, то есть одни и те же числа честно повторялись в терминале столько раз,
+// сколько открыто вкладок этого конфига, и были видны только у той, что на экране. Теперь они
+// в панели — одной для всех, — а строка статуса вкладки от них освободилась.
+//
+// Подписок бывает несколько, и лепить все в панель не надо: показывается то, что человек
+// отметил сам (галка на карточке в настройках или в списке по клику). «По активной вкладке»
+// намеренно нет — панель не должна меняться от того, куда человек кликнул.
+const usagePills = document.getElementById('usage-pills');
+const subsMenu = document.getElementById('subs-menu');
+let subsAccounts = [];              // живой расход по аккаунтам, из главного процесса
+let subsMute = loadSubsMute();      // аккаунты БЕЗ карточки, которые человек убрал из панели
+let subsView = SUBS_API.view(loadJson('swarm.subsView'));
+
+function loadJson(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
+}
+
+function loadSubsMute() {
+  const raw = loadJson('swarm.subsMute');
+  return Array.isArray(raw) ? raw.map(String) : [];
+}
+
+function saveSubsMute() { localStorage.setItem('swarm.subsMute', JSON.stringify(subsMute)); }
+function saveSubsView() { localStorage.setItem('swarm.subsView', JSON.stringify(subsView)); }
+
+// Всё, из чего считаются и пилюли, и список, и предпросмотр в настройках. Одна функция, чтобы
+// три места не разошлись в том, что значит «показывать».
+function subsState() {
+  return { cards: launchList, accounts: subsAccounts, mute: subsMute, view: subsView, now: Date.now() };
+}
+
+// Подсказка на пилюле: оба окна и точное время сброса. В самой пилюле стоит одно число — то,
+// что ближе к концу, — а «сколько во втором окне» человек спрашивает раз в день.
+function pillTitle(row) {
+  const parts = [];
+  for (const w of ['five', 'seven']) {
+    const it = row[w];
+    if (!it) continue;
+    const when = row.when[w];
+    parts.push(`${it.lab === '5ч' ? '5 часов' : '7 дней'}: ${it.spent}%${when ? ` (обновится ${when})` : ''}`);
+  }
+  if (!parts.length) return 'Расход подписки. Клик — список подписок.';
+  return `${row.label} — ${parts.join(', ')}. Клик — список подписок.`;
+}
+
+function pillNode(p, withLabel, title) {
+  const btn = document.createElement('button');
+  btn.className = 'usage-pill' + (p.level ? ' is-' + p.level : '');
+  btn.type = 'button';
+  btn.dataset.home = p.home;
+  btn.title = title || '';
+  if (withLabel) {
+    const alias = document.createElement('span');
+    alias.className = 'u-alias';
+    alias.textContent = p.label;
+    const sep = document.createElement('span');
+    sep.className = 'u-sep';
+    sep.textContent = '·';
+    btn.append(alias, sep);
+  }
+  const ic = document.createElement('span');
+  ic.className = 'u-ic';
+  ic.innerHTML = ICONS.gauge;
+  btn.appendChild(ic);
+  p.items.forEach((it, i) => {
+    if (i) {
+      const dot = document.createElement('span');
+      dot.className = 'u-sep';
+      dot.textContent = '·';
+      btn.appendChild(dot);
+    }
+    const num = document.createElement('span');
+    num.className = 'u-num ' + (it.level || '');
+    num.textContent = it.spent + '%';
+    const lab = document.createElement('span');
+    lab.className = 'u-lab';
+    lab.textContent = it.lab;
+    btn.append(num, lab);
+    if (it.eta) {
+      const eta = document.createElement('span');
+      eta.className = 'u-eta ' + (it.level || '');
+      eta.innerHTML = ICONS.clock;
+      eta.appendChild(document.createTextNode(it.eta));
+      btn.appendChild(eta);
+    }
+  });
+  return btn;
+}
+
+// Пилюль столько, сколько отмечено подписок. Ни одной — панель молчит: пока числа не пришли
+// (Клод присылает окна только по подписке и только с первого ответа модели), пустое место
+// честнее нулей.
+function renderUsagePills() {
+  if (!usagePills) return;
+  const st = subsState();
+  // Папку конфига карточки узнают отсюда: вкладка отработала — в снимке написано, где она
+  // живёт. Сохраняем только когда узнали что-то новое (learnHome возвращает тот же список,
+  // если ничего не изменилось), иначе запись шла бы каждые двадцать секунд.
+  const learned = SUBS_API.learnHome(launchList, subsAccounts);
+  if (learned !== launchList) {
+    launchList = learned.map(cardOf);
+    saveLaunchList();                 // сам позовёт renderUsagePills ещё раз — уже без правок
+    return;
+  }
+  const rows = SUBS_API.pills(st);
+  const menu = SUBS_API.menuRows(st);
+  usagePills.innerHTML = '';
+  for (const p of rows) {
+    const row = menu.find((m) => m.home === p.home);
+    usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p)));
+  }
+  usagePills.hidden = !rows.length;
+  if (!rows.length) closeSubsMenu();
+  if (!subsMenu.classList.contains('hidden')) fillSubsMenu();   // список открыт — обновим числа
+}
+
+// Список по клику: ВСЕ известные подписки с обоими окнами и точным временем сброса, галочками
+// отмечено, что висит в панели. Отмеченных может быть несколько — это набор, а не «одна из».
+function fillSubsMenu() {
+  const rows = SUBS_API.menuRows(subsState());
+  subsMenu.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'cmd-sep';
+  head.textContent = 'Показывать в панели';
+  subsMenu.appendChild(head);
+  for (const r of rows) {
+    const b = document.createElement('button');
+    b.className = 'cmd-item u-pick' + (r.on ? ' is-on' : '');
+    b.type = 'button';
+    const box = document.createElement('span');
+    box.className = 'u-box';
+    box.textContent = r.on ? '☑' : '☐';
+    const who = document.createElement('span');
+    who.className = 'u-who';
+    who.textContent = r.label;
+    const nums = document.createElement('span');
+    nums.className = 'u-nums';
+    nums.textContent = r.known
+      ? [r.five && `5ч ${r.five.spent}%`, r.seven && `7д ${r.seven.spent}%`].filter(Boolean).join(' · ')
+      : '';
+    const when = document.createElement('span');
+    when.className = 'u-when';
+    // Почему пусто, если пусто: окна приходят только по подписке и только с первого ответа
+    // модели, так что «ещё не видели» — это состояние, а не поломка.
+    when.textContent = r.known
+      ? 'обновится ' + [r.when.five, r.when.seven].filter(Boolean).join(' и ')
+      : 'остатков пока не видели — появятся после первого ответа агента';
+    b.append(box, who, nums, when);
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleSubShown(r);
+      fillSubsMenu();
+    });
+    subsMenu.appendChild(b);
+  }
+  const sep = document.createElement('div');
+  sep.className = 'cmd-sep';
+  sep.textContent = 'Подписки';
+  const open = document.createElement('button');
+  open.className = 'cmd-item';
+  open.type = 'button';
+  const name = document.createElement('span');
+  name.className = 'cmd-name';
+  name.textContent = 'Настроить…';
+  const hint = document.createElement('span');
+  hint.className = 'cmd-hint';
+  hint.textContent = 'Имена, строки запуска, вид в панели.';
+  open.append(name, hint);
+  open.addEventListener('click', () => { closeSubsMenu(); showSettingsModal('subs'); });
+  subsMenu.append(sep, open);
+}
+
+// Галка «показывать в панели». У подписки с карточкой это её собственное поле (оно же стоит в
+// настройках), у аккаунта без карточки — список заглушённых: карточки, чтобы хранить в ней
+// галку, у него нет, а спрятать чужой `claude`, набранный руками, человек вправе.
+function toggleSubShown(row) {
+  if (row.line) {
+    const i = launchList.findIndex((a) => SUBS_API.line(a) === row.line);
+    if (i === -1) return;
+    launchList[i] = cardOf(Object.assign({}, launchList[i], { bar: !(launchList[i].bar !== false) }));
+    saveLaunchList();
+    return;
+  }
+  if (!row.home) return;
+  const i = subsMute.indexOf(row.home);
+  if (i === -1) subsMute.push(row.home);
+  else subsMute.splice(i, 1);
+  saveSubsMute();
+  renderUsagePills();
+}
+
+function openSubsMenu(anchor) {
+  fillSubsMenu();
+  subsMenu.classList.remove('hidden');
+  placeMenuUnder(subsMenu, anchor);
+  setTimeout(() => document.addEventListener('mousedown', outsideCloseSubs), 0);
+}
+
+function closeSubsMenu() {
+  subsMenu.classList.add('hidden');
+  document.removeEventListener('mousedown', outsideCloseSubs);
+}
+
+function outsideCloseSubs(e) {
+  if (!subsMenu.contains(e.target) && !usagePills.contains(e.target)) closeSubsMenu();
+}
+
+usagePills.addEventListener('click', (e) => {
+  const btn = e.target.closest('.usage-pill');
+  if (!btn) return;
+  e.stopPropagation();
+  if (subsMenu.classList.contains('hidden')) openSubsMenu(btn);
+  else closeSubsMenu();
+});
+
+window.swarm.subs.onAccounts((list) => {
+  subsAccounts = Array.isArray(list) ? list : [];
+  renderUsagePills();
+});
+window.swarm.subs.accounts().then((list) => {
+  subsAccounts = Array.isArray(list) ? list : [];
+  renderUsagePills();
+}).catch(() => {});
 
 // --- значок мандата ---------------------------------------------------------------------
 // Что вкладки делали без человека, рассказывают они сами: агент пишет итог, закончив задачу

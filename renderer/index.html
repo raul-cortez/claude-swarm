@@ -66,6 +66,10 @@
       <!-- Red "!" surfaces captured errors; click opens the logs modal. Hidden until an error occurs. -->
       <!-- Появляется, когда доступно обновление; клик открывает модалку апдейта. -->
       <button id="update-pill" class="update-pill" hidden></button>
+      <!-- Расход подписки: по пилюле на отмеченную подписку. Окна лимитов — про АККАУНТ, а не
+           про вкладку, поэтому им место в общей панели, а не в строке статуса каждой вкладки.
+           Заполняет renderUsagePills(); пусто, пока числа не пришли. -->
+      <div id="usage-pills" class="usage-pills" hidden></div>
       <!-- Ночной режим: сколько вкладок работает без человека, и дверь к «отдать все разом».
            Стоит в панели всегда — это единственный способ отдать все вкладки, раньше он был
            пунктом в списке «где я» и спорил там с вопросом «где человек». -->
@@ -81,6 +85,9 @@
       <button id="settings-btn" title="Настройки (⌘,)"><span class="ic">⚙</span><span class="tx">настройки</span></button>
     </div>
   </footer>
+
+  <!-- Список по клику на расходе подписки: что показывать в панели, с точным временем сброса. -->
+  <div id="subs-menu" class="cmd-menu hidden"></div>
 
   <!-- Список у луны: «отдать все вкладки» / «забрать все себе». Меню, а не переключатель под
        курсором: кнопка трогает сразу все вкладки, и промах по ней стоит либо брошенной работы,
@@ -123,6 +130,9 @@
   <!-- «Agent is calling me» phrase matcher (window.SWARM_ASK_PHRASES). Shared with
        main/screen.js — the settings preview must match the real detector. -->
   <script src="../ask-phrases.js"></script>
+  <!-- Подписки: карточки запуска и что из расхода видно в панели (window.SWARM_SUBS).
+       Общий с main — пороги «поджало/у стены» и выбор окна должны быть одни. -->
+  <script src="../subs.js"></script>
   <!-- Самоперезапуск вкладки (window.SWARM_RESTART). Общий с main: границы ползунка в
        настройках и порог, по которому main спрашивает агента, — одно и то же число. -->
   <script src="../restart.js"></script>

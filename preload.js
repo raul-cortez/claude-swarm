@@ -205,6 +205,14 @@ contextBridge.exposeInMainWorld('swarm', {
     onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
   },
 
+  // Подписки: живой расход по аккаунтам — из главного (он читает снимки, которые пишет наша
+  // строка статуса), карточки — туда (правятся в окне, а хуку нужны имена, см. subsWriteCards).
+  subs: {
+    accounts: ()      => ipcRenderer.invoke('subs:accounts'),
+    setCards: (cards) => ipcRenderer.invoke('subs:setCards', cards),
+    onAccounts: (cb)  => ipcRenderer.on('subs:accounts', (_e, a) => cb(a)),
+  },
+
   // Git plumbing for the branch status bar. Each call targets a folder path
   // (the active session's cwd). info → { isRepo, branch, ahead, behind, dirty };
   // branches → string[]; fetch/pull/checkout → { ok, error };
