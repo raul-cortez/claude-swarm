@@ -67,6 +67,7 @@
     { key: 'k', meta: true, ctrl: false, alt: false, shift: false },
     { key: ',', meta: true, ctrl: false, alt: false, shift: false },
     { key: 'l', meta: true, ctrl: false, alt: false, shift: false },
+    { key: 'j', meta: true, ctrl: false, alt: false, shift: false },
     { key: '1', meta: true, ctrl: false, alt: false, shift: false },
     { key: '2', meta: true, ctrl: false, alt: false, shift: false },
     { key: '3', meta: true, ctrl: false, alt: false, shift: false },

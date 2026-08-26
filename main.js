@@ -6297,6 +6297,10 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   const isWin = os.platform() === 'win32';
   // Restored tabs may point at a folder that no longer exists — fall back safely.
   const cwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : defaultWorkdir();
+  // Панель терминала (renderer «Терминал», ⌘J): обычная оболочка, не привязанная ни к
+  // одному агенту. Без детектора статуса и без бухгалтерии телеги/ночи — иначе она
+  // засоряла бы счётчик «N вкладок работают без вас» и список тем в телеге.
+  const isPanel = !!opts.panel;
 
   // Build the launch line BEFORE the shell exists: our long flag values are handed
   // over in this shell's environment (see envPassing), so they have to be collected
@@ -6318,63 +6322,70 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   });
 
   sessions.set(id, child);
-  const d0 = makeDetector(opts.cols, opts.rows);
-  d0.cwd = cwd;                       // the transcript lives under a slug of this path
-  d0.tabKey = String(opts.tabKey || '');   // survives relaunch: the Telegram topic key
-  d0.name = String(opts.name || '');
-  // Мандат «работай без меня» принадлежит вкладке, а не сеансу приложения: сохраняется рядом с
-  // именем и папкой (persistTabs) и возвращается сюда при восстановлении. Иначе обновление
-  // сворма молча забирало бы у отданных вкладок разрешение работать.
-  //
-  // И ещё: пока в силе общее положение «меня нет», НОВАЯ вкладка рождается отданной. Иначе
-  // она одна разрушала бы сумму, по которой это положение и считается (см. nightReconcile):
-  // открыл вкладку в три часа — и общий режим погас, а с ним и всё, что он держит.
-  d0.auto = !!opts.auto || nightLegacy || (!opts.restored && awayAll());
-  det.set(id, d0);
-  if (d0.auto) { tgWriteModes(); nightPush(); tgApplyKeepAwake(); }
+  let d0 = null;
+  if (!isPanel) {
+    d0 = makeDetector(opts.cols, opts.rows);
+    d0.cwd = cwd;                       // the transcript lives under a slug of this path
+    d0.tabKey = String(opts.tabKey || '');   // survives relaunch: the Telegram topic key
+    d0.name = String(opts.name || '');
+    // Мандат «работай без меня» принадлежит вкладке, а не сеансу приложения: сохраняется рядом с
+    // именем и папкой (persistTabs) и возвращается сюда при восстановлении. Иначе обновление
+    // сворма молча забирало бы у отданных вкладок разрешение работать.
+    //
+    // И ещё: пока в силе общее положение «меня нет», НОВАЯ вкладка рождается отданной. Иначе
+    // она одна разрушала бы сумму, по которой это положение и считается (см. nightReconcile):
+    // открыл вкладку в три часа — и общий режим погас, а с ним и всё, что он держит.
+    d0.auto = !!opts.auto || nightLegacy || (!opts.restored && awayAll());
+    det.set(id, d0);
+    if (d0.auto) { tgWriteModes(); nightPush(); tgApplyKeepAwake(); }
+  }
 
   child.onData((data) => {
-    feedDetector(id, data);
+    if (!isPanel) feedDetector(id, data);
     safeSend('session:data', { id, data });
   });
 
   child.onExit(({ exitCode }) => {
-    tgOnTabGone(det.get(id));
-    // Наши служебные файлы лежат в папке вкладки, то есть в чужом репозитории. Обычно они живут
-    // секунды, но если вкладку закрыли между записью и чтением — остались бы висеть в `git status`.
-    restartSweepCwd(id, det.get(id));
+    if (!isPanel) {
+      tgOnTabGone(det.get(id));
+      // Наши служебные файлы лежат в папке вкладки, то есть в чужом репозитории. Обычно они живут
+      // секунды, но если вкладку закрыли между записью и чтением — остались бы висеть в `git status`.
+      restartSweepCwd(id, det.get(id));
+    }
     sessions.delete(id);
     ptyOut.drop(id);                    // хвост печати мёртвой вкладке досылать некуда
     safeSend('session:exit', { id, code: exitCode });
   });
 
-  // Known id => exact transcript binding. Either we pinned it just now (a fresh tab),
-  // or the renderer is restoring a conversation and told us the id it is resuming —
-  // `--resume <id>` keeps that id, so the tab binds precisely from the first tick
-  // instead of guessing by folder + mtime.
-  d0.claudeSessionId = pinned.sessionId || String(opts.resumeId || '') || null;
-  // Give the login shell a moment to finish sourcing the profile, then run claude —
-  // preceded by a `clear`, so what the user sees first is the agent and not the line we
-  // typed for them.
-  // Строку запуска ЗАПОМИНАЕМ целиком: самоперезапуск стартует свежую сессию именно ей, только
-  // с новыми метками разговора. Пересобрать её заново он не может — ссылки на окружение
-  // (--settings, правило обращения) живут в окружении ЭТОГО pty, а оно задаётся один раз здесь.
-  d0.launchCmd = cmd || '';
-  d0.sessionStartAt = Date.now();
-  if (cmd) {
-    setTimeout(() => {
-      // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
-      if (!ptyType(id, clearPrefix(shell) + cmd + '\r')) return;
-      // С этой секунды в шелле крутится НАШ запуск (см. scanTabProcesses): чем он развернулся,
-      // вкладке знать незачем — она помнит команду, которую выбрал человек.
-      d0.launchAt = Date.now();
-      d0.launchPid = null;
-    }, 350);
+  if (!isPanel) {
+    // Known id => exact transcript binding. Either we pinned it just now (a fresh tab),
+    // or the renderer is restoring a conversation and told us the id it is resuming —
+    // `--resume <id>` keeps that id, so the tab binds precisely from the first tick
+    // instead of guessing by folder + mtime.
+    d0.claudeSessionId = pinned.sessionId || String(opts.resumeId || '') || null;
+    // Give the login shell a moment to finish sourcing the profile, then run claude —
+    // preceded by a `clear`, so what the user sees first is the agent and not the line we
+    // typed for them.
+    // Строку запуска ЗАПОМИНАЕМ целиком: самоперезапуск стартует свежую сессию именно ей, только
+    // с новыми метками разговора. Пересобрать её заново он не может — ссылки на окружение
+    // (--settings, правило обращения) живут в окружении ЭТОГО pty, а оно задаётся один раз здесь.
+    d0.launchCmd = cmd || '';
+    d0.sessionStartAt = Date.now();
+    if (cmd) {
+      setTimeout(() => {
+        // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
+        if (!ptyType(id, clearPrefix(shell) + cmd + '\r')) return;
+        // С этой секунды в шелле крутится НАШ запуск (см. scanTabProcesses): чем он развернулся,
+        // вкладке знать незачем — она помнит команду, которую выбрал человек.
+        d0.launchAt = Date.now();
+        d0.launchPid = null;
+      }, 350);
+    }
   }
 
   // The renderer keeps claudeSessionId with the tab and saves it: that id is what the
-  // NEXT launch resumes. Null for non-Claude tabs and clean terminals.
-  return { id, cwd, claudeSessionId: d0.claudeSessionId };
+  // NEXT launch resumes. Null for non-Claude tabs, clean terminals and the panel.
+  return { id, cwd, claudeSessionId: isPanel ? null : d0.claudeSessionId };
 });
 
 // Is this conversation still on disk? Asked before a restored tab runs `--resume <id>`:

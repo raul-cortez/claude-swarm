@@ -233,6 +233,17 @@ const gitMenu     = document.getElementById('git-menu');
 const gitMsgEl    = document.getElementById('git-msg');
 const gitDiffBtn  = document.getElementById('git-diff');
 
+// --- dockable terminal panel: DOM refs (see the section near the layout code) ---
+const stageAgentsEl   = document.getElementById('stage-agents');
+const termSplitEl     = document.getElementById('term-split');
+const termPanelEl     = document.getElementById('term-panel');
+const termTabsEl      = document.getElementById('term-tabs');
+const termPanelBodyEl = document.getElementById('term-panel-body');
+const termPanelBtn    = document.getElementById('term-panel-btn');
+const termAddBtn      = document.getElementById('term-add-btn');
+const termPosBtn      = document.getElementById('term-pos-btn');
+const termDockBtn     = document.getElementById('term-dock-btn');
+
 let gitInfo = null;      // last git:info for the ACTIVE folder (null until first fetch)
 let gitMsgTimer = null;  // auto-clear timer for the transient error plaque
 let gitDiff = null;      // last git:diffstat for the ACTIVE folder (null until first fetch)
@@ -295,6 +306,14 @@ const ICONS = {
   gauge: SVG('<path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'),
   clock: SVG('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
   sunrise: SVG('<path d="M12 2v6"/><path d="m4.93 8.93 1.41 1.41"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m17.66 10.34 1.41-1.41"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/>'),
+  // Lucide "terminal" — статус-бар: кнопка пристыковываемой панели.
+  terminal: SVG('<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
+  // «panel-bottom» / «panel-right» — текущая стыковка панели терминала.
+  dockBottom: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/>'),
+  dockSide: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>'),
+  // «layout-panel-top» / «layout-panel-left» — текущее расположение вкладок панели.
+  tabsTop: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),
+  tabsLeft: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>'),
 };
 
 // Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
@@ -1055,7 +1074,7 @@ async function createSession(opts = {}) {
 
   const holder = document.createElement('div');
   holder.className = 'term-holder';
-  stageEl.appendChild(holder);
+  stageAgentsEl.appendChild(holder);
   term.open(holder);
   // xterm reserves space for a scrollbar via `viewport.offsetWidth - scrollArea || 15`.
   // On macOS the scrollbar is overlay (0 layout width), so that measures 0 and the
@@ -1409,6 +1428,7 @@ function showSettingsModal(tab) {
         <button class="set-tab" data-tab="notify">Уведомления</button>
         <button class="set-tab" data-tab="appearance">Вид</button>
         <button class="set-tab" data-tab="tabs">Вкладки</button>
+        <button class="set-tab" data-tab="terminal">Терминал</button>
         <button class="set-tab" data-tab="keys">Клавиши</button>
         <button class="set-tab" data-tab="telegram">Телеграм</button>
         <button class="set-tab" data-tab="night">Ночной режим</button>
@@ -1709,6 +1729,50 @@ function showSettingsModal(tab) {
         <section class="set-group">
           <div class="set-group-h">Предпросмотр</div>
           <div class="tab-preview" id="set-tab-preview"></div>
+        </section>
+      </div>
+
+      <div class="set-panel" data-panel="terminal">
+        <header class="set-panel-h">
+          <h2 class="set-h">Терминал</h2>
+          <p class="set-intro">Пристыковываемая панель терминала (⌘J) — обычная оболочка,
+            отдельно от агентских вкладок. Своих вкладок внутри может быть несколько.</p>
+        </header>
+        <section class="set-group">
+          <div class="set-group-h">Каталог новой вкладки терминала</div>
+          <div class="set-row">
+            <label class="set-radio">
+              <input type="radio" name="set-term-cwd" value="agent" />
+              <span class="set-check-tx">Каталог активного агента</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>На момент открытия вкладки терминала — потом за
+              активной вкладкой не следует, остаётся там, где открылась.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-radio">
+              <input type="radio" name="set-term-cwd" value="fixed" />
+              <span class="set-check-tx">Фиксированный путь</span>
+            </label>
+          </div>
+          <div class="set-field is-row" id="set-term-path-field">
+            <input type="text" class="set-input" id="set-term-path" placeholder="~/" readonly />
+            <button type="button" class="set-check-btn" id="set-term-path-pick">Выбрать…</button>
+          </div>
+        </section>
+        <section class="set-group">
+          <div class="set-group-h">Между запусками приложения</div>
+          <div class="set-row">
+            <label class="set-check">
+              <input type="checkbox" id="set-term-persist" />
+              <span class="set-check-tx">Восстанавливать вкладки терминала при следующем запуске</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Восстанавливается список вкладок и их каталог — новый
+              процесс оболочки в той же папке, история терминала не сохраняется: настоящей
+              заморозки shell-сессии приложение не делает. Выключено — панель терминала стартует
+              пустой и закрытой.</span>
+          </div>
         </section>
       </div>
 
@@ -2597,6 +2661,26 @@ function showSettingsModal(tab) {
   });
   syncModeVisibility();
 
+  // Terminal panel settings (Settings → Терминал). Read on Save, like set-mode/permMode —
+  // no draft/preview needed for two plain radios + a path + a checkbox.
+  const termCwdRadios = overlay.querySelectorAll('input[name="set-term-cwd"]');
+  const termPathFieldEl = overlay.querySelector('#set-term-path-field');
+  const termPathI = overlay.querySelector('#set-term-path');
+  const termPersistI = overlay.querySelector('#set-term-persist');
+  termCwdRadios.forEach((r) => { r.checked = r.value === (localStorage.getItem('swarm.termCwdMode') || 'agent'); });
+  termPathI.value = localStorage.getItem('swarm.termCwdPath') || '';
+  termPersistI.checked = localStorage.getItem('swarm.termPersist') === '1';
+  const syncTermCwdVisibility = () => {
+    const fixed = overlay.querySelector('input[name="set-term-cwd"]:checked')?.value === 'fixed';
+    termPathFieldEl.classList.toggle('hidden', !fixed);
+  };
+  termCwdRadios.forEach((r) => r.addEventListener('change', syncTermCwdVisibility));
+  syncTermCwdVisibility();
+  overlay.querySelector('#set-term-path-pick').addEventListener('click', async () => {
+    const dir = await window.swarm.pickFolder(termPathI.value || undefined);
+    if (dir) termPathI.value = dir;
+  });
+
   // Notify panel wiring: the sub-options grey out when the master is off.
   const onI = overlay.querySelector('#set-notify-on');
   const readyI = overlay.querySelector('#set-notify-ready');
@@ -2997,7 +3081,7 @@ function showSettingsModal(tab) {
     if (name === 'subs') { const f = subsListEl.querySelector('.sub-line'); if (f) { f.focus(); f.select(); } }
   };
   tabs.forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
-  showTab(['subs', 'notify', 'appearance', 'tabs', 'keys', 'telegram', 'updates'].includes(tab) ? tab : 'launch');
+  showTab(['subs', 'notify', 'appearance', 'tabs', 'terminal', 'keys', 'telegram', 'updates'].includes(tab) ? tab : 'launch');
 
   const close = () => {
     stopKbCapture();
@@ -3020,6 +3104,9 @@ function showSettingsModal(tab) {
     saveLaunchMode();
     launchPick = overlay.querySelector('input[name="set-pick"]:checked')?.value || 'folder';
     saveLaunchPick();
+    localStorage.setItem('swarm.termCwdMode', overlay.querySelector('input[name="set-term-cwd"]:checked')?.value || 'agent');
+    localStorage.setItem('swarm.termCwdPath', termPathI.value || '');
+    localStorage.setItem('swarm.termPersist', termPersistI.checked ? '1' : '0');
     if (permI.value !== permMode) {
       permMode = permI.value;
       localStorage.setItem('swarm.permMode', permMode);
@@ -3597,6 +3684,322 @@ function attachRename(labelEl) {
     const t = labelEl.closest('.tab');
     if (t && t.dataset.sid) window.swarm.setTabName(t.dataset.sid, labelEl.textContent);
   });
+}
+
+// --- dockable terminal panel ---------------------------------------------------
+// A plain shell, not attached to any agent tab (see Settings → Терминал for its
+// cwd rule and whether it survives an app restart). Docks under or beside the
+// stage (⌘J / #term-panel-btn), with its own mini tab strip — no status color,
+// just a name. Reuses .term-holder for sizing (same shape as an agent
+// terminal), just parented in #term-panel-body instead of #stage-agents, and a
+// second, independent Map — it must never touch `sessions` (agent bookkeeping:
+// pult, night, Telegram, persistTabs all assume that Map is agent tabs only).
+const termPanel = {
+  sessions: new Map(),  // id -> { term, fit, holder, id, cwd, name }
+  activeId: null,
+  open: false,           // decided at startup by restoreTermPanel(), not here
+  dock: localStorage.getItem('swarm.termDock') === 'side' ? 'side' : 'bottom',
+  tabsPos: localStorage.getItem('swarm.termTabsPos') === 'left' ? 'left' : 'top',
+};
+const TERM_SIZE_MIN = 120;
+function termSizeKey() { return termPanel.dock === 'side' ? 'swarm.termSizeSide' : 'swarm.termSizeBottom'; }
+function termSizeDefault() { return termPanel.dock === 'side' ? 380 : 260; }
+function loadTermSize() {
+  const n = Number(localStorage.getItem(termSizeKey()));
+  return Number.isFinite(n) && n >= TERM_SIZE_MIN ? n : termSizeDefault();
+}
+function applyTermSize(px) {
+  document.documentElement.style.setProperty(termPanel.dock === 'side' ? '--term-w' : '--term-h', px + 'px');
+}
+
+function persistTermPanel() {
+  localStorage.setItem('swarm.termOpen', termPanel.open ? '1' : '0');
+  localStorage.setItem('swarm.termDock', termPanel.dock);
+  localStorage.setItem('swarm.termTabsPos', termPanel.tabsPos);
+  const list = [...termPanel.sessions.values()].map((s) => ({ name: s.name, cwd: s.cwd }));
+  localStorage.setItem('swarm.termTabs', JSON.stringify(list));
+}
+
+// «Каталог активного агента» — на МОМЕНТ открытия вкладки терминала, не вживую: открыли рядом
+// с одним агентом — там и остаётся, даже если потом переключились на другого (см. Settings →
+// Терминал). «Фиксированный путь» — из настройки; пусто там — тот же запасной вариант.
+function termCwdForNewTab() {
+  const mode = localStorage.getItem('swarm.termCwdMode') || 'agent';
+  if (mode === 'fixed') {
+    const p = localStorage.getItem('swarm.termCwdPath') || '';
+    if (p) return p;
+  }
+  return sessions.get(activeId)?.cwd || undefined;
+}
+
+// Открыт/закрыт, стыковка, расположение вкладок — перекладывает body/#stage классы и иконки
+// кнопок-тумблеров. Не трогает сами вкладки/pty: это чистое перекладывание chrome.
+function renderTermChrome() {
+  stageEl.classList.toggle('termpanel-open', termPanel.open);
+  stageEl.classList.toggle('termpanel-bottom', termPanel.dock === 'bottom');
+  stageEl.classList.toggle('termpanel-side', termPanel.dock === 'side');
+  termPanelEl.classList.toggle('tp-tabs-top', termPanel.tabsPos === 'top');
+  termPanelEl.classList.toggle('tp-tabs-left', termPanel.tabsPos === 'left');
+  termSplitEl.hidden = !termPanel.open;
+  termPanelEl.hidden = !termPanel.open;
+  termPanelBtn.classList.toggle('is-active', termPanel.open);
+  termDockBtn.innerHTML = termPanel.dock === 'bottom' ? ICONS.dockBottom : ICONS.dockSide;
+  termDockBtn.title = termPanel.dock === 'bottom' ? 'Переставить панель сбоку' : 'Переставить панель снизу';
+  termPosBtn.innerHTML = termPanel.tabsPos === 'top' ? ICONS.tabsTop : ICONS.tabsLeft;
+  termPosBtn.title = termPanel.tabsPos === 'top' ? 'Вкладки терминала — слева столбиком' : 'Вкладки терминала — сверху';
+}
+
+// Переименование вкладки терминала — двойной клик, как у агентской (attachRename), но без
+// её IPC-хвоста (setTabName/persistTabs агентов): у панели терминала своё сохранение.
+function attachTermRename(labelEl, id) {
+  labelEl.title = 'Двойной клик — переименовать';
+  labelEl.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    labelEl.contentEditable = 'plaintext-only';
+    labelEl.spellcheck = false;
+    labelEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(labelEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+  labelEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); labelEl.blur(); }
+    e.stopPropagation(); // не давать сработать ⌘T и другим шорткатам поверх правки
+  });
+  labelEl.addEventListener('blur', () => {
+    labelEl.contentEditable = 'false';
+    const text = labelEl.textContent.replace(/\s+/g, ' ').trim();
+    labelEl.textContent = text || 'терминал';
+    const s = termPanel.sessions.get(id);
+    if (s) s.name = labelEl.textContent;
+    persistTermPanel();
+  });
+}
+
+// Полный список вкладок панели пересобирается целиком (их обычно единицы — не жалко), плюс
+// три статичные кнопки (+ / расположение / стыковка) живут отдельно в #term-tabs-ctl и сюда
+// не входят.
+function renderTermTabs() {
+  termTabsEl.innerHTML = '';
+  for (const s of termPanel.sessions.values()) {
+    const tab = document.createElement('div');
+    tab.className = 'tp-tab' + (s.id === termPanel.activeId ? ' active' : '');
+    tab.dataset.id = s.id;
+    tab.innerHTML = `<span class="tp-label"></span><span class="tp-close" title="Закрыть">${ICONS.close}</span>`;
+    tab.querySelector('.tp-label').textContent = s.name;
+    tab.addEventListener('click', (e) => {
+      if (e.target.closest('.tp-close')) { closeTermTab(s.id); return; }
+      activateTermTab(s.id);
+    });
+    attachTermRename(tab.querySelector('.tp-label'), s.id);
+    termTabsEl.appendChild(tab);
+  }
+}
+
+function activateTermTab(id) {
+  const s = termPanel.sessions.get(id);
+  if (!s) return;
+  termPanel.activeId = id;
+  termTabsEl.querySelectorAll('.tp-tab').forEach((el) => el.classList.toggle('active', el.dataset.id === id));
+  for (const t of termPanel.sessions.values()) t.holder.classList.toggle('active', t.id === id);
+  s.fit.fit();
+  s.term.focus();
+}
+
+async function createTermTab(opts = {}) {
+  // Панель открывается САМА первой вкладкой — отдельная кнопка «показать пустую панель»
+  // никому не нужна: смысл открытия панели и есть «дайте мне терминал».
+  if (!termPanel.open) { termPanel.open = true; applyTermSize(loadTermSize()); renderTermChrome(); }
+  const cwd = opts.cwd || termCwdForNewTab();
+  const { term, fit } = makeXterm();
+  const holder = document.createElement('div');
+  holder.className = 'term-holder';
+  termPanelBodyEl.appendChild(holder);
+  term.open(holder);
+  if (term._core && term._core.viewport) term._core.viewport.scrollBarWidth = 0; // см. createSession
+  fit.fit();
+
+  // command:'' — тот же «чистый терминал», что и у агентской blank-вкладки (main ничего не
+  // печатает в pty), panel:true — маркер для main: без детектора, без бухгалтерии телеги/ночи.
+  const { id, cwd: resolvedCwd } = await window.swarm.createSession({
+    cols: term.cols, rows: term.rows, cwd, command: '', panel: true,
+  });
+
+  term.onData((data) => {
+    const clean = data.replace(/\x1b\[[IO]/g, '');
+    if (clean) window.swarm.sendInput(id, clean);
+  });
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown') return true;
+    const bytes = KEYBINDS_API.matchInputBytes(keybinds, ev);
+    if (!bytes) return true;
+    ev.preventDefault();
+    window.swarm.sendInput(id, bytes);
+    return false;
+  });
+  term.onResize(({ cols, rows }) => window.swarm.resize(id, cols, rows));
+
+  const name = opts.name || `терминал ${termPanel.sessions.size + 1}`;
+  termPanel.sessions.set(id, { term, fit, holder, id, cwd: resolvedCwd, name });
+  renderTermTabs();
+  activateTermTab(id);
+  persistTermPanel();
+  return id;
+}
+
+function closeTermTab(id) {
+  const s = termPanel.sessions.get(id);
+  if (!s) return;
+  window.swarm.killSession(id);
+  s.holder.remove();
+  termPanel.sessions.delete(id);
+  if (termPanel.activeId === id) {
+    termPanel.activeId = null;
+    const next = [...termPanel.sessions.keys()].pop();
+    if (next) activateTermTab(next);
+  }
+  renderTermTabs();
+  persistTermPanel();
+  // Пустая панель молча висящей полосой никому не нужна — прячем её так же, как закрывают
+  // последнюю агентскую вкладку. Вкладки внутри создаются заново кнопкой «+»/⌘J.
+  if (!termPanel.sessions.size) closeTermPanel();
+}
+
+// Скрыть панель НЕ значит убить её шеллы — как таск-виндоу в IDE, свёрнутая панель просто не
+// видна; процессы продолжают жить до явного закрытия вкладки (closeTermTab) или выхода из
+// приложения. Так «восстанавливать при следующем запуске» в настройках честно значит именно
+// восстановление списка вкладок, а не разрыв работающей сессии каждым скрытием панели.
+function closeTermPanel() {
+  if (!termPanel.open) return;
+  termPanel.open = false;
+  renderTermChrome();
+  persistTermPanel();
+  const s = sessions.get(activeId);
+  if (s) s.fit.fit(); // агентская сцена вернула себе всю ширину/высоту
+}
+
+function openTermPanel() {
+  if (termPanel.open) return;
+  if (!termPanel.sessions.size) { createTermTab(); return; } // сама откроет панель
+  termPanel.open = true;
+  applyTermSize(loadTermSize());
+  renderTermChrome();
+  persistTermPanel();
+  if (termPanel.activeId) activateTermTab(termPanel.activeId);
+}
+
+function toggleTermPanel() {
+  if (termPanel.open) closeTermPanel(); else openTermPanel();
+}
+
+function setTermDock(dock) {
+  const next = dock === 'side' ? 'side' : 'bottom';
+  if (next === termPanel.dock) return;
+  termPanel.dock = next;
+  if (termPanel.open) applyTermSize(loadTermSize());
+  renderTermChrome();
+  persistTermPanel();
+  const p = termPanel.sessions.get(termPanel.activeId);
+  if (p) p.fit.fit();
+  const a = sessions.get(activeId);
+  if (a) a.fit.fit();
+}
+
+function setTermTabsPos(pos) {
+  const next = pos === 'left' ? 'left' : 'top';
+  if (next === termPanel.tabsPos) return;
+  termPanel.tabsPos = next;
+  renderTermChrome();
+  persistTermPanel();
+}
+
+termAddBtn.innerHTML = ICONS.plus;
+termAddBtn.addEventListener('click', () => createTermTab());
+termPosBtn.addEventListener('click', () => setTermTabsPos(termPanel.tabsPos === 'top' ? 'left' : 'top'));
+termDockBtn.addEventListener('click', () => setTermDock(termPanel.dock === 'bottom' ? 'side' : 'bottom'));
+termPanelBtn.querySelector('.ic').innerHTML = ICONS.terminal;
+termPanelBtn.addEventListener('click', toggleTermPanel);
+
+// Своя подписка на вывод/выход pty: панель — отдельная от sessions Map, и общая подписка на
+// window.swarm.onData (см. выше) её не видит — она бьёт мимо, по чужой Map, молча не находя id.
+window.swarm.onData(({ id, data }) => {
+  const s = termPanel.sessions.get(id);
+  if (s) s.term.write(data);
+});
+window.swarm.onExit(({ id }) => {
+  const s = termPanel.sessions.get(id);
+  if (!s) return;
+  s.term.write('\r\n\x1b[2m[сессия завершена — закройте вкладку]\x1b[0m\r\n');
+});
+
+// Перетаскивание разделителя. Оба дока: делитель стоит МЕЖДУ агентской сценой и панелью, и в
+// обоих случаях «тянуть в сторону сцены» уменьшает панель — поэтому знак дельты один и тот же
+// (см. ниже), а не зеркальный по доку.
+(function initTermSplit() {
+  let dragging = false;
+  let startPos = 0;
+  let startSize = 0;
+  let liveSize = 0;
+  let rafPending = false;
+  const scheduleFit = () => {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      const p = termPanel.sessions.get(termPanel.activeId);
+      if (p) p.fit.fit();
+      const a = sessions.get(activeId);
+      if (a) a.fit.fit();
+    });
+  };
+  termSplitEl.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startPos = termPanel.dock === 'side' ? e.clientX : e.clientY;
+    startSize = liveSize = loadTermSize();
+    termSplitEl.classList.add('dragging');
+    document.body.style.cursor = termPanel.dock === 'side' ? 'col-resize' : 'row-resize';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const pos = termPanel.dock === 'side' ? e.clientX : e.clientY;
+    // Bottom dock: делитель ВЫШЕ панели — тянуть вверх (меньше Y) растит панель.
+    // Side dock: делитель ЛЕВЕЕ панели — тянуть влево (меньше X) растит панель.
+    // Обе оси — «меньше координата» = «больше панель», знак дельты общий.
+    const delta = startPos - pos;
+    const max = (termPanel.dock === 'side' ? window.innerWidth : window.innerHeight) - 200;
+    liveSize = Math.max(TERM_SIZE_MIN, Math.min(max, startSize + delta));
+    applyTermSize(liveSize);
+    scheduleFit();
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    termSplitEl.classList.remove('dragging');
+    document.body.style.cursor = '';
+    localStorage.setItem(termSizeKey(), String(liveSize));
+  });
+})();
+
+// Восстановление между запусками — см. Settings → Терминал. «Восстанавливать» значит именно
+// список вкладок (имя + каталог): настоящей заморозки shell-процесса приложение не делает,
+// новый запуск получает новую оболочку в той же папке. Панель при этом остаётся в том же
+// открыта/закрыта состоянии, что и была — восстановленные вкладки просто не обязаны быть видны
+// сразу же. Настройка выключена — панель стартует пустой и закрытой, и это тоже честно: ничего
+// не переживает перезапуск молча, раз человек это выключил.
+async function restoreTermPanel() {
+  const persist = localStorage.getItem('swarm.termPersist') === '1';
+  if (persist) {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem('swarm.termTabs') || '[]'); } catch (_) {}
+    saved = Array.isArray(saved) ? saved.filter((t) => t && t.cwd) : [];
+    const wantOpen = localStorage.getItem('swarm.termOpen') === '1';
+    for (const t of saved) await createTermTab({ cwd: t.cwd, name: t.name });
+    if (saved.length && !wantOpen) closeTermPanel();
+  }
+  renderTermChrome();
 }
 
 // --- layout switching (rail <-> top dashboard) -------------------------------
@@ -4420,7 +4823,7 @@ const stageObserver = new ResizeObserver(() => {
   const s = sessions.get(activeId);
   if (s) s.fit.fit();
 });
-stageObserver.observe(stageEl);
+stageObserver.observe(stageAgentsEl);
 
 // Top-level reorder: dragging a loner card or a group head reorders the units
 // (folders + loners). A unit never drops inside a folder (that handler ignores it).
@@ -4473,6 +4876,7 @@ window.addEventListener('keydown', (e) => {
   // the window either.
   else if (e.key === 'w') { e.preventDefault(); if (activeId && !pultOn) requestCloseSession(activeId); }
   else if (e.key === 'l') { e.preventDefault(); toggleLayout(); }
+  else if (e.key === 'j') { e.preventDefault(); toggleTermPanel(); }
   else if (e.key === '0') { e.preventDefault(); if (pultEnabled) setPult(true); }
   else if (/^[1-9]$/.test(e.key)) {
     // Unchanged: the pult took ⌘0, so agent digits never shift.
@@ -5393,6 +5797,7 @@ window.swarm.onRestartHold(({ id, hold }) => {
 });
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
+restoreTermPanel();
 
 // Keep the branch bar live: poll the ACTIVE folder's git status every 2.5s so a
 // branch switch / new changes that `claude` makes right in the terminal show up

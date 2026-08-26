@@ -29,23 +29,45 @@
   </div>
 
   <!-- One xterm container per session, only the active one is shown. The pult
-       strip + empty note live INSIDE the stage: body has two different grids
-       (rail / top), so a new grid row would mean editing both. -->
+       strip + empty note live INSIDE #stage-agents (not the body grid): body has
+       two different grids (rail / top), so a new grid row would mean editing
+       both. #stage itself may become a flex row/column (see #term-panel below) —
+       #stage-agents is its own positioned box so the pult strip's inset:0 stays
+       scoped to the agents pane and never spills under the terminal panel. -->
   <main id="stage">
-    <div id="pult-strip"></div>
-    <div id="pult-empty">Никто не ждёт ответа</div>
-    <!-- Плашка владения: висит над терминалом вкладки, которую человек отдал агенту.
-         Печать в такую вкладку не принимается вовсе, и плашка — единственное, что об этом
-         говорит; раньше на её месте была модалка поперёк экрана. Заполняет renderGate(). -->
-    <div id="gate-strip" hidden>
-      <span class="gate-moon"></span>
-      <span class="gate-text"></span>
-      <button class="gate-take" type="button"></button>
+    <div id="stage-agents">
+      <div id="pult-strip"></div>
+      <div id="pult-empty">Никто не ждёт ответа</div>
+      <!-- Плашка владения: висит над терминалом вкладки, которую человек отдал агенту.
+           Печать в такую вкладку не принимается вовсе, и плашка — единственное, что об этом
+           говорит; раньше на её месте была модалка поперёк экрана. Заполняет renderGate(). -->
+      <div id="gate-strip" hidden>
+        <span class="gate-moon"></span>
+        <span class="gate-text"></span>
+        <button class="gate-take" type="button"></button>
+      </div>
+      <!-- Shown for ~1.2s when the pult hands the terminal to the NEXT agent on
+           its own. Filled by flashHandoff(); pointer-none so you can start typing
+           the answer straight through it. -->
+      <div id="pult-flash"></div>
     </div>
-    <!-- Shown for ~1.2s when the pult hands the terminal to the NEXT agent on
-         its own. Filled by flashHandoff(); pointer-none so you can start typing
-         the answer straight through it. -->
-    <div id="pult-flash"></div>
+
+    <!-- Пристыковываемая панель терминала (⌘J) — обычная оболочка, не привязанная
+         ни к одной агентской вкладке. Свои мини-вкладки внутри (добавить/закрыть/
+         переименовать, без статуса), стыкуется снизу или сбоку — см. toggleTermPanel
+         / setTermDock в renderer.js. #term-split — перетаскиваемый разделитель. -->
+    <div id="term-split" hidden title="Потянуть — изменить размер панели"></div>
+    <div id="term-panel" hidden>
+      <div id="term-tabs-row">
+        <div id="term-tabs"></div>
+        <div id="term-tabs-ctl">
+          <button id="term-add-btn" class="tp-ctl" type="button" title="Новая вкладка терминала"></button>
+          <button id="term-pos-btn" class="tp-ctl" type="button"></button>
+          <button id="term-dock-btn" class="tp-ctl" type="button"></button>
+        </div>
+      </div>
+      <div id="term-panel-body"></div>
+    </div>
   </main>
 
   <!-- Bottom status bar: git branch of the ACTIVE session's folder (VS Code
@@ -81,6 +103,9 @@
            группы (зеркалить некуда) и при галке «присылать итоги всех ходов всегда»
            (выбирать нечего — см. renderPresencePill). -->
       <button id="presence-pill" class="presence-pill" hidden></button>
+      <!-- Пристыковываемая панель терминала (не привязана к вкладкам) — единственная
+           точка входа снаружи панели, кроме ⌘J. -->
+      <button id="term-panel-btn" title="Терминал (⌘J)"><span class="ic"></span><span class="tx">терминал</span></button>
       <button id="cmd-menu-btn" title="Быстрые команды (⌘K)"><span class="ic">☰</span><span class="tx">команды</span></button>
       <button id="settings-btn" title="Настройки (⌘,)"><span class="ic">⚙</span><span class="tx">настройки</span></button>
     </div>

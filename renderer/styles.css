@@ -1214,6 +1214,107 @@ body.no-sessions #stage::after {
   letter-spacing: 0.04em;
 }
 
+/* --- dockable terminal panel -----------------------------------------------
+   A plain-shell panel, not tied to any agent tab (⌘J). Lives INSIDE #stage
+   (see the index.html comment on #stage) precisely so it never needs a
+   second grid-template edit for layout-rail/layout-top — #stage itself just
+   becomes a flex row (side dock) or column (bottom dock) with #stage-agents
+   and #term-panel as its two items, #term-split the draggable divider.
+   Sizes are CSS custom properties so dragging only rewrites one value. */
+#stage.termpanel-open { display: flex; }
+#stage.termpanel-open.termpanel-bottom { flex-direction: column; }
+#stage.termpanel-open.termpanel-side { flex-direction: row; }
+
+#stage-agents {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#term-split { flex: 0 0 auto; background: var(--border); }
+#stage.termpanel-open.termpanel-bottom #term-split { height: 5px; margin: -2px 0; cursor: row-resize; z-index: 5; }
+#stage.termpanel-open.termpanel-side #term-split { width: 5px; margin: 0 -2px; cursor: col-resize; z-index: 5; }
+#term-split:hover, #term-split.dragging { background: var(--accent); }
+
+#term-panel {
+  flex: 0 0 auto;
+  display: flex;
+  overflow: hidden;
+  background: var(--panel);
+}
+/* The bare #term-panel rule above (ID, specificity 0,1,0,0) otherwise beats the
+   UA `[hidden] { display: none }` rule (0,0,1,0): closed, it collapsed to a
+   stray content-sized strip pinned to the top of #stage instead of vanishing. */
+#term-panel[hidden] { display: none; }
+#stage.termpanel-open.termpanel-bottom #term-panel { height: var(--term-h, 260px); border-top: 1px solid var(--border); }
+#stage.termpanel-open.termpanel-side #term-panel { width: var(--term-w, 380px); border-left: 1px solid var(--border); }
+#term-panel.tp-tabs-top { flex-direction: column; }
+#term-panel.tp-tabs-left { flex-direction: row; }
+
+#term-tabs-row { flex: 0 0 auto; display: flex; background: var(--panel-2); }
+.tp-tabs-top #term-tabs-row { flex-direction: row; align-items: center; border-bottom: 1px solid var(--border); }
+.tp-tabs-left #term-tabs-row { flex-direction: column; width: 148px; border-right: 1px solid var(--border); }
+
+#term-tabs { display: flex; gap: 4px; padding: 6px; overflow: auto; min-width: 0; }
+/* Top dock: the strip is a row, so the tab list grows to fill it (controls sit
+   at its end). Left dock: the strip is a column the full panel height — if the
+   list also grew there, one short tab would stretch across it, stranding the
+   controls at the very bottom with a dead gap above them. It only grows enough
+   for its own tabs there; a long list still scrolls (min-height:auto zeroes
+   via overflow:auto). */
+.tp-tabs-top #term-tabs { flex: 1 1 auto; flex-direction: row; }
+.tp-tabs-left #term-tabs { flex: 0 1 auto; flex-direction: column; }
+
+#term-tabs-ctl { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px; }
+.tp-tabs-left #term-tabs-ctl { flex-direction: column; }
+
+.tp-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.tp-tabs-left .tp-tab { justify-content: space-between; }
+.tp-tab:hover { background: var(--panel); color: var(--text); }
+.tp-tab.active { background: var(--panel); color: var(--text); }
+.tp-tab .tp-label { overflow: hidden; text-overflow: ellipsis; }
+.tp-tab .tp-close { display: flex; flex: none; opacity: 0; color: var(--muted); border-radius: 4px; padding: 1px; }
+.tp-tab:hover .tp-close, .tp-tab.active .tp-close { opacity: 1; }
+.tp-tab .tp-close:hover { color: var(--danger); background: rgba(255, 255, 255, 0.06); }
+.tp-tab .tp-close svg { width: 12px; height: 12px; }
+
+.tp-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tp-ctl:hover { background: var(--panel); color: var(--text); }
+.tp-ctl svg { width: 14px; height: 14px; }
+
+#term-panel-body { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+/* Panel terminals reuse .term-holder as-is (styles.css above: position/inset/
+   display) — same shape as an agent terminal, just parented here instead of
+   #stage-agents. */
+
+#term-panel-btn.is-active { color: var(--accent); }
+
 /* --- bottom git status bar ------------------------------------------------ */
 #statusbar {
   grid-column: 1 / -1;           /* span the full window width under everything */
