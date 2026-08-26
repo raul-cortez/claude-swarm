@@ -190,7 +190,10 @@ function saveKeybinds() {
 // cell grid, so the pty must be resized (same reason applyLayout refits).
 function applyAppearance() {
   const xt = APPEARANCE.getTheme(appearance.theme).xterm;
-  for (const s of sessions.values()) {
+  // termPanel.sessions (dockable terminal panel, ⌘J) is a SEPARATE map from `sessions`
+  // (agent tabs) — restyle both, or a panel tab left open through Save would keep the
+  // old theme/font/cursor until closed and reopened.
+  for (const s of [...sessions.values(), ...termPanel.sessions.values()]) {
     s.term.options.theme = xt;
     s.term.options.fontSize = appearance.fontSize;
     s.term.options.fontFamily = appearance.fontFamily;
@@ -726,6 +729,9 @@ let permMode = localStorage.getItem('swarm.permMode') || '';
 // в restart.js, здесь только память о выборе.
 let restartOn = localStorage.getItem('swarm.restart') === '1';
 let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
+// «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
+// который агент сам не может себе включить, и человек не обязан его хотеть.
+let digestOn = localStorage.getItem('swarm.digest') === '1';
 // Split a "cmd --flags" line into { cmd, flags }: first token = launcher, rest = flags.
 function parseAgentLine(line) {
   const t = (line || '').trim();
@@ -1228,6 +1234,7 @@ async function createSession(opts = {}) {
         <span class="ctx-track"><span class="ctx-fill"></span></span>
         <span class="ctx-num"></span>
       </span>
+      <span class="digest" hidden></span>
       <span class="foot">
         <span class="sub">готов</span>
         <span class="hold" hidden></span>
@@ -1525,6 +1532,16 @@ function showSettingsModal(tab) {
                   <span class="set-range-num" id="set-restart-pct-num"></span>
                 </div>
               </div>
+            </div>
+            <div class="set-row">
+              <label class="set-check">
+                <input type="checkbox" id="set-digest" />
+                <span class="set-check-tx">Показывать дайджест вкладки</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Пара строк на карточке о том, чем агент занят прямо сейчас — чтобы
+                это было видно со стороны, не открывая вкладку. Агент сам пишет и обновляет их по ходу работы;
+                если выключить, карточки вернутся к обычному виду.</span>
             </div>
           </section>
         </div>
@@ -2154,6 +2171,8 @@ function showSettingsModal(tab) {
   restartPctI.addEventListener('input', syncRestart);
   restartI.addEventListener('change', syncRestart);
   syncRestart();
+  const digestI = overlay.querySelector('#set-digest');
+  digestI.checked = digestOn;
   // --- Telegram panel -------------------------------------------------------
   // Everything here applies IMMEDIATELY (like the updates panel), not on «Сохранить»:
   // connecting a bot and binding a chat are actions, not preferences. The token field is
@@ -3123,6 +3142,12 @@ function showSettingsModal(tab) {
       localStorage.setItem('swarm.restartPct', String(restartPct));
       window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
     }
+    if (digestI.checked !== digestOn) {
+      digestOn = digestI.checked;
+      localStorage.setItem('swarm.digest', digestOn ? '1' : '0');
+      window.swarm.setDigest({ enabled: digestOn });
+      if (!digestOn) setAllDigests('');   // выключили — снимаем текст с карточек сразу
+    }
     pultEnabled = pultI.checked;
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
     if (!pultEnabled) setPult(false); // no restart needed
@@ -3856,6 +3881,7 @@ function closeTermTab(id) {
   const s = termPanel.sessions.get(id);
   if (!s) return;
   window.swarm.killSession(id);
+  s.term.dispose(); // as closeSession does — otherwise the xterm buffers/canvas outlive the tab
   s.holder.remove();
   termPanel.sessions.delete(id);
   if (termPanel.activeId === id) {
@@ -3918,6 +3944,17 @@ function setTermTabsPos(pos) {
   persistTermPanel();
 }
 
+// Общий рефит: активный агент И активная вкладка панели — используется везде, где меняется
+// размер #stage (resize окна, ResizeObserver сцены, смена раскладки ⌘L), а не только там,
+// где меняется сама панель. Без второй половины вкладка панели держала старую сетку cols/rows
+// до следующего переключения вкладки/протаскивания разделителя/смены дока.
+function refitVisibleTerms() {
+  const s = sessions.get(activeId);
+  if (s) s.fit.fit();
+  const p = termPanel.sessions.get(termPanel.activeId);
+  if (p) p.fit.fit();
+}
+
 termAddBtn.innerHTML = ICONS.plus;
 termAddBtn.addEventListener('click', () => createTermTab());
 termPosBtn.addEventListener('click', () => setTermTabsPos(termPanel.tabsPos === 'top' ? 'left' : 'top'));
@@ -3949,13 +3986,7 @@ window.swarm.onExit(({ id }) => {
   const scheduleFit = () => {
     if (rafPending) return;
     rafPending = true;
-    requestAnimationFrame(() => {
-      rafPending = false;
-      const p = termPanel.sessions.get(termPanel.activeId);
-      if (p) p.fit.fit();
-      const a = sessions.get(activeId);
-      if (a) a.fit.fit();
-    });
+    requestAnimationFrame(() => { rafPending = false; refitVisibleTerms(); });
   };
   termSplitEl.addEventListener('mousedown', (e) => {
     dragging = true;
@@ -3972,7 +4003,12 @@ window.swarm.onExit(({ id }) => {
     // Side dock: делитель ЛЕВЕЕ панели — тянуть влево (меньше X) растит панель.
     // Обе оси — «меньше координата» = «больше панель», знак дельты общий.
     const delta = startPos - pos;
-    const max = (termPanel.dock === 'side' ? window.innerWidth : window.innerHeight) - 200;
+    // #stage's own box, not the window: window.innerWidth/innerHeight ignored the rail
+    // sidebar (208px) and the status bar, so in layout-rail + side dock the max let the
+    // panel eat into space #stage never had in the first place, squeezing the agent pane
+    // toward 0 well before the intended 200px floor.
+    const stageBox = stageEl.getBoundingClientRect();
+    const max = (termPanel.dock === 'side' ? stageBox.width : stageBox.height) - 200;
     liveSize = Math.max(TERM_SIZE_MIN, Math.min(max, startSize + delta));
     applyTermSize(liveSize);
     scheduleFit();
@@ -4030,11 +4066,8 @@ function applyLayout(name) {
   localStorage.setItem('swarm.layout', name);
   if (onLayoutApplied) onLayoutApplied(name);
   window.swarm.uiRepaint(); // the relayout repaints terminals — don't count it as activity
-  // Chrome changed size => the stage did too; refit the visible terminal.
-  requestAnimationFrame(() => {
-    const s = sessions.get(activeId);
-    if (s) s.fit.fit();
-  });
+  // Chrome changed size => the stage did too; refit the visible terminal(s).
+  requestAnimationFrame(refitVisibleTerms);
 }
 
 function toggleLayout() {
@@ -4814,18 +4847,12 @@ window.swarm.onMenuCopy(() => {
 });
 
 // Refit the active terminal when the window changes size.
-window.addEventListener('resize', () => {
-  const s = sessions.get(activeId);
-  if (s) s.fit.fit();
-});
+window.addEventListener('resize', refitVisibleTerms);
 
 // Refit when the terminal area itself resizes — e.g. the top chrome bar grows or
 // shrinks as cards gain context meters, wrap long names, or groups collapse.
 // Without this the terminal overflows its container and clips the last line.
-const stageObserver = new ResizeObserver(() => {
-  const s = sessions.get(activeId);
-  if (s) s.fit.fit();
-});
+const stageObserver = new ResizeObserver(refitVisibleTerms);
 stageObserver.observe(stageAgentsEl);
 
 // Top-level reorder: dragging a loner card or a group head reorders the units
@@ -5700,6 +5727,7 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
+window.swarm.setDigest({ enabled: digestOn });                          // дайджест вкладки
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
 // то, что ест whisper.cpp. Обратно уходит Float32, WAV собирает main.
@@ -5798,6 +5826,21 @@ window.swarm.onRestartHold(({ id, hold }) => {
   el.title = HOLD_TITLE[hold] || '';
   el.hidden = !label;
 });
+
+// Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их из
+// файла в рабочей папке (digest.js), здесь только положить на карточку.
+function applyDigest(id, text) {
+  const s = sessions.get(String(id));
+  const el = s && s.tab.querySelector('.digest');
+  if (!el) return;
+  el.textContent = text || '';
+  el.title = text || '';
+  el.hidden = !text;
+}
+function setAllDigests(text) {
+  for (const id of sessions.keys()) applyDigest(id, text);
+}
+window.swarm.onDigest(({ id, text }) => applyDigest(id, text));
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 restoreTermPanel();

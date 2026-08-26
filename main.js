@@ -5204,10 +5204,17 @@ function createWindow() {
   win.on('close', (e) => {
     if (allowClose) return;
     e.preventDefault();
-    const n = sessions.size;
-    const message = n > 0
-      ? `Закрыть Claude Swarm? Сейчас запущено сессий: ${n}. Все агенты завершатся.`
-      : 'Закрыть Claude Swarm?';
+    // `sessions` holds every pty (agents AND panel terminals, ⌘J — see session:create's
+    // isPanel branch); `det` only agents (panel sessions never get a det entry). Count
+    // them apart so a window with only terminal-panel tabs open doesn't get told "агенты
+    // завершатся" when there are none.
+    const agents = det.size;
+    const total = sessions.size;
+    const message = agents > 0
+      ? `Закрыть Claude Swarm? Сейчас запущено сессий: ${agents}. Все агенты завершатся.`
+      : total > 0
+        ? `Закрыть Claude Swarm? Закроются вкладки терминала: ${total}.`
+        : 'Закрыть Claude Swarm?';
     const choice = dialog.showMessageBoxSync(win, {
       type: 'warning',
       buttons: ['Отмена', 'Закрыть'],

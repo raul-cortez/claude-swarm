@@ -250,6 +250,11 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .label { color: var(--text); font-size: var(--tab-label-size); font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab .folder { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .tab .folder:empty { display: none; }
+/* Дайджест вкладки: чем агент занят прямо сейчас, его же словами (см. digestNote в
+   hooks/swarm-signal.mjs). Одна строка с многоточием — как .label, но приглушённая: это
+   пояснение, а не заголовок. Полный текст остаётся в title. */
+.tab .digest { color: var(--muted); font-size: var(--tab-sub-size); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab .digest[hidden] { display: none; }
 .tab .folder svg, .group-head svg { width: 11px; height: 11px; flex: none; }
 /* Bottom row of the card: status text on the left, sub-agent badge pushed to the
    right on the SAME line — the badge used to sit on its own row and inflate the
@@ -1221,8 +1226,18 @@ body.no-sessions #stage::after {
    becomes a flex row (side dock) or column (bottom dock) with #stage-agents
    and #term-panel as its two items, #term-split the draggable divider.
    Sizes are CSS custom properties so dragging only rewrites one value. */
-#stage.termpanel-open { display: flex; }
-#stage.termpanel-open.termpanel-bottom { flex-direction: column; }
+/* #stage is ALWAYS a flex container, even with the panel closed (the default,
+   most common state) — #stage-agents only gets its 1 1 auto sizing from a flex
+   parent. Closed, #term-split/#term-panel are `[hidden]` (not flex items at
+   all), so #stage-agents is the sole item and fills #stage exactly like the
+   old plain-block #stage used to (there its content just filled the box by
+   being absolutely positioned; here it's flex-stretch doing the same job). If
+   this rule were scoped to .termpanel-open only, #stage-agents would collapse
+   to 0 height whenever the panel is closed: it has no in-flow content of its
+   own (pult-strip/gate-strip/.term-holder are all position:absolute), so an
+   un-stretched auto-height block resolves to 0 — every agent terminal with it.
+   Direction only matters once #term-panel is an actual second flex item. */
+#stage { display: flex; flex-direction: column; }
 #stage.termpanel-open.termpanel-side { flex-direction: row; }
 
 #stage-agents {
