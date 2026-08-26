@@ -189,8 +189,9 @@ contextBridge.exposeInMainWorld('swarm', {
     onState:   (cb)    => ipcRenderer.on('telegram:state', (_e, s) => cb(s)),
   },
 
-  // Ночной режим: положение переключается через telegram.setPresence('night') — «где я» одно
-  // на всё приложение. Здесь только то, что есть у ночи своего: мандат вкладки и её тексты.
+  // Ночной режим — своя сущность, а не положение «где я»: тем отвечают на вопрос, где ЧЕЛОВЕК,
+  // а этим — каким ВКЛАДКАМ разрешено работать без него. Двери две, вкладочная и общая, и обе
+  // ведут к одному и тому же мандату.
   night: {
     state:    ()  => ipcRenderer.invoke('night:state'),
     setTexts: (t)  => ipcRenderer.invoke('night:setTexts', t),
@@ -198,6 +199,8 @@ contextBridge.exposeInMainWorld('swarm', {
     // переключатель — им пользуется гейт ввода, когда человек забирает вкладку себе.
     tabMenu:  (id) => ipcRenderer.invoke('tab:menu', { id }),
     setTab:   (id, auto) => ipcRenderer.invoke('tab:setAuto', { id, auto }),
+    // Все вкладки разом — луна в нижней панели.
+    setAll:   (auto) => ipcRenderer.invoke('night:setAll', { auto }),
     onTab:    (cb) => ipcRenderer.on('tab:auto', (_e, s) => cb(s)),
     onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
   },

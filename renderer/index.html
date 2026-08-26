@@ -66,8 +66,9 @@
       <!-- Red "!" surfaces captured errors; click opens the logs modal. Hidden until an error occurs. -->
       <!-- Появляется, когда доступно обновление; клик открывает модалку апдейта. -->
       <button id="update-pill" class="update-pill" hidden></button>
-      <!-- Мандат «работай без меня»: сколько вкладок в ночном режиме, и напоминание, если он
-           включён, а за клавиатурой печатают. Клик забирает вкладки себе. -->
+      <!-- Ночной режим: сколько вкладок работает без человека, и дверь к «отдать все разом».
+           Стоит в панели всегда — это единственный способ отдать все вкладки, раньше он был
+           пунктом в списке «где я» и спорил там с вопросом «где человек». -->
       <button id="night-pill" class="night-pill" hidden></button>
       <button id="log-indicator" class="log-indicator" hidden title="Ошибки — показать логи"></button>
       <!-- «Где я»: за компом или за телефоном. Иконкой, а не текстом — подпись выключенного
@@ -80,6 +81,11 @@
       <button id="settings-btn" title="Настройки (⌘,)"><span class="ic">⚙</span><span class="tx">настройки</span></button>
     </div>
   </footer>
+
+  <!-- Список у луны: «отдать все вкладки» / «забрать все себе». Меню, а не переключатель под
+       курсором: кнопка трогает сразу все вкладки, и промах по ней стоит либо брошенной работы,
+       либо отданных вкладок, которых человек не отдавал. -->
+  <div id="night-menu" class="cmd-menu hidden"></div>
 
   <!-- Branch popover (built in JS, reuses .cmd-menu look, anchored to #git-branch). -->
   <div id="git-menu" class="cmd-menu hidden"></div>

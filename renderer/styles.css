@@ -1490,18 +1490,18 @@ body.presence-phone .presence-pill.is-on {
 
 /* «Ночь» — та же схема, что у телефона, но ГРОМЧЕ: 20% против 16%. Смысл цвета не в том,
    чтобы что-то показать ночью — ночью никто не смотрит. Он нужен утром: человек садится за
-   стол, а приложение всё ещё считает его ушедшим, и агенты продолжают решать за него молча.
-   Ночь снимается руками, значит «забыл снять» — самый вероятный промах. */
-body.presence-night #statusbar {
+   стол, а вкладки всё ещё решают за него молча. Ночь снимается руками, значит «забыл снять» —
+   самый вероятный промах.
+   Класс вешает не «где я», а счёт вкладок: ночь — это когда отданы ВСЕ (см. renderNightPill). */
+body.night-all #statusbar {
   background: color-mix(in srgb, var(--night) 20%, var(--panel));
   border-top-color: color-mix(in srgb, var(--night) 60%, var(--border));
   color: color-mix(in srgb, var(--night) 45%, var(--muted));
 }
-body.presence-night .presence-pill.is-on {
+body.night-all .night-pill {
   background: color-mix(in srgb, var(--night) 24%, var(--panel));
   border-color: var(--night);
 }
-body.presence-night .presence-item.is-now .ic { color: var(--night); }
 
 /* Значок мандата: сколько вкладок работает без человека и не забыт ли включённый ночной режим.
    Вид как у значка обновления (тот же размер и место), цвет — ночной. */
@@ -1515,6 +1515,14 @@ body.presence-night .presence-item.is-now .ic { color: var(--night); }
 }
 .night-pill[hidden] { display: none; }
 .night-pill:hover { background: color-mix(in srgb, var(--night) 26%, transparent); }
+.night-pill .ic { display: inline-flex; }
+.night-pill .ic svg { width: 13px; height: 13px; }
+.night-pill .tx { margin-left: 5px; }
+/* Ничего не отдано — луна стоит на месте, но не кричит: это дверь, а не новость. */
+.night-pill.is-quiet {
+  border-color: var(--border); color: var(--muted); background: transparent;
+}
+.night-pill.is-quiet:hover { color: var(--night); border-color: var(--night); background: color-mix(in srgb, var(--night) 14%, transparent); }
 
 /* Пункт списка: иконка, название, пояснение под ними. */
 .presence-item { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center; }

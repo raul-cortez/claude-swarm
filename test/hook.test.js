@@ -378,11 +378,13 @@ test('end to end: the script denies the picker for a session listed on disk', ()
 
 // --- ночь и ворота на подагентов ---------------------------------------------
 
-test('без человека коробка запрещается любой вкладке, и причина — правило', () => {
+// Ночь — это мандаты вкладок, а не положение человека: отдельного «меня нет» у хука больше
+// нет вовсе, и отданной вкладке всё равно, за столом человек или с телефоном.
+test('отданной вкладке коробка запрещается, и причина — правило', () => {
   const ask = { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's1' };
-  assert.strictEqual(H.deniesPicker(ask, [], 'night'), true);
+  assert.strictEqual(H.deniesPicker(ask, [], 'desk', ['s1']), true);
   const m = H.loadMatcher(() => null);
-  const out = H.outputFor(ask, m, [], 'night');
+  const out = H.outputFor(ask, m, [], 'desk', { autoSessions: ['s1'] });
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
   // Человека нет — значит правило должно ГОВОРИТЬ, что решать самому, а не «спроси прозой, я
   // отвечу с телефона».
@@ -513,11 +515,11 @@ test('вкладке без мандата про итог не говорят',
   assert.ok(!out || !out.hookSpecificOutput, 'обычной вкладке добавлять нечего');
 });
 
-test('общий ночной режим тоже зовёт писать итог', () => {
+test('вкладка без мандата про итог не слышит', () => {
   const m = H.loadMatcher(() => null);
-  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's9' }, m, [], 'night',
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's9' }, m, [], 'desk',
     { autoSessions: [], nowSec: 0 });
-  assert.match(out.hookSpecificOutput.additionalContext, /Задача кончилась/);
+  assert.strictEqual(out && out.hookSpecificOutput, undefined, 'своей вкладке итог не заказывают');
 });
 
 test('числа расхода и просьба про итог едут вместе', () => {
@@ -534,11 +536,14 @@ test('без снимка расхода начало хода выглядит 
   assert.deepStrictEqual(Object.keys(out), ['terminalSequence']);
 });
 
-test('end to end: общий ночной режим на диске даёт правило любой вкладке', () => {
+test('end to end: отданные вкладки читаются с диска списком', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-night-')));
   const staged = path.join(dir, 'swarm-signal.mjs');
   fs.copyFileSync(SCRIPT, staged);
-  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'), JSON.stringify({ sessions: [], presence: 'night' }));
+  // «Ночь у всех» на диске выглядит просто как список, в котором эта вкладка есть: отдельного
+  // положения «меня нет» больше нет ни в файле, ни в голове у хука.
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
+    JSON.stringify({ sessions: [], presence: 'desk', auto: ['ночная'] }));
   const out = JSON.parse(execFileSync(process.execPath, [staged], {
     input: JSON.stringify({
       hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 'ночная',

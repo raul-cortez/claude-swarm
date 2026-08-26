@@ -1096,11 +1096,11 @@ async function createSession(opts = {}) {
     command,
     tabKey,
     name: opts.name || null,      // main only needs it to title the topic
-    // Пока в силе общее «меня нет», новая вкладка рождается отданной — иначе она одна
-    // разрушала бы сумму, по которой это положение и считается. Main решает то же самое и у
-    // себя (awayAll при создании): здесь это не второй источник правды, а зеркало, без
-    // которого карточка секунду выглядела бы своей.
-    auto: !!opts.auto || !!nightNow.on,            // восстановленная вкладка возвращается со своим мандатом
+    // Пока без человека работают ВСЕ вкладки, новая рождается отданной — иначе она одна
+    // сняла бы ночной режим в три часа. Main решает то же самое и у себя (awayAll при
+    // создании): здесь это не второй источник правды, а зеркало, без которого карточка
+    // секунду выглядела бы своей.
+    auto: !!opts.auto || (!opts.restored && !!nightNow.on),            // восстановленная вкладка возвращается со своим мандатом
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
   });
 
@@ -1227,7 +1227,7 @@ async function createSession(opts = {}) {
   if (!folderOrder.includes(okey)) folderOrder.push(okey);
   if (!withinOrder.has(okey)) withinOrder.set(okey, []);
   if (!withinOrder.get(okey).includes(id)) withinOrder.get(okey).push(id);
-  if (opts.auto || nightNow.on) applyTabAuto(id, true);
+  if (opts.auto || (!opts.restored && nightNow.on)) applyTabAuto(id, true);
   relayoutTabs();
   persistTabs();
   setStatus(id, 'ready', 'готов');
@@ -1857,10 +1857,11 @@ function showSettingsModal(tab) {
           <h2 class="set-h">Ночной режим</h2>
           <p class="set-intro">Ночной режим — это работа, пока вас нет рядом. Агент в нём сам
             решает всё, что легко переделать, а на дорогом решении останавливается и ждёт вашего
-            возвращения. Включить его одной вкладке — полумесяц на её карточке (или
-            <span class="set-mono">/night</span> в её теме в телеграме), карточка станет фиолетовой;
-            всем сразу — луна в нижней панели. Закончив задачу, вкладка позеленеет и напишет итог
-            — его вы и прочитаете, вернувшись.</p>
+            возвращения. Состояние одно — «эта вкладка отдана», — а дверей к нему две: полумесяц
+            на карточке (или <span class="set-mono">/night</span> в её теме в телеграме) отдаёт
+            одну вкладку, луна в нижней панели — все разом. Когда отданы все, панель синеет;
+            забрали одну — синева уходит, остальные продолжают. Закончив задачу, вкладка
+            позеленеет и напишет итог — его вы и прочитаете, вернувшись.</p>
           <p class="set-intro">Разрешения в такой вкладке сворм берёт на себя там, где переделать
             дёшево: посмотреть в гит (<span class="set-mono">status</span>,
             <span class="set-mono">diff</span>, <span class="set-mono">log</span>), добавить файлы
@@ -4580,17 +4581,12 @@ document.getElementById('update-pill').addEventListener('click', openUpdateModal
 const PRESENCE = [
   { id: 'desk', icon: 'monitor', name: 'за компом', hint: 'Всё как обычно: агенты спрашивают вас прямо в окне.' },
   { id: 'phone', icon: 'phone', name: 'за телефоном', hint: 'Вопросы и итоги приходят в телеграм, отвечать можно оттуда, и компьютер не уснёт.', needsBot: true },
-  // Ночной режим — не про телегу вовсе: человека нет у компьютера. Поэтому он в списке всегда, и
-  // бота для него не нужно (уйти можно и без телефона). Отдельного состояния под ним больше нет:
-  // выбрать его — значит отдать все вкладки разом, а обратно оно считается по ним же (главная
-  // дверь — полумесяц на карточке). Поэтому «за компом» и «за телефоном» тут не про телегу, а
-  // про то, где человек, — из ночи возвращаются именно туда.
-  //
-  // Называется он так же, как везде вокруг: в подсказках и в телеге положение и до того звали
-  // ночным режимом, а в списке оно одно стояло «меня нет» — и человек, читавший про ночной
-  // режим, искал в списке пункт с таким именем и не находил.
-  { id: 'night', icon: 'moon', name: 'ночной режим', hint: 'Отдать все вкладки разом: агенты работают сами и пишут итог. Заберёте одну — режим снимется, остальные продолжат.' },
 ];
+// Ночного режима в этом списке больше НЕТ, и это не уборка, а разделение двух разных вопросов.
+// «Где я» отвечает, куда писать ЧЕЛОВЕКУ; ночной режим — каким ВКЛАДКАМ разрешено работать без
+// него. Пока они делили одно место, ответы спорили: человек с телефоном, а все вкладки отданы —
+// что показывать? Теперь ночь живёт своей кнопкой рядом (луна), а «включена» она тогда, когда
+// отданы все вкладки.
 const presencePill = document.getElementById('presence-pill');
 const presenceMenu = document.getElementById('presence-menu');
 let presenceNow = 'desk';
@@ -4608,7 +4604,7 @@ function presenceItem(id) {
 // спит). Цвет и правила — в styles.css, body.presence-phone.
 function paintPresence() {
   document.body.classList.toggle('presence-phone', presenceNow === 'phone');
-  document.body.classList.toggle('presence-night', presenceNow === 'night');
+  // Ночь красит панель по своему счёту вкладок, а не по «где я» — см. renderNightPill.
 }
 
 function renderPresencePill(st) {
@@ -4620,12 +4616,11 @@ function renderPresencePill(st) {
   // возвращался за стол, а мак не спал и агенты во всех вкладках отказывались показывать
   // варианты выбора — вернуть можно было только с телефона. Галки больше нет, положение
   // одно, и видно его всегда.
-  // Кнопка видна ВСЕГДА, а не только с привязанной группой: ночь бота не требует — спать
-  // можно и без телефона, — и спрятать её значило бы спрятать единственный способ включить
-  // ночной режим у человека без бота. «За телефоном» в списке при этом гаснет: обещать
-  // «всё уйдёт в телегу» там, где телеги нет, нельзя.
+  //
+  // А вот без бота кнопки нет снова: ночной режим уехал отсюда на свою луну, и без телеги
+  // выбирать здесь стало нечего.
   presenceBot = !!(st && st.chatId != null);
-  presencePill.hidden = false;
+  presencePill.hidden = !presenceBot;
   presenceNow = (st && st.presence) || 'desk';
   paintPresence();
   const it = presenceItem(presenceNow);
@@ -4711,51 +4706,120 @@ function tabsWord(n) {
 
 function renderNightPill(st) {
   if (st) nightNow = st;
-  if (nightNow.on && nightNow.typed) {
+  const n = autoTabsHere();
+  const all = !!nightNow.on;
+  document.body.classList.toggle('night-all', all);
+  // Кнопка стоит в панели ВСЕГДА: это единственная дверь к «отдать все вкладки разом», и
+  // прятать её, пока ничего не отдано, значило бы прятать саму функцию. Раньше эта дверь была
+  // пунктом в списке «где я» — там она спорила с вопросом «где человек» и путала обоих.
+  nightPill.hidden = false;
+  nightPill.classList.toggle('is-quiet', !n);
+  const say = (text, title) => {
+    // Луна рисуется иконкой, а не эмодзи: эмодзи в этой панели выглядит наклейкой поверх
+    // интерфейса, а рядом стоят такие же значки-кнопки, нарисованные линией.
+    nightPill.innerHTML = `<span class="ic">${ICONS.moon}</span>`;
+    if (text) nightPill.appendChild(Object.assign(document.createElement('span'), { className: 'tx', textContent: text }));
+    nightPill.title = title;
+  };
+  if (all && nightNow.typed) {
     // Ночь снимают руками, значит забыть про неё — самый вероятный промах. Панель уже
     // крашеная, но за клавиатурой человек смотрит в терминал, а не на её край.
-    nightPill.hidden = false;
-    nightPill.textContent = 'ночной режим включён';
-    nightPill.title = 'Вы за клавиатурой, а ночной режим всё ещё включён: все вкладки остаются'
-      + ' в нём и решают сами. Клик — вернуться.';
-  } else if (!nightNow.on && autoTabsHere()) {
-    // Человек за столом, а часть вкладок он отдал. Это видно и по карточкам (они фиолетовые),
-    // но счётчик отвечает на другой вопрос — «сколько всего сейчас в ночном режиме», — и даёт
-    // одну кнопку забрать всё назад: по одной вкладке это десять кликов по полумесяцам.
-    const n = autoTabsHere();
-    nightPill.hidden = false;
-    nightPill.textContent = `${n} ${tabsWord(n)} в ночном`;
-    nightPill.title = 'Столько вкладок в ночном режиме: решают обратимое сами, на дорогом'
-      + ' останавливаются. Клик — забрать все себе, с подтверждением.';
+    say('ночной режим включён',
+      'Вы за клавиатурой, а без вас работают все вкладки. Клик — список: забрать их себе.');
+  } else if (all) {
+    say('ночной режим', 'Без вас работают все вкладки: решают обратимое сами, на дорогом'
+      + ' останавливаются. Клик — список: отдать все или забрать себе.');
+  } else if (n) {
+    // Часть вкладок отдана. Это видно и по карточкам (они фиолетовые), но счётчик отвечает на
+    // другой вопрос — «сколько всего сейчас работает без меня».
+    say(`${n} ${tabsWord(n)} в ночном`, 'Столько вкладок работает без вас: решают обратимое'
+      + ' сами, на дорогом останавливаются. Клик — список: отдать все или забрать себе.');
   } else {
-    nightPill.hidden = true;
+    say('', 'Ночной режим: отдать вкладки работать без вас. Одну — полумесяцем на её карточке,'
+      + ' все разом — отсюда.');
   }
   renderGate();
 }
 
-nightPill.addEventListener('click', async () => {
-  // Значок говорит одно из двух, и клик делает ровно то, что на нём написано.
-  if (!nightNow.on && autoTabsHere()) {
-    // Счётчик выглядит как сообщение, а не как кнопка, и промах по нему стоил бы разом всех
-    // отданных вкладок: они бросают работу без человека и встают ждать его на каждом шаге.
-    // Поэтому спрашиваем, и вопрос называет число — сколько именно вкладок это заберёт.
-    const ids = [];
-    for (const [id, s] of sessions) if (s && s.auto) ids.push(id);
-    if (!ids.length) return;
+// Список у луны, а не переключатель под курсором. Причина та же, по какой у счётчика появилось
+// подтверждение: кнопка в панели трогает СРАЗУ ВСЕ вкладки, и промах по ней стоит либо
+// брошенной работы, либо отданных вкладок, которых человек не отдавал. Пункты называют
+// действие целиком, и мимо них не промахнёшься.
+const nightMenu = document.getElementById('night-menu');
+
+function nightMenuItems() {
+  const n = autoTabsHere();
+  const total = sessions.size;
+  return [
+    {
+      id: 'all', icon: 'moon', name: 'отдать все вкладки',
+      hint: total - n > 0
+        ? `Ещё ${total - n} ${tabsWord(total - n)} перейдут работать без вас.`
+        : 'Уже отданы все.',
+      off: total === 0 || n >= total,
+    },
+    {
+      id: 'none', icon: 'monitor', name: 'забрать все себе',
+      hint: n ? `${n} ${tabsWord(n)} вернутся вам и будут ждать ответа на каждом шаге.` : 'Отдавать нечего.',
+      off: !n,
+    },
+  ];
+}
+
+function openNightMenu() {
+  nightMenu.innerHTML = '';
+  for (const it of nightMenuItems()) {
+    const b = document.createElement('button');
+    b.className = 'cmd-item presence-item';
+    b.disabled = it.off;
+    const ic = document.createElement('span');
+    ic.className = 'ic';
+    ic.innerHTML = ICONS[it.icon];
+    const name = document.createElement('span');
+    name.className = 'cmd-name';
+    name.textContent = it.name;
+    const hint = document.createElement('span');
+    hint.className = 'cmd-hint';
+    hint.textContent = it.hint;
+    b.append(ic, name, hint);
+    b.addEventListener('click', () => { closeNightMenu(); nightBulk(it.id); });
+    nightMenu.appendChild(b);
+  }
+  nightMenu.classList.remove('hidden');
+  placeMenuUnder(nightMenu, nightPill);
+  setTimeout(() => document.addEventListener('mousedown', outsideCloseNight), 0);
+}
+
+function closeNightMenu() {
+  nightMenu.classList.add('hidden');
+  document.removeEventListener('mousedown', outsideCloseNight);
+}
+
+function outsideCloseNight(e) {
+  if (!nightMenu.contains(e.target) && !nightPill.contains(e.target)) closeNightMenu();
+}
+
+// Отдать все или забрать все. Забрать — с подтверждением: вкладки бросят работу без человека и
+// встанут ждать его на каждом шаге, и промах по кнопке в панели стоил бы этого всем разом.
+// Отдать подтверждения не требует: обратное движение стоит одного клика и ничего не ломает.
+async function nightBulk(kind) {
+  if (kind === 'none') {
+    const n = autoTabsHere();
+    if (!n) return;
     const ok = await confirmModal(
-      `Забрать себе ${ids.length} ${tabsWord(ids.length)}? Они выйдут из ночного режима и`
-        + ' перестанут решать без вас — на каждом шаге будут ждать вашего ответа.',
+      `Забрать себе ${n} ${tabsWord(n)}? Они выйдут из ночного режима и перестанут решать без вас`
+        + ' — на каждом шаге будут ждать вашего ответа.',
       'Забрать все',
     );
     if (!ok) return;
-    for (const id of ids) { try { await window.swarm.night.setTab(id, false); } catch (_) {} }
-    return;
   }
-  if (nightNow.on) {
-    // Снять ночь — та же дверь, что у списка «где я»: положение одно на всё приложение.
-    try { renderPresencePill(await window.swarm.telegram.setPresence('desk')); } catch (_) { /* значок пересчитается состоянием */ }
-    try { renderNightPill(await window.swarm.night.state()); } catch (_) { /* дождёмся night:state */ }
-  }
+  try { await window.swarm.night.setAll(kind === 'all'); } catch (_) { /* main ответит пушем */ }
+}
+
+nightPill.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (nightMenu.classList.contains('hidden')) openNightMenu();
+  else closeNightMenu();
 });
 
 window.swarm.night.onState(renderNightPill);
@@ -4810,6 +4874,10 @@ async function restoreOrStart() {
       claudeSessionId: (dupId ? null : t.claudeSessionId) || undefined,
       tabKey: t.tabKey || undefined,   // same tab → same Telegram topic as before
       auto: !!t.auto,                  // отданная вкладка остаётся отданной
+      // Восстановление — не рождение: вкладка возвращается ровно такой, какой была. Без этой
+      // отметки первая же отданная вкладка делала бы «ночь включена» (отдана единственная
+      // живая), и следующие восстанавливались бы отданными, хотя человек их не отдавал.
+      restored: true,
       resume: !!(resumeSessions && ((t.claudeSessionId && !dupId) || (t.sessionKey && !dupKey))),
     });
   }

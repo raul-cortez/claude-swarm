@@ -432,9 +432,10 @@ const DENY_REASON = denyReason(FALLBACK.marker);
 function deniesPicker(payload, tgSessions, presence, autoSessions) {
   if (!payload || payload.hook_event_name !== 'PreToolUse') return false;
   if (payload.tool_name !== 'AskUserQuestion') return false;
-  // «Меня нет» — признак самый весомый: с телефона выбрать нельзя, а без человека выбирать
-  // НЕКОМУ вовсе, и вкладка встанет на этой рамке до его возвращения.
-  if (presence === 'phone' || presence === 'night') return true;
+  // «Я за телефоном»: выбрать в рамке оттуда нечем. Ночного положения здесь больше нет — ночь
+  // живёт мандатами вкладок, и весь ответ про неё даёт список ниже (в него входят все отданные
+  // вкладки, хоть одна, хоть все разом).
+  if (presence === 'phone') return true;
   const sid = String((payload && payload.session_id) || '');
   if (!sid) return false;
   // Мандат этой вкладки: человек может сидеть рядом и всё равно сказать «эту делай сам».
@@ -447,7 +448,7 @@ function deniesPicker(payload, tgSessions, presence, autoSessions) {
 // будет вовсе, и агенту надо решать самому по правилу.
 function denyReasonFor(presence, marker, nightCustom, auto) {
   const m = marker || FALLBACK.marker;
-  return (presence === 'night' || auto) ? nightRuleText(nightCustom, m) : denyReason(m);
+  return auto ? nightRuleText(nightCustom, m) : denyReason(m);
 }
 
 // --- дешёвые команды: что отданная вкладка делает без спроса --------------------
@@ -510,7 +511,7 @@ function permitDecision(ctx) {
 // телефона ему приходит кнопка (мост отправляет запрос разрешения в чат) — там решает он.
 function permitsCommand(payload, presence, auto) {
   if (!payload || payload.hook_event_name !== 'PreToolUse') return null;
-  if (!(auto || presence === 'night')) return null;
+  if (!auto) return null;
   const inp = payload.tool_input || {};
   const d = permitDecision({ auto: true, tool: payload.tool_name, command: inp.command });
   return d.act === 'allow' ? d : null;
@@ -558,7 +559,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // ДО работы. Сказать его в конце нельзя: конец хода мы узнаём тогда, когда агент уже замолчал,
   // и просить у него итог задним числом — значит будить вкладку ради того, что она сделала бы
   // сама, если бы знала. Подагенту не говорим: он живёт внутри чужого хода и итог не пишет.
-  const wantsSummary = starts && !isSubagent(payload) && (presence === 'night' || auto);
+  const wantsSummary = starts && !isSubagent(payload) && auto;
   const note = [starts ? usageNote(ex.usage, nowSec) : '', wantsSummary ? summaryNote() : '']
     .filter(Boolean).join('\n\n');
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:

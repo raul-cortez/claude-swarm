@@ -342,37 +342,25 @@ test('просьба про итог в хуке слово в слово сов
   assert.strictEqual(H.summaryNote(), night.summaryNote());
 });
 
-// --- общее положение считается по вкладкам -------------------------------------
-// Два переключателя на одно решение — это не гибкость, а гадание: карточка отмечена, общий
-// режим снят — она ночная или нет? Теперь слой один, и общее положение выводится из вкладок.
+// --- «ночь включена» — это счёт вкладок ---------------------------------------
+// Отдельного состояния под ночью нет: два состояния на одно решение спорят между собой
+// (карточка отмечена, общий режим снят — она ночная или нет?). Есть мандат у каждой вкладки,
+// а ночь — это когда мандат у всех.
 
-test('отданы все вкладки — значит человека нет', () => {
-  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 3, manual: 'desk' }), night.NIGHT);
-  assert.strictEqual(night.presenceFor({ tabs: 1, autos: 1, manual: 'desk' }), night.NIGHT);
+test('отданы все вкладки — это и есть «ночной режим включён»', () => {
+  assert.strictEqual(night.nightOn({ tabs: 3, autos: 3 }), true);
+  assert.strictEqual(night.nightOn({ tabs: 1, autos: 1 }), true);
 });
 
-test('за телефоном «все отданы» не значит «меня нет»', () => {
-  // С телефона человеку пишет мост, и решить за него, что его нет, — значит замолчать ровно
-  // тогда, когда он ждёт новостей. Уйти совсем можно и оттуда, но это отдельное слово.
-  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 3, manual: 'phone' }), 'phone');
-  // А сказанное вслух «ночной режим» держится: вкладка, открытая ночью, рождается отданной,
-  // и считать её появление возвращением человека нельзя.
-  assert.strictEqual(night.presenceFor({ tabs: 4, autos: 4, manual: 'phone', presence: 'night' }), night.NIGHT);
+test('забрали хоть одну — ночь кончилась, остальные продолжают', () => {
+  assert.strictEqual(night.nightOn({ tabs: 3, autos: 2 }), false);
+  assert.strictEqual(night.nightOn({ tabs: 3, autos: 0 }), false);
 });
 
-test('забрали хоть одну — человек вернулся туда, откуда уходил', () => {
-  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 2, manual: 'desk' }), 'desk');
-  // Сказавший «я за телефоном» и забравший вкладку остаётся за телефоном: возвращать его
-  // за компьютер значило бы решить за него, где он находится.
-  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 2, manual: 'phone' }), 'phone');
-  assert.strictEqual(night.presenceFor({ tabs: 3, autos: 0, manual: 'phone' }), 'phone');
-});
-
-test('вкладок нет — решать нечего, положение не трогаем', () => {
+test('вкладок нет — и ночи нет', () => {
   // Не мелочь: приложение просыпается с пустым списком и восстанавливает вкладки по одной.
-  // Правило «нет отданных — значит человек вернулся» погасило бы ночь в первую же миллисекунду.
-  assert.strictEqual(night.presenceFor({ tabs: 0, autos: 0, manual: 'desk' }), null);
-  assert.strictEqual(night.presenceFor({}), null);
+  assert.strictEqual(night.nightOn({ tabs: 0, autos: 0 }), false);
+  assert.strictEqual(night.nightOn(), false);
 });
 
 // --- дешёвые команды ----------------------------------------------------------
@@ -454,8 +442,8 @@ test('разрешение даёт только мандат: за клавиа
     const h = out && out.hookSpecificOutput;
     return (h && h.permissionDecision) || null;
   };
-  assert.strictEqual(decision('night'), 'allow', 'общая ночь — мандат у всех вкладок');
-  assert.strictEqual(decision('desk', { autoSessions: ['s1'] }), 'allow', 'отметка этой вкладки');
+  assert.strictEqual(decision('desk', { autoSessions: ['s1'] }), 'allow', 'мандат этой вкладки');
+  assert.strictEqual(decision('phone', { autoSessions: ['s1'] }), 'allow', 'мандат вкладки, а не место человека');
   assert.strictEqual(decision('desk'), null, 'человек за клавиатурой отвечает сам');
   assert.strictEqual(decision('phone'), null, 'с телефона ему приходит кнопка — решает он');
   assert.strictEqual(decision('desk', { autoSessions: ['другая'] }), null, 'мандат у соседней вкладки');
