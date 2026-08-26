@@ -1550,9 +1550,9 @@ function showSettingsModal(tab) {
                 <span class="set-check-tx">Показывать дайджест вкладки</span>
               </label>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Пара строк на карточке о том, чем агент занят прямо сейчас — чтобы
-                это было видно со стороны, не открывая вкладку. Агент сам пишет и обновляет их по ходу работы;
-                если выключить, карточки вернутся к обычному виду.</span>
+              <span class="set-hint" hidden>Пара строк над терминалом о том, чем агент занят прямо сейчас — видно,
+                когда открываешь вкладку (не список для чтения со стороны). Агент сам пишет и обновляет их по ходу
+                работы; если выключить, полоска пропадёт и вкладка вернётся к обычному виду.</span>
             </div>
           </section>
         </div>
@@ -2278,6 +2278,13 @@ function showSettingsModal(tab) {
   const tgAwakeI = overlay.querySelector('#set-tg-awake');
   const tgWBinI = overlay.querySelector('#set-tg-wbin');
   const tgWModelI = overlay.querySelector('#set-tg-wmodel');
+  // Черновик для четырёх полей ниже (текст, оба пути к whisper, «не спать») — они копят
+  // правку и уезжают в main только из save(), как остальная панель. Раньше поле само слало
+  // соответствующий сеттер (setPrompt/setWhisper/keepAwake) на blur, и «Отмена» его не
+  // откатывала — правка уже лежала на диске. Живой пуш телеги (onState, идёт по каждому
+  // событию моста) сюда подписан, поэтому без флага он тут же затёр бы несохранённый
+  // черновик обратно.
+  const tgDirty = { prompt: false, wbin: false, wmodel: false, awake: false };
   const tgVoiceHintEl = overlay.querySelector('#set-tg-voice-hint');
   const vModelSel = overlay.querySelector('#set-voice-model');
   const vInstallB = overlay.querySelector('#set-voice-install');
@@ -2443,14 +2450,14 @@ function showSettingsModal(tab) {
     const needsWork = !!(st.check && (st.check.checks || []).some((c) => c.ok === false));
     tgCheckNote.textContent = needsWork ? st.check.note : '';
     tgCheckNote.className = 'tg-state' + (needsWork && !st.check.ok ? ' is-bad' : '');
-    if (document.activeElement !== tgPromptI) tgPromptI.value = st.prompt || '';
+    if (document.activeElement !== tgPromptI && !tgDirty.prompt) tgPromptI.value = st.prompt || '';
     tgPromptI.placeholder = st.promptDefault || '';
-    tgAwakeI.checked = !!st.keepAwake;
+    if (!tgDirty.awake) tgAwakeI.checked = !!st.keepAwake;
     // Панель и кнопка в строке состояния показывают одно и то же состояние моста. Отвязка
     // группы отвечает только сюда (main её не рассылает), а кнопка при этом должна исчезнуть.
     renderPresencePill(st);
-    if (document.activeElement !== tgWBinI) tgWBinI.value = st.whisperBin || '';
-    if (document.activeElement !== tgWModelI) tgWModelI.value = st.whisperModel || '';
+    if (document.activeElement !== tgWBinI && !tgDirty.wbin) tgWBinI.value = st.whisperBin || '';
+    if (document.activeElement !== tgWModelI && !tgDirty.wmodel) tgWModelI.value = st.whisperModel || '';
     // Инструкция по ручной установке — своя на ОС (brew есть только на маке), её присылает
     // main. Обычному пути она не нужна, поэтому лежит внутри скрытого блока «уже есть
     // whisper.cpp», а не пугает всех остальных.
@@ -2505,42 +2512,65 @@ function showSettingsModal(tab) {
   // перенос строки делал бы правку «своим текстом», ничего в ней не поменяв.
   const flatText = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 
-  function renderNightTexts(st) {
-    if (!st) return;
-    nightDefaults.rule = st.ruleDefault || '';
-    nightDefaults.ask = st.askDefault || '';
-    // Поле под курсором не трогаем: человек в нём печатает.
-    if (document.activeElement !== nightRuleI) nightRuleI.value = st.rule || nightDefaults.rule;
-    if (document.activeElement !== nightAskI) nightAskI.value = st.ask || nightDefaults.ask;
-    nightResets.rule.hidden = !st.rule;
-    nightResets.ask.hidden = !st.ask;
-    // Служебную строку ПОКАЗЫВАЕМ, но не даём править: агент должен знать, чем звать человека,
-    // а человек — что эта строка есть и уедет в любом случае. Спрятать её значило бы врать про
-    // то, что получит агент; положить в поле — вернуть ловушку, из-за которой она оттуда и уехала.
-    // Дописок две, и обе показываем: строка про метку зова уезжает к обоим текстам, просьба
-    // про итог — только к вопросу (night.askText), и по ней же вкладка отмечается сдавшей
-    // работу. Человек должен знать про обе — он правит текст, к которому их припишут.
-    nightProtocolEl.textContent = [
-      st.protocol ? `К обоим текстам сворм всегда добавит: «${st.protocol}»` : '',
-      st.summary ? `А к вопросу — просьбу про итог: «${st.summary}»` : '',
-    ].filter(Boolean).join(' ');
-    const own = [st.rule ? 'правило' : '', st.ask ? 'вопрос' : ''].filter(Boolean);
+  // Правки в этих полях (и «вернуть заготовку») копятся ЧЕРНОВИКОМ и уезжают в main только
+  // из save() — как всё остальное в этой панели. Раньше поле сохранялось само по blur/change,
+  // и «Отмена»/Escape его не откатывали: правка уже лежала на диске. Живой пуш (night:state,
+  // renderNightPill вне этой панели) сюда не подписан, так что черновик никто не перезатрёт.
+  const nightDirty = { rule: false, ask: false };
+
+  function nightIsCustom(key) {
+    return flatText(nightFields[key].value) !== flatText(nightDefaults[key]);
+  }
+
+  // Служебную строку ПОКАЗЫВАЕМ, но не даём править: агент должен знать, чем звать человека,
+  // а человек — что эта строка есть и уедет в любом случае. Спрятать её значило бы врать про
+  // то, что получит агент; положить в поле — вернуть ловушку, из-за которой она оттуда и уехала.
+  // Дописок две, и обе показываем: строка про метку зова уезжает к обоим текстам, просьба
+  // про итог — только к вопросу (night.askText), и по ней же вкладка отмечается сдавшей
+  // работу. Человек должен знать про обе — он правит текст, к которому их припишут.
+  function refreshNightUi(st) {
+    if (st) {
+      nightProtocolEl.textContent = [
+        st.protocol ? `К обоим текстам сворм всегда добавит: «${st.protocol}»` : '',
+        st.summary ? `А к вопросу — просьбу про итог: «${st.summary}»` : '',
+      ].filter(Boolean).join(' ');
+    }
+    nightResets.rule.hidden = !nightIsCustom('rule');
+    nightResets.ask.hidden = !nightIsCustom('ask');
+    const own = [nightIsCustom('rule') ? 'правило' : '', nightIsCustom('ask') ? 'вопрос' : ''].filter(Boolean);
     nightNote.textContent = own.length
       ? `Свой текст: ${own.join(' и ')}.`
       : 'Сейчас оба текста — заготовки сворма.';
   }
 
-  async function saveNightText(key) {
-    const typed = flatText(nightFields[key].value);
-    const same = typed === flatText(nightDefaults[key]);
-    renderNightTexts(await window.swarm.night.setTexts({ [key]: same ? '' : typed }));
+  function renderNightTexts(st) {
+    if (!st) return;
+    nightDefaults.rule = st.ruleDefault || '';
+    nightDefaults.ask = st.askDefault || '';
+    // Поле под курсором не трогаем: человек в нём печатает.
+    if (document.activeElement !== nightRuleI && !nightDirty.rule) nightRuleI.value = st.rule || nightDefaults.rule;
+    if (document.activeElement !== nightAskI && !nightDirty.ask) nightAskI.value = st.ask || nightDefaults.ask;
+    refreshNightUi(st);
+  }
+
+  // Черновик правок этой панели: main получает их только из save() (см. ниже, «Ночь: свои
+  // формулировки» в теле save()), а Cancel/Escape просто закрывают панель, ничего не отправив.
+  function saveNightTexts() {
+    for (const key of ['rule', 'ask']) {
+      if (!nightDirty[key]) continue;
+      const typed = flatText(nightFields[key].value);
+      const same = typed === flatText(nightDefaults[key]);
+      window.swarm.night.setTexts({ [key]: same ? '' : typed }).catch(() => {});
+    }
   }
 
   window.swarm.night.state().then(renderNightTexts).catch(() => {});
   for (const key of ['rule', 'ask']) {
-    nightFields[key].addEventListener('change', () => { saveNightText(key).catch(() => {}); });
-    nightResets[key].addEventListener('click', async () => {
-      renderNightTexts(await window.swarm.night.setTexts({ [key]: '' }));
+    nightFields[key].addEventListener('input', () => { nightDirty[key] = true; refreshNightUi(); });
+    nightResets[key].addEventListener('click', () => {
+      nightFields[key].value = nightDefaults[key];
+      nightDirty[key] = true;
+      refreshNightUi();
     });
   }
 
@@ -2595,18 +2625,20 @@ function showSettingsModal(tab) {
     window.swarm.openExternal('https://t.me/BotFather');
   });
 
-  // Both apply on blur, not on «Сохранить» — same as the rest of this panel.
-  tgPromptI.addEventListener('change', async () => {
-    renderTg(await window.swarm.telegram.setPrompt(tgPromptI.value));
-  });
-  const saveWhisper = async () => {
-    renderTg(await window.swarm.telegram.setWhisper(tgWBinI.value, tgWModelI.value));
-  };
-  tgWBinI.addEventListener('change', saveWhisper);
-  tgWModelI.addEventListener('change', saveWhisper);
-  tgAwakeI.addEventListener('change', async () => {
-    renderTg(await window.swarm.telegram.keepAwake(tgAwakeI.checked));
-  });
+  // Черновик: копим правку в поле, а не шлём её main на каждый blur (см. tgDirty выше).
+  // Реально уезжает из saveTgDrafts(), вызванной из save() этой панели.
+  tgPromptI.addEventListener('input', () => { tgDirty.prompt = true; });
+  tgWBinI.addEventListener('input', () => { tgDirty.wbin = true; });
+  tgWModelI.addEventListener('input', () => { tgDirty.wmodel = true; });
+  tgAwakeI.addEventListener('change', () => { tgDirty.awake = true; });
+
+  function saveTgDrafts() {
+    if (tgDirty.prompt) window.swarm.telegram.setPrompt(tgPromptI.value).catch(() => {});
+    if (tgDirty.wbin || tgDirty.wmodel) {
+      window.swarm.telegram.setWhisper(tgWBinI.value, tgWModelI.value).catch(() => {});
+    }
+    if (tgDirty.awake) window.swarm.telegram.keepAwake(tgAwakeI.checked).catch(() => {});
+  }
 
   overlay.querySelector('#set-tg-forget').addEventListener('click', async () => {
     stopTgTtl();
@@ -3237,6 +3269,8 @@ function showSettingsModal(tab) {
       localStorage.setItem('swarm.restartPct', String(restartPct));
       window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
     }
+    saveNightTexts();
+    saveTgDrafts();
     if (digestI.checked !== digestOn) {
       digestOn = digestI.checked;
       localStorage.setItem('swarm.digest', digestOn ? '1' : '0');
