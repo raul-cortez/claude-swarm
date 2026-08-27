@@ -117,10 +117,22 @@ let nextId = 1;
 // клавиша из-под руки, Escape по кнопке из чата — всё это иначе встряло бы между порциями, то
 // есть в середину чужого слова.
 const ptyWrite = require('./pty-write');
+const rawWrite = require('./pty-raw-write');
 const ptyOut = ptyWrite.makeWriter({
   write: (id, chunk) => {
     const p = sessions.get(id);
     if (!p) return false;                 // вкладку закрыли, пока хвост ждал такта
+    // POSIX: пишем сами через fs.writeSync с ручной частичной записью — p.write() внутри
+    // node-pty на частичной записи вешает главный поток (BUG-pty-deadlock-2026-08-11.md,
+    // docs/superpowers/specs/2026-08-27-pty-raw-write-design.md). Windows (conpty) и случай,
+    // когда future-версия node-pty перестанет отдавать fd, — прежним путём, без изменений.
+    if (process.platform !== 'win32' && typeof p.fd === 'number') {
+      const timer = setTimeout(() => {
+        restartLog(`вкладка ${id}: печать подвисла, читатель не поспевает`);
+      }, 3000);
+      return rawWrite.writeAll(fs.writeSync, p.fd, Buffer.from(chunk, 'utf8'), setImmediate)
+        .then((r) => { clearTimeout(timer); return r.ok; });
+    }
     p.write(chunk);
     return true;
   },
