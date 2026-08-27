@@ -82,16 +82,32 @@ function makeWriter(opts) {
   const max = Math.max(1, Number(opts.max) || CHUNK);
   const queues = new Map();
 
+  // write() либо честно возвращает true/false тем же тактом (нынешние синхронные вкладки),
+  // либо отдаёт промис (частичная запись через fs.writeSync растягивается на несколько
+  // тактов, pty-raw-write.js) — pump() не должен звать следующую порцию, пока предыдущая не
+  // долетела: иначе куски одной печати обгонят друг друга в pty.
+  function isThenable(v) { return !!v && typeof v.then === 'function'; }
+
   function send(key, chunk) {
-    try { return write(key, chunk) !== false; } catch (_) { return false; }
+    try { return write(key, chunk); } catch (_) { return false; }
   }
 
   // Одна порция за такт. Возвращает, ушла ли ЭТА порция: по первой из них вызывающий понимает,
   // напечатано ли вообще хоть что-то (вкладку могли закрыть за то время, пока текст готовился).
+  // Для промиса это оптимистичное «передали в доставку» — окончательный исход синхронно
+  // узнать нельзя, но такт на следующую порцию наступает только после его разрешения.
   function pump(key) {
     const parts = queues.get(key);
     if (!parts || !parts.length) { queues.delete(key); return false; }
-    const ok = send(key, parts.shift());
+    const result = send(key, parts.shift());
+    if (isThenable(result)) {
+      result.then(
+        (ok) => { if (ok === false || !parts.length) queues.delete(key); else schedule(() => pump(key)); },
+        () => queues.delete(key),
+      );
+      return true;
+    }
+    const ok = result !== false;
     if (!ok || !parts.length) { queues.delete(key); return ok; }
     schedule(() => pump(key));
     return true;
@@ -108,7 +124,10 @@ function makeWriter(opts) {
       // Одна порция и пустая очередь — обычный случай (нажатие клавиши, Escape, короткая
       // команда). Пишем сразу: ждать такта цикла набору текста незачем, а перегрузить очередь
       // tty парой сотен байт нечем.
-      if (parts.length === 1) return send(key, parts[0]);
+      if (parts.length === 1) {
+        const result = send(key, parts[0]);
+        return isThenable(result) ? true : result !== false;
+      }
       queues.set(key, parts);
       return pump(key);
     },

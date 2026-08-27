@@ -136,8 +136,37 @@ test('вкладки не перемешиваются между собой', (
   assert.strictEqual(h.text('2'), 'ссссддддееее');
 });
 
-for (const [name, fn] of tests) {
-  try { fn(); passed++; }
-  catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
-}
-console.log(passed + '/' + tests.length + ' pty-write tests passed');
+// pty-raw-write.js делает частичную запись руками, и результат write() теперь может
+// растянуться на несколько тактов цикла — pump() обязан дождаться промиса ПРЕДЫДУЩЕЙ
+// порции, прежде чем отдавать вкладке следующую, иначе куски одной печати обгонят друг
+// друга. docs/superpowers/specs/2026-08-27-pty-raw-write-design.md.
+test('write возвращает промис — pump ждёт его перед следующей порцией', async () => {
+  const scheduled = [];
+  const wrote = [];
+  let resolveCurrent = null;
+  const w = PW.makeWriter({
+    max: 4,
+    schedule: (fn) => scheduled.push(fn),
+    write: (key, chunk) => {
+      wrote.push(chunk);
+      return new Promise((resolve) => { resolveCurrent = resolve; });
+    },
+  });
+  w.push('1', 'abcdefgh'); // режется на 'abcd' и 'efgh' при max=4
+  assert.strictEqual(wrote.length, 1, 'должна уйти ровно одна порция');
+  while (scheduled.length) scheduled.shift()();
+  assert.strictEqual(wrote.length, 1, 'такт цикла наступил, но промис первой порции ещё не разрешился — вторая не должна уйти');
+  resolveCurrent(true);
+  await Promise.resolve();
+  await Promise.resolve();
+  while (scheduled.length) scheduled.shift()();
+  assert.strictEqual(wrote.length, 2, 'после разрешения промиса и такта цикла вторая порция ушла');
+});
+
+(async () => {
+  for (const [name, fn] of tests) {
+    try { await fn(); passed++; }
+    catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
+  }
+  console.log(passed + '/' + tests.length + ' pty-write tests passed');
+})();
