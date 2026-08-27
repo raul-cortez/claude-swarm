@@ -516,9 +516,38 @@ const PERMIT_SUBST = /\$\(|\$\{|`/;
 const PERMIT_QUOTED = /'[^']*'|"[^"]*"/g;
 const PERMIT_HEREDOC = /\$\(\s*cat\s+<<'([A-Za-z_][A-Za-z0-9_]*)'\n[\s\S]*?\n\1\s*\)/g;
 
+// Абсолютный путь без node:path: night.js — тот же алгоритм — грузится и в рендерере, где
+// require('node:path') недоступен. `/`, потому что сворм только на Mac/Linux.
+function normalizeAbs(cwd, p) {
+  const raw = String(p == null ? '' : p);
+  const joined = raw.startsWith('/') ? raw : `${String(cwd || '').replace(/\/+$/, '')}/${raw}`;
+  const out = [];
+  for (const part of joined.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { out.pop(); continue; }
+    out.push(part);
+  }
+  return `/${out.join('/')}`;
+}
+
+// EnterWorktree — не Bash, отдельная ветка. Новое дерево (без `path`) сам инструмент кладёт в
+// .claude/worktrees — это обратимо и дёшево, как git add/commit. Вход по `path` разрешаем, только
+// если он остаётся внутри .claude/worktrees ТЕКУЩЕГО репозитория: это и есть «свой» worktree, а
+// не рамка, которую мы видели в примере (путь модели наружу репозитория) — та по-прежнему ждёт
+// человека, потому что меняет корень разрешений на непредсказуемое место.
+function permitWorktree(c) {
+  if (c.path == null || c.path === '') return { act: 'allow', why: 'новое дерево', kind: 'worktree' };
+  if (!c.cwd) return { act: 'stand', why: 'не знаем рабочий каталог', kind: 'worktree' };
+  const root = `${normalizeAbs(c.cwd, '.claude/worktrees')}/`;
+  const target = `${normalizeAbs(c.cwd, c.path)}/`;
+  if (!target.startsWith(root)) return { act: 'stand', why: 'дерево вне .claude/worktrees', kind: 'worktree' };
+  return { act: 'allow', why: 'дерево внутри .claude/worktrees', kind: 'worktree' };
+}
+
 function permitDecision(ctx) {
   const c = ctx || {};
   if (!c.auto) return { act: 'stand', why: 'вкладка не в ночном режиме' };
+  if (c.tool === 'EnterWorktree') return permitWorktree(c);
   if (c.tool !== 'Bash') return { act: 'stand', why: 'не команда оболочки' };
   const raw = String(c.command == null ? '' : c.command).trim();
   if (!raw) return { act: 'stand', why: 'нет команды' };
@@ -555,16 +584,28 @@ function permitsCommand(payload, presence, auto) {
   if (!payload || payload.hook_event_name !== 'PreToolUse') return null;
   if (!auto) return null;
   const inp = payload.tool_input || {};
-  const d = permitDecision({ auto: true, tool: payload.tool_name, command: inp.command });
+  const d = permitDecision({
+    auto: true,
+    tool: payload.tool_name,
+    command: inp.command,
+    path: inp.path,
+    cwd: payload.cwd,
+  });
   return d.act === 'allow' ? d : null;
 }
 
 // Что агент прочитает в ответе на разрешённую команду. Молчать нельзя: пусть в стенограмме
-// останется, ПОЧЕМУ разрешение не спрашивали у человека.
-const permitReason = (why) => `Вкладка работает без человека, и «${why}» — из дешёвых:`
-  + ' посмотреть, добавить в индекс, зафиксировать. Разрешение на это мандат даёт сам, чтобы'
-  + ' ночь не стояла на промежуточном коммите. Всё остальное (push, tag, reset и любая не-git'
-  + ' команда) по-прежнему ждёт человека.';
+// останется, ПОЧЕМУ разрешение не спрашивали у человека. Два текста — git и worktree — потому
+// что «дешёвое» там разное: у git это посмотреть/зафиксировать, у worktree — остаться внутри
+// .claude/worktrees, куда и так сходится вся уборка сворма.
+const permitReason = (why, kind) => (kind === 'worktree'
+  ? `Вкладка работает без человека, и «${why}» — из дешёвых: дерево остаётся внутри`
+    + ' .claude/worktrees, откуда его видно и можно убрать утром. Вход в дерево ВНЕ этой папки'
+    + ' по-прежнему ждёт человека — это меняет корень разрешений на непредсказуемое место.'
+  : `Вкладка работает без человека, и «${why}» — из дешёвых:`
+    + ' посмотреть, добавить в индекс, зафиксировать. Разрешение на это мандат даёт сам, чтобы'
+    + ' ночь не стояла на промежуточном коммите. Всё остальное (push, tag, reset и любая не-git'
+    + ' команда) по-прежнему ждёт человека.');
 
 // The whole stdout payload for one event. terminalSequence sits at the top level (where
 // this hook has always put it) AND inside hookSpecificOutput, because which one a given
@@ -633,7 +674,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
     out.hookSpecificOutput = {
       hookEventName: 'PreToolUse',
       permissionDecision: 'allow',
-      permissionDecisionReason: permitReason(permit.why),
+      permissionDecisionReason: permitReason(permit.why, permit.kind),
     };
     if (seq) out.hookSpecificOutput.terminalSequence = seq;
   } else if (intro) {

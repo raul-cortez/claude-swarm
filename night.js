@@ -307,11 +307,40 @@ const PERMIT_QUOTED = /'[^']*'|"[^"]*"/g;
 // ограничителем без кавычек (<<EOF) текст разворачивается, и такую команду мы не разбираем.
 const PERMIT_HEREDOC = /\$\(\s*cat\s+<<'([A-Za-z_][A-Za-z0-9_]*)'\n[\s\S]*?\n\1\s*\)/g;
 
+// Абсолютный путь без node:path: этот файл грузится и в рендерере (renderer.js), где
+// require('node:path') недоступен. `/`, потому что сворм только на Mac/Linux.
+function normalizeAbs(cwd, p) {
+  const raw = String(p == null ? '' : p);
+  const joined = raw.startsWith('/') ? raw : `${String(cwd || '').replace(/\/+$/, '')}/${raw}`;
+  const out = [];
+  for (const part of joined.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { out.pop(); continue; }
+    out.push(part);
+  }
+  return `/${out.join('/')}`;
+}
+
+// EnterWorktree — не Bash, отдельная ветка. Новое дерево (без `path`) сам инструмент кладёт в
+// .claude/worktrees — это обратимо и дёшево, как git add/commit. Вход по `path` разрешаем, только
+// если он остаётся внутри .claude/worktrees ТЕКУЩЕГО репозитория: это и есть «свой» worktree, а не
+// рамка «relocation вне .claude/worktrees» — та по-прежнему ждёт человека, потому что меняет
+// корень разрешений на непредсказуемое место.
+function permitWorktree(c) {
+  if (c.path == null || c.path === '') return { act: 'allow', why: 'новое дерево', kind: 'worktree' };
+  if (!c.cwd) return { act: 'stand', why: 'не знаем рабочий каталог', kind: 'worktree' };
+  const root = `${normalizeAbs(c.cwd, '.claude/worktrees')}/`;
+  const target = `${normalizeAbs(c.cwd, c.path)}/`;
+  if (!target.startsWith(root)) return { act: 'stand', why: 'дерево вне .claude/worktrees', kind: 'worktree' };
+  return { act: 'allow', why: 'дерево внутри .claude/worktrees', kind: 'worktree' };
+}
+
 // Дешёвая ли это команда для вкладки с мандатом. Отвечает словом, потому что слово идёт в
 // журнал: «разрешил сам» и «оставил стоять — не из дешёвых» — разные новости.
 function permitDecision(ctx) {
   const c = ctx || {};
   if (!c.auto) return { act: 'stand', why: 'вкладка не в ночном режиме' };
+  if (c.tool === 'EnterWorktree') return permitWorktree(c);
   if (c.tool !== 'Bash') return { act: 'stand', why: 'не команда оболочки' };
   const raw = String(c.command == null ? '' : c.command).trim();
   if (!raw) return { act: 'stand', why: 'нет команды' };

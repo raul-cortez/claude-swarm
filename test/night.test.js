@@ -438,6 +438,43 @@ test('список дешёвых команд в хуке решает так �
   assert.deepStrictEqual(H.PERMIT_GIT, night.PERMIT_GIT, 'один и тот же список команд');
 });
 
+const CWD = '/Users/e/WebstormProjects/repo';
+const WORKTREE_CASES = [
+  // Новое дерево: сам инструмент кладёт его в .claude/worktrees — обратимо и дёшево.
+  [{}, 'allow'],
+  [{ name: 'fix-1' }, 'allow'],
+  // Вход в уже существующее — только если путь остаётся внутри .claude/worktrees.
+  [{ path: `${CWD}/.claude/worktrees/fix-1` }, 'allow'],
+  [{ path: '.claude/worktrees/fix-1' }, 'allow'],
+  [{ path: `${CWD}/.claude/worktrees/../worktrees/fix-1` }, 'allow'],
+  // Рамка из примера: relocation на путь модели вне .claude/worktrees — ждёт человека.
+  [{ path: '/Users/e/WebstormProjects/fastio-527' }, 'stand'],
+  [{ path: `${CWD}/../fastio-527` }, 'stand'],
+  [{ path: `${CWD}/.claude/worktrees-evil/fix-1` }, 'stand'],
+  [{ path: `${CWD}` }, 'stand'],
+];
+
+test('вход в worktree разрешаем только внутри .claude/worktrees', () => {
+  for (const [inp, act] of WORKTREE_CASES) {
+    const d = night.permitDecision({ auto: true, tool: 'EnterWorktree', cwd: CWD, ...inp });
+    assert.strictEqual(d.act, act, `${JSON.stringify(inp)} → ${d.act} (${d.why})`);
+  }
+  assert.strictEqual(
+    night.permitDecision({ auto: false, tool: 'EnterWorktree', cwd: CWD }).act, 'stand',
+    'без мандата не разрешаем',
+  );
+});
+
+test('worktree в хуке решает так же, как в night.js', async () => {
+  const H = await import('../hooks/swarm-signal.mjs');
+  for (const [inp, act] of WORKTREE_CASES) {
+    const ctx = { auto: true, tool: 'EnterWorktree', cwd: CWD, ...inp };
+    const d = H.permitDecision(ctx);
+    assert.strictEqual(d.act, act, `хук: ${JSON.stringify(inp)} → ${d.act} (${d.why})`);
+    assert.deepStrictEqual(d, night.permitDecision(ctx), JSON.stringify(inp));
+  }
+});
+
 test('разрешение даёт только мандат: за клавиатурой и с телефона решает человек', async () => {
   const H = await import('../hooks/swarm-signal.mjs');
   const p = {
