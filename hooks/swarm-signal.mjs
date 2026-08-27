@@ -11,7 +11,7 @@
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
 import { pathToFileURL } from 'node:url';
-import { realpathSync, readFileSync, readdirSync } from 'node:fs';
+import { realpathSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 
 // --- «агент зовёт тебя»: теги и фразы ----------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
@@ -339,6 +339,22 @@ const digestFileFor = (sid) => {
   return id ? '.swarm-digest-' + id + '.json' : '';
 };
 
+// Пока файла нет вообще — короткое напоминание на КАЖДОМ ходе, а не раз за сессию: полная
+// инструкция уже сказана один раз на старте (digestNote выше), и человек жалуется ровно на
+// то, что за много ходов агент так ни разу и не собрался её выполнить — «дайджест вкладки
+// очень вяло появляется». Полная строка платит собой каждый ход, короткая — только пока
+// агент ни разу не написал файл; первая же запись гасит напоминание навсегда для этой сессии.
+const digestMissingNudge = (file) =>
+  `[сворм] Дайджест вкладки (${file}) ещё не написан — заведи его прямо сейчас, не дожидайся паузы.`;
+
+// Файл лежит в рабочей папке (см. digestFileFor выше и main.js digestFileFor) — `/`, а не
+// path.join, по той же причине, что и normalizeAbs: path недоступен в этом рантайме.
+const digestWritten = (payload, file) => {
+  const cwd = payload && payload.cwd;
+  if (!cwd || !file) return true; // сказать нечего — не мешаем
+  try { return existsSync(`${cwd}/${file}`); } catch (_) { return true; }
+};
+
 const digestNote = (file) => [
   '[сворм] Веди короткий дайджест вкладки — пару строк о том, чем занят СЕЙЧАС.',
   'Его видит человек в списке вкладок со стороны, не открывая разговор, — другого способа узнать это у него нет.',
@@ -643,8 +659,15 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // и просить у него итог задним числом — значит будить вкладку ради того, что она сделала бы
   // сама, если бы знала. Подагенту не говорим: он живёт внутри чужого хода и итог не пишет.
   const wantsSummary = starts && !isSubagent(payload) && auto;
+  // Дайджест ещё ни разу не написан — напоминаем на каждом ходе (не подагенту: он живёт внутри
+  // чужого хода, дайджест не про него), пока агент не заведёт файл сам. Тогда digestWritten
+  // начнёт видеть его и строка исчезнет — платить собой на каждом ходе она будет только
+  // столько, сколько агент реально тянет с первой записью.
+  const needsDigestNudge = starts && !isSubagent(payload) && ex.digest && ex.digest.on
+    && !digestWritten(payload, digestFileFor(sid));
   const note = [starts ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
-    wantsSummary ? summaryNote() : '']
+    wantsSummary ? summaryNote() : '',
+    needsDigestNudge ? digestMissingNudge(digestFileFor(sid)) : '']
     .filter(Boolean).join('\n\n');
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
   // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
@@ -845,4 +868,4 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
-  selfRestartNote, restartFileFor, digestNote, digestFileFor };
+  selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten };

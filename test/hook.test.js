@@ -714,6 +714,37 @@ test('дайджест молчит про подагента — он живё�
   assert.ok(!out || out.hookSpecificOutput === undefined, 'подагенту про дайджест не сказано ничего');
 });
 
+test('дайджест не написан — на каждом ходе короткое напоминание, пока файл не появится', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-digest-nudge-'));
+  const sid = 's-nudge-1';
+  const ex = { digest: { on: true } };
+  const first = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
+  assert.match(first.hookSpecificOutput.additionalContext, /ещё не написан/);
+  assert.ok(first.hookSpecificOutput.additionalContext.includes(H.digestFileFor(sid)),
+    'напоминание называет тот же файл, что и полная инструкция');
+  // Ход второй, файла всё ещё нет — напоминание повторяется, а не «один раз за сессию».
+  const second = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
+  assert.match(second.hookSpecificOutput.additionalContext, /ещё не написан/);
+  // Агент наконец завёл файл — напоминание гаснет само, без флагов и памяти между ходами.
+  fs.writeFileSync(path.join(dir, H.digestFileFor(sid)), JSON.stringify({ digest: 'делаю штуку' }));
+  const third = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
+  assert.ok(!third || !third.hookSpecificOutput, 'файл появился — сказать больше нечего');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('напоминание про дайджест молчит: выключённый дайджест, подагент, нет cwd', () => {
+  const sid = 's-nudge-2';
+  const off = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: '/tmp' }, null, [], 'desk',
+    { digest: { on: false } });
+  assert.ok(!off || !off.hookSpecificOutput, 'дайджест выключен — молчим');
+  const sub = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: '/tmp', agent_id: 'sub-1' },
+    null, [], 'desk', { digest: { on: true } });
+  assert.ok(!sub || !sub.hookSpecificOutput, 'подагент живёт внутри чужого хода — не про него');
+  const noCwd = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid }, null, [], 'desk',
+    { digest: { on: true } });
+  assert.ok(!noCwd || !noCwd.hookSpecificOutput, 'без рабочего каталога сказать нечего');
+});
+
 test('digest.readText: берёт поле digest, режет по потолку, молчит на мусоре', () => {
   const digest = require('../digest');
   assert.strictEqual(digest.readText(JSON.stringify({ digest: '  делаю рефактор  ' })), 'делаю рефактор');

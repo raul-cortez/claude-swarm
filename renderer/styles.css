@@ -648,6 +648,9 @@ body.tab-no-fill .tab.is-auto.is-done:not(#set-tab-preview *),
 #bar-actions .ic { display: inline-flex; }
 #bar-actions .ic svg { width: 14px; height: 14px; }
 #bar-actions .tx { display: none; } /* icon-only in the bar; the title attr is the tooltip */
+/* Без этого «button { display: inline-flex }» выше перебивает УА-правило [hidden] —
+   иконка терминала/команд оставалась бы на месте, даже когда её выключили в настройках. */
+#term-panel-btn[hidden], #cmd-menu-btn[hidden] { display: none; }
 
 /* --- quick-commands popover ----------------------------------------------- */
 .cmd-menu {
@@ -1573,7 +1576,7 @@ body.pult-on #git-msg { display: none; }
 .presence-pill {
   -webkit-app-region: no-drag;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--border); color: var(--muted);
+  border: 1px solid transparent; color: var(--muted);
   background: transparent;
   border-radius: 6px; padding: 3px 6px; margin-right: 4px;
   cursor: pointer;
