@@ -19,3 +19,6 @@ usage/
 # вкладку, живут только на диске
 .swarm-digest-*.json
 .swarm-restart-*.json
+
+# мокапы визуального companion'а брейнсторминга — черновики для обсуждения, не код
+.superpowers/
