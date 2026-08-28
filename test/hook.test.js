@@ -647,8 +647,11 @@ test('свежей сессии сворм называет тот файл, к�
   const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
     null, [], 'desk', { restart: { on: true } });
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SessionStart');
-  assert.ok(out.hookSpecificOutput.additionalContext.includes(restart.answerName(sid)),
-    'в строке названо имя файла');
+  // Текст называет ШАБЛОН, а не резолвнутое имя: печатать sid в текст нельзя, иначе рвётся
+  // промпт-кэш харнесса — каждая вкладка получала бы байт-в-байт разный SessionStart-блок.
+  assert.match(out.hookSpecificOutput.additionalContext, /\.swarm-restart-\$CLAUDE_CODE_SESSION_ID\.json/);
+  assert.ok(!out.hookSpecificOutput.additionalContext.includes(restart.answerName(sid)),
+    'резолвнутое имя в текст не попадает');
   assert.match(out.hookSpecificOutput.additionalContext, /перезапустить себя сам/);
 });
 
@@ -669,16 +672,23 @@ test('end to end: включённый перезапуск на диске до
   fs.copyFileSync(SCRIPT, staged);
   fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
     JSON.stringify({ sessions: [], presence: 'desk', restart: { on: true } }));
-  const run = () => execFileSync(process.execPath, [staged], {
-    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sid-9', cwd: dir }),
+  const run = (sid) => execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid, cwd: dir }),
     encoding: 'utf8',
   });
-  const out = JSON.parse(run());
-  assert.match(out.hookSpecificOutput.additionalContext, /\.swarm-restart-sid-9\.json/);
+  const out = JSON.parse(run('sid-9'));
+  assert.match(out.hookSpecificOutput.additionalContext, /\.swarm-restart-\$CLAUDE_CODE_SESSION_ID\.json/);
+  assert.ok(!out.hookSpecificOutput.additionalContext.includes('sid-9'),
+    'резолвнутый sid в текст не попадает');
+  // Промпт-кэш Anthropic бьёт по точному совпадению префикса: у каждой вкладки свой session_id,
+  // и если текст на SessionStart зависит от него хоть одним байтом, кэш рвётся на каждой вкладке.
+  // Контракт фикса — байт-в-байт одинаковый текст для разных sid.
+  assert.strictEqual(JSON.parse(run('sid-42')).hookSpecificOutput.additionalContext,
+    out.hookSpecificOutput.additionalContext);
   // Выключили — и строка исчезла с того же диска, без пересборки чего-либо.
   fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'),
     JSON.stringify({ sessions: [], presence: 'desk', restart: { on: false } }));
-  assert.strictEqual(JSON.parse(run()).hookSpecificOutput, undefined);
+  assert.strictEqual(JSON.parse(run('sid-9')).hookSpecificOutput, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -692,8 +702,11 @@ test('свежей сессии сворм называет тот файл да
   const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
     null, [], 'desk', { digest: { on: true } });
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SessionStart');
-  assert.ok(out.hookSpecificOutput.additionalContext.includes(digest.fileName(sid)),
-    'в строке названо имя файла');
+  // Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote: печатать sid в текст
+  // нельзя, иначе рвётся промпт-кэш харнесса.
+  assert.match(out.hookSpecificOutput.additionalContext, /\.swarm-digest-\$CLAUDE_CODE_SESSION_ID\.json/);
+  assert.ok(!out.hookSpecificOutput.additionalContext.includes(digest.fileName(sid)),
+    'резолвнутое имя в текст не попадает');
   assert.match(out.hookSpecificOutput.additionalContext, /дайджест вкладки/);
 });
 
@@ -720,8 +733,11 @@ test('дайджест не написан — на каждом ходе кор
   const ex = { digest: { on: true } };
   const first = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
   assert.match(first.hookSpecificOutput.additionalContext, /ещё не написан/);
-  assert.ok(first.hookSpecificOutput.additionalContext.includes(H.digestFileFor(sid)),
-    'напоминание называет тот же файл, что и полная инструкция');
+  // Шаблон, не резолвнутое имя (та же кэш-причина) — напоминание печатается на каждом ходе,
+  // а не только на старте, так что цена ошибки тут даже выше.
+  assert.match(first.hookSpecificOutput.additionalContext, /\.swarm-digest-\$CLAUDE_CODE_SESSION_ID\.json/);
+  assert.ok(!first.hookSpecificOutput.additionalContext.includes(H.digestFileFor(sid)),
+    'резолвнутое имя в текст не попадает');
   // Ход второй, файла всё ещё нет — напоминание повторяется, а не «один раз за сессию».
   const second = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
   assert.match(second.hookSpecificOutput.additionalContext, /ещё не написан/);
