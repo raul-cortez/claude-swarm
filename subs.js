@@ -232,14 +232,42 @@ function fmtResetWhen(atMs, nowMs, alwaysRel) {
   return fmtWhen(at, now);
 }
 
-// Одно окно к показу: { lab, spent, level, eta }. Пусто — окна нет в снимке (Клод присылает
-// их только по подписке), и тогда показывать нечего: ноль вместо неизвестного — вранье.
+// То же самое, только про момент в ПРОШЛОМ — для окна, чей resetsAt уже наступил, а свежего
+// снимка так и не было (windowRow().stale). fmtResetWhen() тут не годится: она считает leftSec
+// от «сейчас», и для отрицательного результата fmtRel() зажимает секунды в 0 — «обновится через
+// минуту», ложное «вот-вот» для окна, которое на самом деле зависло. fmtWhen() же не смотрит на
+// знак разницы вовсе — сутки назад ли, через сутки — и показывает точное время часами на стене,
+// поэтому её можно звать как есть.
+function fmtStaleSince(atMs, nowMs) {
+  const at = Number(atMs);
+  if (!isFinite(at) || at <= 0) return '';
+  const now = Number(nowMs) || Date.now();
+  const agoSec = (now - at) / 1000;
+  const when = agoSec >= 0 && agoSec < DAY_SECONDS
+    ? fmtRel(agoSec).replace(/^через /, '') + ' назад'
+    : fmtWhen(at, now);
+  return `должно было обновиться ${when}`;
+}
+
+// Одно окно к показу: { lab, spent, level, eta, resetsAt, stale }. Пусто — окна нет в снимке
+// (Клод присылает их только по подписке), и тогда показывать нечего: ноль вместо неизвестного —
+// вранье.
+//
+// stale — окно уже должно было сброситься (resetsAt в прошлом), а свежего снимка так и не
+// пришло: значит spent гарантированно неверен (реальный неизвестен, а не «примерно такой же»).
+// Типичная причина — на этой подписке давно не запускали агентов (например, исчерпан недельный
+// лимит, и дальше на ней просто не работают), поэтому main.js subsAccounts() не видит новых
+// снимков. Это не эвристика по давности последнего снимка — а точный факт по самому этому окну:
+// нет отдельного порога/константы, потому что не нужны. Устаревшему окну level форсируется в ''
+// — красить пилюлю в tight/crit по неизвестному текущему уровню так же нечестно, как показать
+// сам процент.
 function windowRow(lab, limit, opts) {
   const spent = limit && isFinite(Number(limit.spent)) ? Math.max(0, Math.min(100, Math.round(Number(limit.spent)))) : null;
   if (spent == null) return null;
-  const level = levelOf(spent);
   const nowSec = Math.floor((Number(opts && opts.now) || Date.now()) / 1000);
   const resets = limit && isFinite(Number(limit.resetsAt)) ? Number(limit.resetsAt) : 0;
+  const stale = resets > 0 && resets <= nowSec;
+  const level = stale ? '' : levelOf(spent);
   const left = resets > nowSec ? resets - nowSec : 0;
   const mode = (opts && opts.eta) || VIEW.eta;
   const wantEta = mode === 'always' || (mode === 'tight' && spent >= TIGHT);
@@ -249,6 +277,7 @@ function windowRow(lab, limit, opts) {
     level,
     eta: wantEta && left ? fmtEta(left) : '',
     resetsAt: resets ? resets * 1000 : 0,
+    stale,
   };
 }
 
@@ -416,8 +445,8 @@ function menuRows(state) {
       five,
       seven,
       when: {
-        five: five ? fmtResetWhen(five.resetsAt, now, true) : '',
-        seven: seven ? fmtResetWhen(seven.resetsAt, now, false) : '',
+        five: five ? (five.stale ? fmtStaleSince(five.resetsAt, now) : fmtResetWhen(five.resetsAt, now, true)) : '',
+        seven: seven ? (seven.stale ? fmtStaleSince(seven.resetsAt, now) : fmtResetWhen(seven.resetsAt, now, false)) : '',
       },
     };
   };
@@ -447,7 +476,7 @@ function nameForHome(list, home) {
 return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
-  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, pluralRu, windowRow,
+  matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
   pills, previewPills, menuRows, nameForHome,
 };
 

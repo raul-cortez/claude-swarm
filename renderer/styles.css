@@ -1697,6 +1697,13 @@ body.night-all .night-pill {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
+/* Окно, которое уже должно было сброситься, а свежего снимка так и не пришло (см. subs.js
+   windowRow().stale) — число заведомо неверное, поэтому вместо него «—», приглушённая. */
+.usage-pill .u-num.stale, .usage-pill .u-lab.stale { opacity: .55; }
+/* Разделитель МЕЖДУ подписками (не между окнами одной — там по-прежнему u-sep). Отдельный
+   элемент, а не border на .usage-pill: у пилюли border-radius, и одиночная граница на
+   скруглённом углу визуально гнётся. */
+.u-divider { width: 1px; align-self: stretch; background: var(--border); flex: none; margin: 0 3px; }
 
 /* Список по клику — РАССКАЗ, а не пульт: ни галочек, ни настроек. Строка на окно: сколько
    израсходовано и когда обновится, часами (в панели стоит отсчёт, здесь — время на стене). */
@@ -1716,6 +1723,7 @@ body.night-all .night-pill {
 #subs-menu .u-win .u-num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
 #subs-menu .u-win .u-num.tight { color: var(--permission); }
 #subs-menu .u-win .u-num.crit { color: var(--danger); }
+#subs-menu .u-win .u-num.stale { color: var(--muted); }
 #subs-menu .u-when { color: var(--muted); font-size: 11.5px; }
 
 /* --- страница «Подписки» -------------------------------------------------------

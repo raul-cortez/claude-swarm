@@ -109,6 +109,60 @@ test('время сброса появляется только у поджав�
   assert.deepStrictEqual(eta(20, 95, { eta: 'never' }), ['', '']);
 });
 
+// Признак «окно точно устарело» — не эвристика по времени последнего снимка, а факт по самому
+// resetsAt: оно уже в прошлом, а свежего снимка не было. Устаревшему окну level форсируется в ''
+// — красить пилюлю в tight/crit по неизвестному текущему уровню нечестно, как и число.
+test('windowRow: stale — окно уже должно было сброситься, level гасится', () => {
+  const fresh = subs.windowRow('5ч', { spent: 92, resetsAt: SEC + 60 }, { now: NOW });
+  assert.strictEqual(fresh.stale, false);
+  assert.strictEqual(fresh.level, 'crit', 'свежее окно красится как обычно');
+
+  const stale = subs.windowRow('5ч', { spent: 92, resetsAt: SEC - 60 }, { now: NOW });
+  assert.strictEqual(stale.stale, true);
+  assert.strictEqual(stale.level, '', 'протухшему окну не доверяем даже цвету рамки');
+  assert.strictEqual(stale.spent, 92, 'число не прячем на этом уровне — решает рендерер');
+
+  const noResets = subs.windowRow('5ч', { spent: 30, resetsAt: 0 }, { now: NOW });
+  assert.strictEqual(noResets.stale, false, 'resetsAt неизвестен — не считаем протухшим наугад');
+});
+
+test('pills(): протухшее окно не красит пилюлю в tight/crit', () => {
+  const accounts = [{
+    home: '/h/.claude', at: SEC, lines: ['claude'],
+    five: { spent: 95, resetsAt: SEC - 3600 },   // давно должно было сброситься
+    seven: { spent: 40, resetsAt: SEC + 86400 * 3 },
+  }];
+  const p = subs.pills({ cards: [{ line: 'claude' }], accounts, now: NOW });
+  assert.strictEqual(p[0].level, '', 'единственный tight/crit кандидат протух — пилюля спокойна');
+  assert.strictEqual(p[0].items[0].stale, true);
+  assert.strictEqual(p[0].items[1].stale, false);
+});
+
+test('fmtStaleSince: недавно — отсчётом словами «назад», давно — точным временем', () => {
+  assert.strictEqual(subs.fmtStaleSince(NOW - 3600 * 1000, NOW), 'должно было обновиться 1 час назад');
+  assert.strictEqual(subs.fmtStaleSince(NOW - 60 * 1000, NOW), 'должно было обновиться 1 минуту назад');
+  assert.strictEqual(subs.fmtStaleSince(NOW, NOW), 'должно было обновиться минуту назад');
+  assert.strictEqual(subs.fmtStaleSince(0, NOW), '');
+  const twoDaysAgo = subs.fmtStaleSince(NOW - 2 * 86400 * 1000, NOW);
+  assert.ok(!/через|назад/.test(twoDaysAgo), 'больше суток назад — днём недели/временем, не отсчётом: ' + twoDaysAgo);
+  assert.ok(twoDaysAgo.startsWith('должно было обновиться '), twoDaysAgo);
+});
+
+// Раньше fmtResetWhen() для просроченного resetsAt отдавала «через минуту» (fmtRel зажимает
+// отрицательные секунды в 0) — ложное «вот-вот» для окна, которое на самом деле зависло.
+test('menuRows(): протухшему окну — «должно было обновиться», не «через минуту»', () => {
+  const accounts = [{
+    home: '/h/.claude', at: SEC - 7200, lines: ['claude'],
+    five: { spent: 61, resetsAt: SEC - 7200 },
+    seven: { spent: 100, resetsAt: SEC + 86400 * 3 },
+  }];
+  const rows = subs.menuRows({ cards: [{ line: 'claude', name: 'запасная' }], accounts, now: NOW });
+  assert.strictEqual(rows[0].when.five, 'должно было обновиться 2 часа назад');
+  assert.notStrictEqual(rows[0].when.five, 'через минуту');
+  assert.ok(rows[0].when.seven.length && !rows[0].when.seven.startsWith('должно было'),
+    '7д ещё честное — не протухло');
+});
+
 test('«только 5ч» оставляет одно окно, даже когда недельное хуже', () => {
   const five = subs.pills({
     cards: [{ line: 'claude' }], accounts: [acc('/h/.claude', 65, 83, ['claude'])],

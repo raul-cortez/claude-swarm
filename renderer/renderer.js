@@ -5487,7 +5487,12 @@ function pillTitle(row) {
     const it = row[w];
     if (!it) continue;
     const when = row.when[w];
-    parts.push(`${it.lab === '5ч' ? '5 часов' : '7 дней'}: ${it.spent}%${when ? ` (обновится ${when})` : ''}`);
+    const label = it.lab === '5ч' ? '5 часов' : '7 дней';
+    // Протухшему окну (см. subs.js windowRow().stale) fmtStaleSince() уже отдала готовую фразу
+    // в прошедшем времени — не «61% (обновится через минуту)», а «— (должно было обновиться…)».
+    parts.push(it.stale
+      ? `${label}: — (${when}, новых чисел нет)`
+      : `${label}: ${it.spent}%${when ? ` (обновится ${when})` : ''}`);
   }
   if (!parts.length) return 'Расход подписки. Клик — список подписок.';
   return `${row.label} — ${parts.join(', ')}. Клик — список подписок.`;
@@ -5522,10 +5527,10 @@ function pillNode(p, withLabel, title, highlight) {
       btn.appendChild(dot);
     }
     const num = document.createElement('span');
-    num.className = 'u-num ' + (showNum ? (it.level || '') : '');
-    num.textContent = it.spent + '%';
+    num.className = 'u-num ' + (it.stale ? 'stale' : (showNum ? (it.level || '') : ''));
+    num.textContent = it.stale ? '—' : it.spent + '%';
     const lab = document.createElement('span');
-    lab.className = 'u-lab';
+    lab.className = 'u-lab' + (it.stale ? ' stale' : '');
     lab.textContent = it.lab;
     btn.append(num, lab);
     if (it.eta) {
@@ -5560,10 +5565,18 @@ function renderUsagePills() {
   const rows = SUBS_API.pills(st);
   const menu = SUBS_API.menuRows(st);
   usagePills.innerHTML = '';
-  for (const p of rows) {
+  rows.forEach((p, i) => {
+    if (i) {
+      // Между ПОДПИСКАМИ, не между окнами внутри одной — те по-прежнему разделяет «·» внутри
+      // пилюли. Отдельный элемент, а не border на .usage-pill: у неё border-radius, и одиночная
+      // граница на скруглённом углу гнётся визуально.
+      const div = document.createElement('span');
+      div.className = 'u-divider';
+      usagePills.appendChild(div);
+    }
     const row = menu.find((m) => m.home === p.home);
     usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p), subsView.highlight));
-  }
+  });
   usagePills.hidden = !rows.length;
   if (!rows.length) closeSubsMenu();
   if (!subsMenu.classList.contains('hidden')) fillSubsMenu();   // список открыт — обновим числа
@@ -5624,11 +5637,13 @@ function fillSubsMenu() {
       lab.className = 'u-lab';
       lab.textContent = w === 'five' ? '5 часов' : '7 дней';
       const num = document.createElement('span');
-      num.className = 'u-num ' + (subsView.highlight !== 'none' ? (it.level || '') : '');
-      num.textContent = it.spent + '%';
+      num.className = 'u-num ' + (it.stale ? 'stale' : (subsView.highlight !== 'none' ? (it.level || '') : ''));
+      num.textContent = it.stale ? '—' : it.spent + '%';
       const when = document.createElement('span');
       when.className = 'u-when';
-      when.textContent = r.when[w] ? 'обновится ' + r.when[w] : '';
+      // Протухшему окну fmtStaleSince() уже вернула готовую фразу («должно было обновиться…»),
+      // свежему — только время, префикс «обновится» добавляем здесь.
+      when.textContent = r.when[w] ? (it.stale ? r.when[w] : 'обновится ' + r.when[w]) : '';
       line.append(lab, num, when);
       box.appendChild(line);
     }
