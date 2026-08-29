@@ -366,20 +366,42 @@ const digestWritten = (payload, file) => {
   try { return existsSync(`${cwd}/${file}`); } catch (_) { return true; }
 };
 
-// Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote выше.
-const digestNote = () => [
-  '[сворм] Веди короткий дайджест вкладки — пару строк о том, чем занят СЕЙЧАС.',
-  'Его видит человек в списке вкладок со стороны, не открывая разговор, — другого способа узнать это у него нет.',
-  'У него вкладок много разом, и дайджест — единственное, по чему видно, что это вообще за задача.',
-  'Пиши по-человечески и по продукту: о чём таск и что сейчас в нём происходит — а не по процессу',
-  'разработки. «Правлю формат даты в отчётах» — да, «ревью, второй круг, запустил подагентов» —',
-  'нет: это и так видно по цвету и статусу вкладки, а вот что за задача — только отсюда.',
-  'Обновляй, когда меняется этап работы (не на каждый шаг), перезаписывая в своей рабочей папке файл',
-  '.swarm-digest-$CLAUDE_CODE_SESSION_ID.json (переменная окружения твоей же сессии — сначала',
-  'подставь её значение, `Write` сам `$VAR` не разворачивает) с одним JSON-объектом:',
-  '{"digest": "коротко и по-человечески, чем занят сейчас"}',
-  'Перезаписывать можно сколько угодно раз — я слежу за файлом и обновляю карточку сам.',
-].join('\n');
+// Потолок длины дайджеста, его нижний край и умолчание — своя копия
+// digest.MAX_LEN/MIN_LEN/DEFAULT_LEN (модулей приложения здесь нет), сверяется тестом.
+const DIGEST_DEFAULT_LEN = 400;
+const DIGEST_MIN_LEN = 100;
+const DIGEST_MAX_LEN = 1000;
+
+// Тот же зажим, что digest.clampMaxLen: не число — умолчание, иначе в границы.
+const digestMaxLenClamped = (n) => {
+  if (n == null || n === '') return DIGEST_DEFAULT_LEN;
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return DIGEST_DEFAULT_LEN;
+  return Math.min(DIGEST_MAX_LEN, Math.max(DIGEST_MIN_LEN, v));
+};
+
+// Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote выше. cfg — объект digest
+// из swarm-tgmode.json: .max — потолок длины (Settings → Запуск, по умолчанию DIGEST_DEFAULT_LEN),
+// .note — своя формулировка человека поверх заготовки, пусто если заготовки хватает.
+const digestNote = (cfg) => {
+  const max = digestMaxLenClamped(cfg && cfg.max);
+  const own = String((cfg && cfg.note) || '').trim();
+  return [
+    '[сворм] Веди короткий дайджест вкладки — пару строк о том, чем занят СЕЙЧАС.',
+    'Его видит человек в списке вкладок со стороны, не открывая разговор, — другого способа узнать это у него нет.',
+    'У него вкладок много разом, и дайджест — единственное, по чему видно, что это вообще за задача.',
+    'Пиши по-человечески и по продукту: о чём таск и что сейчас в нём происходит — а не по процессу',
+    'разработки. «Правлю формат даты в отчётах» — да, «ревью, второй круг, запустил подагентов» —',
+    'нет: это и так видно по цвету и статусу вкладки, а вот что за задача — только отсюда.',
+    `Уложись примерно в ${max} знаков — то, что не поместится, обрежется многоточием уже в интерфейсе.`,
+    own ? `Отдельно то, что человек хочет видеть в дайджесте именно у себя: «${own}».` : '',
+    'Обновляй, когда меняется этап работы (не на каждый шаг), перезаписывая в своей рабочей папке файл',
+    '.swarm-digest-$CLAUDE_CODE_SESSION_ID.json (переменная окружения твоей же сессии — сначала',
+    'подставь её значение, `Write` сам `$VAR` не разворачивает) с одним JSON-объектом:',
+    '{"digest": "коротко и по-человечески, чем занят сейчас"}',
+    'Перезаписывать можно сколько угодно раз — я слежу за файлом и обновляю карточку сам.',
+  ].filter(Boolean).join('\n');
+};
 
 // Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
 // его текст в тот же файл, где лежит «где я» (swarm-tgmode.json). Дубликат подстановки из
@@ -692,7 +714,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // файл, который сворм не читает, нельзя. Подагенту не говорим: дайджест — про вкладку целиком,
   // а не про то, чем занят один её сабагент.
   const digestIntro = (isStart && ex.digest && ex.digest.on)
-    ? digestNote() : '';
+    ? digestNote(ex.digest) : '';
   const intro = [restartIntro, digestIntro].filter(Boolean).join('\n\n');
   if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
@@ -881,4 +903,5 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
-  selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten };
+  selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
+  DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN };

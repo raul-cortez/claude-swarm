@@ -133,6 +133,7 @@ const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
 const SUBS_API = window.SWARM_SUBS;           // подписки: карточки запуска и что видно в панели
+const DIGEST_API = window.SWARM_DIGEST;       // дайджест вкладки: потолок длины, общий с main
 const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (мышь, ответы) — не печать человека
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
@@ -596,6 +597,20 @@ function updateAgents(s) {
   if (num) num.textContent = n > 1 ? String(n) : '';
 }
 
+// Значок температуры промпт-кэша (❄️/🔥) — на КАРТОЧКЕ вкладки, не в полоске дайджеста: та
+// рисуется только для активной вкладки, а смысл значка ровно в том, чтобы увидеть его СО
+// СТОРОНЫ, не переключаясь. Пишет его не агент, а сторонний хук проекта (см. digest.readCache) —
+// на подавляющем большинстве вкладок его вообще не будет, пока хук не подключат.
+function updateCacheBadge(s) {
+  const el = s.tab.querySelector('.cache-badge');
+  if (!el) return;
+  if (s.digestCache !== 'warm' && s.digestCache !== 'cold') { el.hidden = true; return; }
+  el.hidden = false;
+  const warm = s.digestCache === 'warm';
+  el.textContent = warm ? '🔥' : '❄️';
+  el.title = warm ? 'старт тёплый: кэш подхватил префикс' : 'старт холодный: оплачен по полной';
+}
+
 // Заполнение контекста на карточке вкладки. Число приходит готовым из main (ctxFillOf):
 // точное, от самого Клода. Разбирать процент из строки статуса здесь больше нельзя —
 // в неё попадает проза агента, и полоска показывала «80%» от фразы про загрузку
@@ -743,6 +758,12 @@ let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
 // «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
 // который агент сам не может себе включить, и человек не обязан его хотеть.
 let digestOn = localStorage.getItem('swarm.digest') === '1';
+// Своя формулировка того, что должно попасть в дайджест, — поверх заготовки, которую хук
+// печатает агенту сам. Пусто = заготовки хватает.
+let digestNote = localStorage.getItem('swarm.digestNote') || '';
+// Потолок длины дайджеста в знаках — та же цифра режет текст на диске (digest.readText) и
+// уезжает агенту в тексте инструкции, чтобы он не писал длиннее, чем реально влезет.
+let digestMaxLen = DIGEST_API.clampMaxLen(localStorage.getItem('swarm.digestMaxLen'));
 // Split a "cmd --flags" line into { cmd, flags }: first token = launcher, rest = flags.
 function parseAgentLine(line) {
   const t = (line || '').trim();
@@ -1252,6 +1273,7 @@ async function createSession(opts = {}) {
       <span class="foot">
         <span class="sub">готов</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
+        <span class="cache-badge" hidden></span>
       </span>
     </span>
     ${tabTools()}
@@ -1555,6 +1577,32 @@ function showSettingsModal(tab) {
               <span class="set-hint" hidden>Пара строк над терминалом о том, чем агент занят прямо сейчас — видно,
                 когда открываешь вкладку (не список для чтения со стороны). Агент сам пишет и обновляет их по ходу
                 работы; если выключить, полоска пропадёт и вкладка вернётся к обычному виду.</span>
+            </div>
+            <div class="set-sub">
+              <div class="set-field">
+                <div class="set-head">
+                  <span class="set-label">Что писать в дайджест</span>
+                  <button type="button" class="set-q" aria-label="подсказка">?</button>
+                  <span class="set-hint" hidden>В поле уже лежит заготовка — правьте её как обычный текст, а
+                    кнопка под полем вернёт заготовку назад. Пока текст совпадает с заготовкой, сворм не
+                    добавляет агенту ничего сверх обычной инструкции про дайджест.</span>
+                </div>
+                <textarea class="set-input set-prose" id="set-digest-note" rows="3" spellcheck="false"></textarea>
+                <button type="button" class="set-check-btn" id="set-digest-note-reset" hidden>вернуть заготовку</button>
+              </div>
+              <div class="set-field is-row">
+                <div class="set-head">
+                  <span class="set-label">Лимит символов</span>
+                  <button type="button" class="set-q" aria-label="подсказка">?</button>
+                  <span class="set-hint" hidden>Длина самого дайджеста. Полоска над терминалом рисует всего пару
+                    строк, так что длиннее — обрежется многоточием уже в интерфейсе. Меньше значит короче и по
+                    делу.</span>
+                </div>
+                <div class="set-range">
+                  <input type="range" class="set-range-input" id="set-digest-maxlen" />
+                  <span class="set-range-num" id="set-digest-maxlen-num"></span>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -2245,6 +2293,37 @@ function showSettingsModal(tab) {
   syncRestart();
   const digestI = overlay.querySelector('#set-digest');
   digestI.checked = digestOn;
+  // Своя формулировка — та же схема заготовки, что у ночных текстов ниже (nightFields/flatText):
+  // поле никогда не пустое, «своим» текст считается по отличию от заготовки, а не по факту
+  // правки. Своя копия flatText — та же нормализация пробелов, что и там.
+  const digestFlat = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+  const digestDefaultNote = DIGEST_API.defaultNote();
+  const digestNoteI = overlay.querySelector('#set-digest-note');
+  const digestNoteResetI = overlay.querySelector('#set-digest-note-reset');
+  digestNoteI.value = digestNote || digestDefaultNote;
+  // Потолок длины — та же логика видимости, что у порога перезапуска: выключенный дайджест не
+  // должен выглядеть настраиваемым.
+  const digestMaxLenI = overlay.querySelector('#set-digest-maxlen');
+  const digestMaxLenNumEl = overlay.querySelector('#set-digest-maxlen-num');
+  digestMaxLenI.min = String(DIGEST_API.MIN_LEN);
+  digestMaxLenI.max = String(DIGEST_API.MAX_LEN);
+  digestMaxLenI.step = '50';
+  digestMaxLenI.value = String(digestMaxLen);
+  const syncDigest = () => {
+    digestMaxLenNumEl.textContent = digestMaxLenI.value;
+    digestNoteI.disabled = !digestI.checked;
+    digestMaxLenI.disabled = !digestI.checked;
+    digestMaxLenNumEl.classList.toggle('off', !digestI.checked);
+    digestNoteResetI.hidden = digestFlat(digestNoteI.value) === digestFlat(digestDefaultNote);
+  };
+  digestNoteI.addEventListener('input', syncDigest);
+  digestNoteResetI.addEventListener('click', () => {
+    digestNoteI.value = digestDefaultNote;
+    syncDigest();
+  });
+  digestMaxLenI.addEventListener('input', syncDigest);
+  digestI.addEventListener('change', syncDigest);
+  syncDigest();
   // --- Telegram panel -------------------------------------------------------
   // Everything here applies IMMEDIATELY (like the updates panel), not on «Сохранить»:
   // connecting a bot and binding a chat are actions, not preferences. The token field is
@@ -3273,10 +3352,20 @@ function showSettingsModal(tab) {
     }
     saveNightTexts();
     saveTgDrafts();
-    if (digestI.checked !== digestOn) {
+    // Совпало с заготовкой — сохраняем пусто, и текст продолжит обновляться вместе со свормом
+    // (та же схема, что у ночных текстов): менять заготовку в digest.js не значит переписывать
+    // всем, кто её не трогал.
+    const nextDigestNote = digestFlat(digestNoteI.value) === digestFlat(digestDefaultNote)
+      ? '' : digestNoteI.value.trim();
+    const nextDigestMaxLen = DIGEST_API.clampMaxLen(digestMaxLenI.value);
+    if (digestI.checked !== digestOn || nextDigestNote !== digestNote || nextDigestMaxLen !== digestMaxLen) {
       digestOn = digestI.checked;
+      digestNote = nextDigestNote;
+      digestMaxLen = nextDigestMaxLen;
       localStorage.setItem('swarm.digest', digestOn ? '1' : '0');
-      window.swarm.setDigest({ enabled: digestOn });
+      localStorage.setItem('swarm.digestNote', digestNote);
+      localStorage.setItem('swarm.digestMaxLen', String(digestMaxLen));
+      window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen });
       if (!digestOn) {
         // Выключили — снимаем полоску сразу, не дожидаясь следующего такта main.
         for (const s of sessions.values()) s.digestText = '';
@@ -5924,7 +6013,7 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
-window.swarm.setDigest({ enabled: digestOn });                          // дайджест вкладки
+window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
 // то, что ест whisper.cpp. Обратно уходит Float32, WAV собирает main.
@@ -6007,12 +6096,16 @@ window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
 // Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
 // из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
 // неактивной вкладки), а рисуем — только для активной: полоска одна на сцену, как у гейта.
-function setDigestText(id, text) {
+function setDigestText(id, text, cache) {
   const s = sessions.get(String(id));
-  if (s) s.digestText = text || '';
+  if (s) {
+    s.digestText = text || '';
+    s.digestCache = cache === 'warm' || cache === 'cold' ? cache : null;
+    updateCacheBadge(s);
+  }
   if (id === activeId) renderDigestStrip();
 }
-window.swarm.onDigest(({ id, text }) => setDigestText(id, text));
+window.swarm.onDigest(({ id, text, cache }) => setDigestText(id, text, cache));
 
 function renderDigestStrip() {
   if (!digestEl) return;

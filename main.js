@@ -2819,10 +2819,12 @@ function tgWriteModes() {
   // хуже, чем молчать.
   // Включён ли дайджест вкладки. Та же оговорка, что у restart: выключенная функция приезжает
   // хуку выключенной, а не молча пропадает, — иначе он обещал бы агенту дверь, которую сворм не
-  // откроет.
+  // откроет. Своя формулировка (что человек хочет видеть) и потолок длины едут тем же путём, что
+  // и ночное правило, — текстом в этот же файл, хук просто вставляет их в инструкцию.
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
-    restart: { on: RESTART_ENABLED }, digest: { on: DIGEST_ENABLED },
+    restart: { on: RESTART_ENABLED },
+    digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
   });
   if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
   try {
@@ -5475,6 +5477,13 @@ const RESTART_SHARED_NAME = '.swarm-restart.json';
 // говорит агенту, что такая возможность вообще есть (см. digestNote в hooks/swarm-signal.mjs).
 // Здесь нет ни автомата, ни порога — только «прочитать, если файл посвежел, и показать».
 let DIGEST_ENABLED = false;
+// Что человек хочет видеть в дайджесте — своя формулировка поверх заготовки хука (Settings →
+// Запуск). Пусто — заготовки хватает, хук ничего лишнего не допишет.
+let DIGEST_NOTE = '';
+// Потолок длины самого дайджеста. По умолчанию — digest.DEFAULT_LEN, тот же, что режет readText;
+// человек может подвинуть его в настройках (100–1000), оба места (тут и в тексте инструкции
+// агенту) читают одно и то же число.
+let DIGEST_MAX_LEN = digest.DEFAULT_LEN;
 const DIGEST_TICK_MS = 30_000;
 
 // Файл лежит в папке вкладки, как и файл-ответ рестарта, и по той же причине: путь за пределами
@@ -5496,10 +5505,18 @@ function digestTick(id, d) {
   d.digestMtime = st.mtimeMs;
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
-  const text = digest.readText(raw);
-  if (text === (d.digestText || '')) return;
+  const text = digest.readText(raw, DIGEST_MAX_LEN);
+  // Значок температуры кэша — поле другого писателя в тот же файл (см. digest.readCache).
+  // Сравниваем ОБА поля по отдельности: хук пишет его раньше, чем агент — свой первый digest
+  // (обычно файла ещё нет вообще), и «текст не изменился» (пусто → пусто) не должно топить
+  // единственное реальное изменение — появление значка.
+  const cache = digest.readCache(raw);
+  const textChanged = text !== (d.digestText || '');
+  const cacheChanged = cache !== (d.digestCache || null);
+  if (!textChanged && !cacheChanged) return;
   d.digestText = text;
-  safeSend('session:digest', { id, text });
+  d.digestCache = cache;
+  safeSend('session:digest', { id, text, cache });
 }
 
 setInterval(() => {
@@ -5513,17 +5530,20 @@ setInterval(() => {
 
 ipcMain.on('settings:digest', (_e, opts = {}) => {
   DIGEST_ENABLED = !!(opts && opts.enabled);
+  DIGEST_NOTE = String((opts && opts.note) || '').trim();
+  DIGEST_MAX_LEN = digest.clampMaxLen(opts && opts.maxLen);
   // Хук читает это из файла режимов: снятая галочка должна закрыть агенту и дверь дайджеста,
-  // а не только перестать опрашивать файл здесь.
+  // а не только перестать опрашивать файл здесь. Так же он узнаёт про свою формулировку и потолок.
   tgWriteModes();
   if (!DIGEST_ENABLED) {
     // Текст на карточках гасим вместе с функцией — он писался при включённой галочке и без неё
     // больше не обновится, то есть превратится в застывший обман о том, чем вкладка занята.
     for (const [tid, d] of det) {
-      if (!d || !d.digestText) continue;
+      if (!d || (!d.digestText && !d.digestCache)) continue;
       d.digestText = '';
+      d.digestCache = null;
       d.digestMtime = 0;
-      safeSend('session:digest', { id: tid, text: '' });
+      safeSend('session:digest', { id: tid, text: '', cache: null });
     }
   }
 });

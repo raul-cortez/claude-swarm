@@ -281,6 +281,9 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .agents { flex: none; margin-left: auto; display: flex; align-items: center; gap: 2px; color: var(--run); font-size: 10px; font-variant-numeric: tabular-nums; }
 .tab .agents[hidden] { display: none; }
 .tab .agents svg { width: 12px; height: 12px; flex: none; }
+/* значок температуры промпт-кэша (❄️/🔥), пишет сторонний хук проекта — см. digest.readCache */
+.tab .cache-badge { flex: none; margin-left: auto; font-size: 10px; line-height: 1; }
+.tab .cache-badge[hidden] { display: none; }
 
 /* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
    кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,

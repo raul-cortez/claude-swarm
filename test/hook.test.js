@@ -765,8 +765,73 @@ test('digest.readText: берёт поле digest, режет по потолк�
   const digest = require('../digest');
   assert.strictEqual(digest.readText(JSON.stringify({ digest: '  делаю рефактор  ' })), 'делаю рефактор');
   assert.strictEqual(digest.readText('не json'), '');
-  assert.strictEqual(digest.readText(JSON.stringify({ digest: 'x'.repeat(500) })).length, digest.MAX_LEN);
+  assert.strictEqual(digest.readText(JSON.stringify({ digest: 'x'.repeat(2000) })).length, digest.DEFAULT_LEN);
   assert.strictEqual(digest.readText(JSON.stringify({})), '');
+});
+
+test('digest.defaultNote: заготовка есть и это непустой текст', () => {
+  const digest = require('../digest');
+  assert.strictEqual(typeof digest.defaultNote(), 'string');
+  assert.ok(digest.defaultNote().trim().length > 0);
+});
+
+test('digest.clampMaxLen: не задано — умолчание, иначе зажимает в границы 100–1000', () => {
+  const digest = require('../digest');
+  assert.strictEqual(digest.clampMaxLen(null), digest.DEFAULT_LEN);
+  assert.strictEqual(digest.clampMaxLen(''), digest.DEFAULT_LEN);
+  assert.strictEqual(digest.clampMaxLen(undefined), digest.DEFAULT_LEN);
+  assert.strictEqual(digest.clampMaxLen('нечисло'), digest.DEFAULT_LEN);
+  assert.strictEqual(digest.clampMaxLen(0), digest.MIN_LEN, '0 — законное число, зажимается к низу, не к умолчанию');
+  assert.strictEqual(digest.clampMaxLen(10), digest.MIN_LEN);
+  assert.strictEqual(digest.clampMaxLen(9999), digest.MAX_LEN);
+  assert.strictEqual(digest.clampMaxLen(700), 700);
+  assert.strictEqual(digest.MIN_LEN, 100);
+  assert.strictEqual(digest.MAX_LEN, 1000);
+});
+
+test('потолок длины дайджеста в хуке тот же, что в digest.js', () => {
+  const digest = require('../digest');
+  assert.strictEqual(H.DIGEST_DEFAULT_LEN, digest.DEFAULT_LEN);
+  assert.strictEqual(H.DIGEST_MIN_LEN, digest.MIN_LEN);
+  assert.strictEqual(H.DIGEST_MAX_LEN, digest.MAX_LEN);
+});
+
+test('digest.readText уважает свой потолок, а не умолчание, когда он передан', () => {
+  const digest = require('../digest');
+  assert.strictEqual(digest.readText(JSON.stringify({ digest: 'x'.repeat(2000) }), 700).length, 700);
+});
+
+// Поле `cache` пишет ПОСТОРОННИЙ хук проекта (например, fastio: warm-start-hint.mjs), не агент —
+// значит валидировать его надо отдельно от `digest`, и мусор в нём не должен ронять чтение.
+test('digest.readCache: warm/cold — берёт, всё остальное — null', () => {
+  const digest = require('../digest');
+  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x', cache: 'warm' })), 'warm');
+  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x', cache: 'cold' })), 'cold');
+  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x' })), null, 'поля нет вообще');
+  assert.strictEqual(digest.readCache(JSON.stringify({ cache: 'горячо' })), null, 'чужое значение поля');
+  assert.strictEqual(digest.readCache('не json'), null);
+});
+
+test('digest.readCache не зависит от readText: оба поля читаются из одного файла порознь', () => {
+  const digest = require('../digest');
+  const raw = JSON.stringify({ digest: 'чиню баг с корзиной', cache: 'cold' });
+  assert.strictEqual(digest.readText(raw), 'чиню баг с корзиной');
+  assert.strictEqual(digest.readCache(raw), 'cold');
+});
+
+test('дайджест: своя формулировка и потолок длины доезжают до текста инструкции', () => {
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk',
+    { digest: { on: true, note: 'пиши номер тикета', max: 700 } });
+  assert.match(out.hookSpecificOutput.additionalContext, /пиши номер тикета/);
+  assert.match(out.hookSpecificOutput.additionalContext, /700 знаков/);
+});
+
+test('дайджест: без своей формулировки — молчим про неё, потолок по умолчанию', () => {
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk',
+    { digest: { on: true } });
+  const digest = require('../digest');
+  assert.ok(!out.hookSpecificOutput.additionalContext.includes('человек хочет видеть'));
+  assert.match(out.hookSpecificOutput.additionalContext, new RegExp(`${digest.DEFAULT_LEN} знаков`));
 });
 
 // Подагенту не рассказывают ни про перезапуск (гасить вкладку ему не за что), ни маркером
