@@ -22,7 +22,7 @@
   // уже накопилось много. Спека:
   // docs/superpowers/specs/2026-08-31-dynamic-restart-threshold-design.md
   const MIN_PCT = 15;
-  const MAX_PCT = 75;
+  const MAX_PCT = 60;
   const DEFAULT_MULT = 7;
 
   // baselinePct — то же самое число, что и текущий pct (ctxUsed), снятое на первом ходу сессии:

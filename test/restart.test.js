@@ -14,10 +14,10 @@ const HOUR = 3600 * 1000;
 function ready(over) {
   return { pct: 40, status: 'ready', startedAt: 1000, ...over };
 }
-test('effectivePct зажат диапазоном 15–75', () => {
+test('effectivePct зажат диапазоном 15–60', () => {
   assert.strictEqual(R.effectivePct(1, 7), 15, 'совсем лёгкий проект — упирается в пол');
   assert.strictEqual(R.effectivePct(5, 7), 35);
-  assert.strictEqual(R.effectivePct(20, 7), 75, 'совсем тяжёлый проект — упирается в потолок');
+  assert.strictEqual(R.effectivePct(20, 7), 60, 'совсем тяжёлый проект — упирается в потолок');
 });
 
 // Раньше "не задано" тихо превращалось в самый агрессивный порог (Number(null) === 0, а 0 —
