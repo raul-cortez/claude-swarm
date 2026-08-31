@@ -992,6 +992,15 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .set-hint { display: none; }
 .set-note { display: block; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .set-note b { color: var(--text); }
+/* Показ выключен в Вид → эти настройки настраивают то, чего сейчас не видно нигде в
+   приложении — не просто приглушённая надпись, а заметная плашка с ходом прямо на галку. */
+.set-note-warn { color: var(--danger); margin-bottom: 10px; }
+.set-note-link {
+  padding: 0; border: none; background: none;
+  color: inherit; font: inherit; text-decoration: underline;
+  cursor: pointer;
+}
+.set-note-link:hover { opacity: 0.8; }
 /* Вопросик. Размер — с прицелом на попадание мышью, а не на красоту: 18px это меньше
    рекомендуемых 24, но строка настройки высотой 20, и кружок крупнее ломал бы её ритм. */
 .set-q {
@@ -1266,8 +1275,10 @@ body.no-sessions #stage::after {
 .tp-tabs-top #term-tabs { flex: 1 1 auto; flex-direction: row; }
 .tp-tabs-left #term-tabs { flex: 0 1 auto; flex-direction: column; }
 
+/* Controls stay a row even when the tab strip itself runs vertically (tabs-left):
+   four 24px icons fit the 148px column on their side with room to spare, and
+   stacking them ate a third of that column's height for nothing. */
 #term-tabs-ctl { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px; }
-.tp-tabs-left #term-tabs-ctl { flex-direction: column; }
 
 .tp-tab {
   display: flex;

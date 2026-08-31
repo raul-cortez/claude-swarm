@@ -307,6 +307,10 @@ const ICONS = {
   // Lucide "x" — закрыть вкладку. Рисованный, а не литера «×»: рядом с луной в одной
   // капсуле знак из шрифта заметно тяжелее и стоит не по центру круга.
   close: SVG('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  // Lucide "minus" — сворачивание панели терминала: она прячется, а не закрывается
+  // (вкладки внутри переживают ⌘J), крестик рядом с реальным закрытием вкладок читался
+  // как «стереть всё».
+  minimize: SVG('<path d="M5 12h14"/>'),
   // Lucide «gauge» — расход подписки, и «clock» — время до сброса.
   gauge: SVG('<path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 12.6 19 7"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'),
   clock: SVG('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
@@ -1650,6 +1654,9 @@ function showSettingsModal(tab) {
         </section>
         <section class="set-group">
           <div class="set-group-h">В нижней панели</div>
+          <div class="set-note set-note-warn" id="set-subs-bar-off" hidden>Пилюля подписок выключена
+            в <button type="button" class="set-note-link" data-jump="appearance">Вид → Нижняя
+            панель</button> — этих настроек не будет видно, пока не включишь её обратно.</div>
           <div class="set-field is-row">
             <div class="set-head">
               <span class="set-label">Окно</span>
@@ -1897,6 +1904,10 @@ function showSettingsModal(tab) {
           <h2 class="set-h">Терминал</h2>
           <p class="set-intro">Пристыковываемая панель терминала (⌘J) — обычная оболочка,
             отдельно от агентских вкладок. Своих вкладок внутри может быть несколько.</p>
+          <div class="set-note set-note-warn" id="set-terminal-bar-off" hidden>Кнопка панели терминала
+            выключена в <button type="button" class="set-note-link" data-jump="appearance">Вид →
+            Нижняя панель</button> — открыть панель (в том числе ${key('J')}) не получится, пока не
+            включишь её обратно.</div>
         </header>
         <section class="set-group">
           <div class="set-group-h">Каталог новой вкладки терминала</div>
@@ -2759,6 +2770,23 @@ function showSettingsModal(tab) {
   barSubsI.checked = usagePillsEnabled;
   barPresenceI.checked = presencePillEnabled;
   barCmdI.checked = cmdMenuEnabled;
+
+  // Подписки/Терминал настраивают то, что живёт в нижней панели — выключишь показ в
+  // Вид → Нижняя панель, и эти же настройки станут не видны в самом приложении без всякой
+  // подсказки почему. Плашка держит их в паре: живёт, пока не включишь галку обратно, и ведёт
+  // прямо на неё, а не просто сообщает.
+  const subsBarOffNote = overlay.querySelector('#set-subs-bar-off');
+  const terminalBarOffNote = overlay.querySelector('#set-terminal-bar-off');
+  const renderBarGateNotes = () => {
+    subsBarOffNote.hidden = barSubsI.checked;
+    terminalBarOffNote.hidden = barTerminalI.checked;
+  };
+  renderBarGateNotes();
+  barSubsI.addEventListener('change', renderBarGateNotes);
+  barTerminalI.addEventListener('change', renderBarGateNotes);
+  overlay.querySelectorAll('.set-note-link[data-jump]').forEach((btn) => {
+    btn.addEventListener('click', () => showTab(btn.dataset.jump));
+  });
 
   // Вопрос «когда спрашивать» имеет смысл только при нескольких подписках — иначе выбирать
   // не из чего, и настройка была бы вопросом без вариантов.
@@ -4217,9 +4245,8 @@ termAddBtn.addEventListener('click', () => createTermTab());
 termPosBtn.addEventListener('click', () => setTermTabsPos(termPanel.tabsPos === 'top' ? 'left' : 'top'));
 termDockBtn.addEventListener('click', () => setTermDock(termPanel.dock === 'bottom' ? 'side' : 'bottom'));
 // Тот же closeTermPanel(), что и у #term-panel-btn/⌘J снаружи — просто дотянуться до неё,
-// не выходя из самой панели. Крестик, а не «свернуть»-шеврон: закрывает панель, но не убивает
-// шеллы внутри (см. комментарий над closeTermPanel).
-termCollapseBtn.innerHTML = ICONS.close;
+// не выходя из самой панели.
+termCollapseBtn.innerHTML = ICONS.minimize;
 termCollapseBtn.addEventListener('click', () => closeTermPanel());
 termPanelBtn.querySelector('.ic').innerHTML = ICONS.terminal;
 termPanelBtn.addEventListener('click', toggleTermPanel);
