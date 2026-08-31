@@ -348,6 +348,21 @@
     return pct >= threshold;
   }
 
+  // Порог, при переходе которого просьбу можно печатать БЕЗ паузы хода — см.
+  // docs/superpowers/specs/2026-08-31-aggressive-restart-threshold-design.md. Мягкий порог
+  // (pctOver) остаётся мягким и по-прежнему ждёт turnOver — это только вторая, более высокая
+  // планка: контекст настолько близок к автосжатию, что вежливость подождать паузу уже не
+  // оправдана.
+  const AGGRESSIVE_MULT = 1.5;
+  function pctOverAggressive(s) {
+    const pct = Number(s.pct);
+    if (!isFinite(pct) || pct <= 0) return false;
+    const soft = effectivePct(s.baselinePct, s.mult);
+    if (soft == null) return false;
+    const threshold = Math.min(MAX_PCT, soft * AGGRESSIVE_MULT);
+    return pct >= threshold;
+  }
+
   // Ответ, пришедший вне круга «спросили — ответили»: агент положил его в файл сам, не дожидаясь
   // нашей просьбы. Бывает и внутри отсрочки, и после того, как она истекла (см. step).
   //
@@ -527,22 +542,24 @@
     // никогда. Без строки бывают три вкладки: чистый терминал, агент, набранный руками с самого
     // начала, и та, где агента сменили руками (см. session:forgetLaunch).
     if (!s.hasBase) return false;
-    if (!pctOver(s)) return false;
-    // Конец хода, а не «готов»: иначе вкладку, которая прощается зовом, мы не спросили бы никогда
-    // — а это как раз те вкладки, ради которых всё и делалось (см. turnOver).
-    if (!turnOver(s)) return false;
     // А агент-то там есть? «Готов» на пустой оболочке выглядит так же, как «готов» у отдохнувшего
     // агента, а снимок расхода живёт своей жизнью ещё три четверти часа после того, как Клода
-    // закрыли руками. Без этой проверки двадцать строк просьбы уезжали бы в ШЕЛЛ, и он послушно
-    // попытался бы их выполнить. `undefined` — Windows, там про процессы мы не знаем ничего.
-    // Без этого просьба уезжала в ШЕЛЛ у всякого, кто закрыл агента руками: снимок расхода ещё три
-    // четверти часа считается годным, статус читается «готов», и двадцать строк русской прозы
-    // отправлялись шеллу на исполнение.
+    // закрыли руками. Без этой проверки просьба уезжала бы в ШЕЛЛ, и он послушно попытался бы её
+    // выполнить. `undefined` — Windows, там про процессы мы не знаем ничего.
     if (!agentPresent(s)) return false;
     if (boxOpen(s)) return false;
     if (!s.uptimeMs || s.uptimeMs < MIN_UPTIME_MS) return false;
     if (st.retryAt && now < st.retryAt) return false;
-    return true;
+    // Два пути к «пора»:
+    //   • мягкий — порог пройден И ход отдан (turnOver), как было всегда: вкладку, которая
+    //     прощается зовом, мы не спросили бы никогда — а это как раз те вкладки, ради которых
+    //     всё и делалось (см. turnOver);
+    //   • агрессивный — порог пройден настолько, что ждать паузу уже не стоит, см.
+    //     docs/superpowers/specs/2026-08-31-aggressive-restart-threshold-design.md. Он всегда ≥
+    //     мягкого (коэффициент > 1), так что к его переходу мягкий уже пройден — отдельной гонки
+    //     между ними нет.
+    if (pctOver(s) && turnOver(s)) return true;
+    return pctOverAggressive(s);
   }
 
   // Текст просьбы. Печатается в живую сессию, поэтому написан как обращение к агенту, а не как
@@ -801,7 +818,7 @@
   }
 
   return {
-    MIN_PCT, MAX_PCT, DEFAULT_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
+    MIN_PCT, MAX_PCT, DEFAULT_MULT, AGGRESSIVE_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
     MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS, GRANT_CALM_MS, RETRY_MIN_MS,
     PROMPT_MAX, PROMPT_CARRIED,
     effectivePct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,

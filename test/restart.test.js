@@ -114,6 +114,54 @@ test('спрашиваем вкладку, которая отдала ход, �
   assert.strictEqual(step(idle(), { status: 'running', bg: true }).action, 'ask');
 });
 
+// Агрессивный порог: не ждёт паузы хода, полагаясь на то, что Claude Code CLI сам ставит
+// напечатанное в очередь, пока агент занят (см. 2026-08-31-aggressive-restart-threshold-design.md).
+test('агрессивный порог печатает просьбу, не дожидаясь паузы хода', () => {
+  // baseline 5 → мягкий порог 5×7=35, агрессивный min(35×1.5, 60)=52.5.
+  const r = step(idle(), { pct: 53, status: 'running', bg: false });
+  assert.strictEqual(r.action, 'ask');
+});
+
+test('мягкий порог пройден, агрессивный ещё нет — работающую вкладку по-прежнему не трогаем', () => {
+  // pct=40 ≥ мягкого порога 35, но < агрессивного 52.5 — как и до этой задачи.
+  const r = step(idle(), { pct: 40, status: 'running', bg: false });
+  assert.strictEqual(r.action, 'nothing');
+});
+
+test('агрессивный порог тоже упирается в общий потолок 60% — там оба порога совпадают', () => {
+  // baseline 20 → мягкий min(20×7, 60)=60, агрессивный min(60×1.5, 60)=60.
+  assert.strictEqual(
+    step(idle(), { pct: 59, baselinePct: 20, status: 'running', bg: false }).action,
+    'nothing',
+    'до 60% ни мягкий, ни агрессивный ещё не пройдены',
+  );
+  assert.strictEqual(
+    step(idle(), { pct: 60, baselinePct: 20, status: 'running', bg: false }).action,
+    'ask',
+    'на 60% оба порога совпадают — открывается агрессивный путь',
+  );
+});
+
+test('агрессивный порог не печатает в открытую рамку', () => {
+  const r = step(idle(), { pct: 53, status: 'running', bg: false, dialog: true });
+  assert.strictEqual(r.action, 'nothing');
+});
+
+test('агрессивный порог не спрашивает без строки запуска, живого агента или до 15 минут работы', () => {
+  assert.strictEqual(
+    step(idle(), { pct: 53, status: 'running', bg: false, hasBase: false }).action,
+    'nothing',
+  );
+  assert.strictEqual(
+    step(idle(), { pct: 53, status: 'running', bg: false, shellBusy: false }).action,
+    'nothing',
+  );
+  assert.strictEqual(
+    step(idle(), { pct: 53, status: 'running', bg: false, uptimeMs: 60_000 }).action,
+    'nothing',
+  );
+});
+
 // Ревью, проход 3: «готов» на пустой оболочке выглядит как «готов» у отдохнувшего агента, а снимок
 // расхода живёт ещё три четверти часа после того, как Клода закрыли руками. Двадцать строк просьбы
 // уезжали в ШЕЛЛ, и он послушно пытался их выполнить.
