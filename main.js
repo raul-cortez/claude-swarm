@@ -1492,7 +1492,11 @@ setInterval(() => {
           taken.add(mine);
           d.claudeSessionId = path.basename(mine, '.jsonl');
           safeSend('session:claude', { id, claudeSessionId: d.claudeSessionId });
-          if (d.tgMode || d.auto) tgWriteModes();
+          // Безусловно: карта абсолютных путей restart/digest в этом же файле (files, см.
+          // tgWriteModes) должна знать актуальный id разговора для КАЖДОЙ вкладки, а не только
+          // для тех, что в телеге или под мандатом — иначе самоперезапуск/дайджест молчаливой
+          // вкладки указывал бы хуку на брошенный разговор.
+          tgWriteModes();
           trLog(`tab=${id} → ${path.basename(mine)} (по тексту из телеги)`);
         }
       }
@@ -1568,7 +1572,11 @@ setInterval(() => {
         if (d.claudeSessionId && !byPin) {
           d.claudeSessionId = stem;
           safeSend('session:claude', { id, claudeSessionId: stem });
-          if (d.tgMode || d.auto) tgWriteModes();
+          // Безусловно: карта абсолютных путей restart/digest в этом же файле (files, см.
+          // tgWriteModes) должна знать актуальный id разговора для КАЖДОЙ вкладки, а не только
+          // для тех, что в телеге или под мандатом — иначе самоперезапуск/дайджест молчаливой
+          // вкладки указывал бы хуку на брошенный разговор.
+          tgWriteModes();
         }
         // Bound without knowing the id (hooks off, `claude` typed by hand, a tab restored
         // by its old swarm-* name): the FILE NAME is that id. Hand it to the renderer so
@@ -2821,10 +2829,26 @@ function tgWriteModes() {
   // хуку выключенной, а не молча пропадает, — иначе он обещал бы агенту дверь, которую сворм не
   // откроет. Своя формулировка (что человек хочет видеть) и потолок длины едут тем же путём, что
   // и ночное правило, — текстом в этот же файл, хук просто вставляет их в инструкцию.
+  //
+  // Абсолютные пути файлов restart/digest, по id РАЗГОВОРА (это всё, что знает о вкладке хук).
+  // Раньше хук печатал агенту только шаблон с $CLAUDE_CODE_SESSION_ID и просил сложить имя
+  // самому — а «рабочая папка», которую видит агент, не всегда та, что отслеживает сворм
+  // (d.cwd): агент в git worktree (поддиректория задачи) кладёт файл туда, сворм ждёт его в
+  // главном дереве, и самоперезапуск/дайджест тихо не срабатывают. Абсолютный путь эту догадку
+  // снимает. Значение не меняется при самоперезапуске той же вкладки (считается от tabKey/cwd,
+  // не от id) — значит печатать его в текст безопасно и для промпт-кэша, см. selfRestartNote.
+  const files = {};
+  for (const [tid, d] of det) {
+    if (!d || d.dead || !d.claudeSessionId) continue;
+    const rf = restartAnswerFile(tid, d);
+    const df = digestFileFor(d);
+    if (rf || df) files[d.claudeSessionId] = { restart: rf || '', digest: df || '' };
+  }
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
     restart: { on: RESTART_ENABLED },
     digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
+    files,
   });
   if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
   try {
@@ -6122,7 +6146,11 @@ function restartFire(id, d) {
   // Мандат остаётся вкладкой, а не сессией: хук знает вкладку только по id разговора, и после
   // самоперезапуска этот id другой. Без перезаписи отданная вкладка тихо теряла бы разрешение
   // решать самой — ровно в тот миг, когда человека рядом нет.
-  if (d.auto) tgWriteModes();
+  //
+  // Безусловно, а не только для мандата: карта абсолютных путей restart/digest (files, см.
+  // tgWriteModes) обязана указывать на актуальный id этой вкладки для ЛЮБОЙ вкладки, иначе
+  // самозвон свежей сессии сразу после этого же перезапуска не найдёт себя в карте.
+  tgWriteModes();
   // Тем же каналом, которым вкладка узнаёт про /clear и про `claude`, набранный руками: он
   // хранит id и восстанавливает по нему разговор. Иначе вкладка осталась бы с id брошенного.
   safeSend('session:claude', { id, claudeSessionId: d.claudeSessionId });
@@ -6471,6 +6499,10 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // `--resume <id>` keeps that id, so the tab binds precisely from the first tick
     // instead of guessing by folder + mtime.
     d0.claudeSessionId = pinned.sessionId || String(opts.resumeId || '') || null;
+    // Карта абсолютных путей restart/digest (files, см. tgWriteModes) должна знать про эту
+    // вкладку с первого же тика — иначе самозвон в первые секунды жизни вкладки не нашёл бы
+    // себя в карте и откатился бы на прежний шаблон (не ошибка, но и не тот путь, что чинили).
+    if (d0.claudeSessionId) tgWriteModes();
     // Give the login shell a moment to finish sourcing the profile, then run claude —
     // preceded by a `clear`, so what the user sees first is the agent and not the line we
     // typed for them.

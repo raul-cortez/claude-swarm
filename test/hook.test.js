@@ -655,6 +655,31 @@ test('свежей сессии сворм называет тот файл, к�
   assert.match(out.hookSpecificOutput.additionalContext, /перезапустить себя сам/);
 });
 
+// Живой случай (fastio, 2026-08-31): агент работал в git worktree — «рабочая папка» из его
+// точки зрения была не той, что отслеживает сворм (главное дерево), и файл-ответ ушёл не туда.
+// main.js теперь присылает АБСОЛЮТНЫЙ путь этой вкладки (swarm-tgmode.json.files[sid]) — хук
+// обязан напечатать именно его, а не просить агента гадать по $CLAUDE_CODE_SESSION_ID.
+test('абсолютный путь от приложения печатается буквально, шаблон уходит', () => {
+  const abs = '/Users/x/WebstormProjects/fastio/.swarm-restart-b8ec9797-ec6b-40fc-84fc-52a0a0126ff0.json';
+  const sid = 'd688f6be-fde4-4211-a66f-9539f71e0d02';
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
+    null, [], 'desk', { restart: { on: true }, files: { [sid]: { restart: abs, digest: '' } } });
+  assert.ok(out.hookSpecificOutput.additionalContext.includes(abs), 'абсолютный путь напечатан целиком');
+  assert.ok(!/\$CLAUDE_CODE_SESSION_ID/.test(out.hookSpecificOutput.additionalContext),
+    'шаблон больше не нужен, когда путь уже известен');
+});
+
+// Тот же путь, что и у selfRestartNote, не меняется между самоперезапусками одной вкладки
+// (считается от tabKey/cwd, а не от id) — значит два РАЗНЫХ sid с ОДНИМ и тем же путём в files
+// обязаны дать байт-в-байт одинаковый текст: печатать его не рвёт промпт-кэш внутри вкладки.
+test('один и тот же абсолютный путь даёт одинаковый текст для разных id той же вкладки', () => {
+  const abs = '/repo/.swarm-restart-tabkey.json';
+  const mk = (sid) => H.outputFor({ hook_event_name: 'SessionStart', session_id: sid, cwd: '/tmp' },
+    null, [], 'desk', { restart: { on: true }, files: { [sid]: { restart: abs, digest: '' } } })
+    .hookSpecificOutput.additionalContext;
+  assert.strictEqual(mk('old-session'), mk('new-session'));
+});
+
 test('выключенный перезапуск про самозвон молчит', () => {
   const off = { restart: { on: false } };
   const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's1' }, null, [], 'desk', off);
@@ -746,6 +771,29 @@ test('дайджест не написан — на каждом ходе кор
   const third = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: dir }, null, [], 'desk', ex);
   assert.ok(!third || !third.hookSpecificOutput, 'файл появился — сказать больше нечего');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Живой случай, дайджест-версия того же бага: агент сидит в git worktree, payload.cwd — это
+// поддиректория задачи, а сворм следит за главным деревом. Файл написан по АБСОЛЮТНОМУ пути,
+// который сворм и правда читает, но payload.cwd + резолвнутое имя на него не попадает —
+// без absPath напоминание нагоняло бы «ещё не написан» вечно, хотя файл давно на месте.
+test('дайджест написан по абсолютному пути из другой папки — напоминание всё равно гаснет', () => {
+  const mainTree = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-digest-main-'));
+  const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-digest-worktree-'));
+  const sid = 's-nudge-worktree';
+  const absPath = path.join(mainTree, H.digestFileFor(sid));
+  const ex = { digest: { on: true }, files: { [sid]: { restart: '', digest: absPath } } };
+  // Агент отчитывается из worktree (payload.cwd), но пишет по абсолютному пути в главное дерево.
+  const before = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: worktree }, null, [], 'desk', ex);
+  assert.match(before.hookSpecificOutput.additionalContext, /ещё не написан/);
+  assert.ok(before.hookSpecificOutput.additionalContext.includes(absPath),
+    'напоминание называет абсолютный путь, а не шаблон');
+  fs.writeFileSync(absPath, JSON.stringify({ digest: 'делаю штуку' }));
+  const after = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: sid, cwd: worktree }, null, [], 'desk', ex);
+  assert.ok(!after || !after.hookSpecificOutput,
+    'файл на месте по абсолютному пути — напоминание гаснет, хотя payload.cwd другой');
+  fs.rmSync(mainTree, { recursive: true, force: true });
+  fs.rmSync(worktree, { recursive: true, force: true });
 });
 
 test('напоминание про дайджест молчит: выключённый дайджест, подагент, нет cwd', () => {
