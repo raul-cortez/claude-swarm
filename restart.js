@@ -15,27 +15,32 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.SWARM_RESTART = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  // Порог — настройка КАЧЕСТВА, а не страховка от переполнения. Проценты у нас отмерены от
-  // точки автосжатия (statusline.ctxUsed делит занятое на полезную часть окна), так что 100%
-  // — это момент, когда Клод сжимает разговор сам. Значит промах не смертелен: без нас
-  // получится сегодняшнее поведение.
-  //
-  // 30% по умолчанию, потому что агент тупеет задолго до конца окна — в абсолюте это триста
-  // тысяч токенов на миллионном окне. Верх диапазона оставлен для другого намерения: не
-  // держать агента свежим, а просто не упереться в стену.
+  // Эффективный порог для ЭТОЙ сессии — не абсолютный процент окна, а во сколько раз контекст
+  // вырос от того, с чем сессия стартовала. Тяжёлый проект (свой CLAUDE.md, большая память)
+  // стартует уже на заметном проценте — плоский порог спрашивал бы его почти сразу, ничего не
+  // сделав; лёгкий стартует дёшево — тот же плоский порог держит его до последнего, хотя работы
+  // уже накопилось много. Спека:
+  // docs/superpowers/specs/2026-08-31-dynamic-restart-threshold-design.md
   const MIN_PCT = 15;
   const MAX_PCT = 75;
-  const DEFAULT_PCT = 30;
+  const DEFAULT_MULT = 7;
 
-  // «Не задано» и «задано нулём» — разные вещи, и путать их дорого: сюда приходит
-  // localStorage.getItem, а он на несохранённой настройке возвращает null. Через Number(null)
-  // это ноль, то есть самый агрессивный порог — новый человек получал бы 15% вместо 30%,
-  // причём молча, потому что 15 — законное значение ползунка.
-  function clampPct(n) {
-    if (n == null || n === '') return DEFAULT_PCT;
-    const v = Math.round(Number(n));
-    if (!isFinite(v)) return DEFAULT_PCT;
-    return Math.max(MIN_PCT, Math.min(MAX_PCT, v));
+  // baselinePct — то же самое число, что и текущий pct (ctxUsed), снятое на первом ходу сессии:
+  // main.js фиксирует его один раз и не трогает до следующего рестарта (см. d.baselinePct).
+  // Если снимка ещё не было — null, и это не «умолчание», а «рано решать»: раньше пустая
+  // настройка тихо превращалась в самый агрессивный порог (Number(null) === 0, законное
+  // значение ползунка) — здесь тихая подмена была бы опаснее: молчаливое «пора спрашивать» на
+  // вкладке, которая не сделала ни хода.
+  //
+  // MIN_PCT/MAX_PCT остались от старого ползунка, но роль сменили: не диапазон настройки, а
+  // предохранители формулы — снизу защёлка от вкладки, которая ничего не сделала, сверху —
+  // гарантия спросить раньше автосжатия при любом baseline.
+  function effectivePct(baselinePct, mult) {
+    const b = Number(baselinePct);
+    if (!isFinite(b) || b <= 0) return null;
+    const m = Number(mult);
+    const mm = isFinite(m) && m > 0 ? m : DEFAULT_MULT;
+    return Math.max(MIN_PCT, Math.min(MAX_PCT, b * mm));
   }
 
   // Сколько работы вкладка должна сделать после старта, прежде чем её можно спрашивать.
@@ -338,7 +343,9 @@
   function pctOver(s) {
     const pct = Number(s.pct);
     if (!isFinite(pct) || pct <= 0) return false;      // расхода нет — статуслайн молчит
-    return pct >= clampPct(s.threshold);
+    const threshold = effectivePct(s.baselinePct, s.mult);
+    if (threshold == null) return false;                // baseline ещё не измерен — рано решать
+    return pct >= threshold;
   }
 
   // Ответ, пришедший вне круга «спросили — ответили»: агент положил его в файл сам, не дожидаясь
@@ -794,10 +801,10 @@
   }
 
   return {
-    MIN_PCT, MAX_PCT, DEFAULT_PCT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
+    MIN_PCT, MAX_PCT, DEFAULT_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
     MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS, GRANT_CALM_MS, RETRY_MIN_MS,
     PROMPT_MAX, PROMPT_CARRIED,
-    clampPct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,
+    effectivePct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,
     answerName,
     promptFits, handoffPrompt,
     // Наружу — ради такта вне очереди: main.js будит автомат не на всякое шевеление вкладки, а
