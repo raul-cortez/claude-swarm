@@ -22,7 +22,7 @@ function test(name, fn) { tests.push([name, fn]); }
 const root = path.join(__dirname, '..');
 const FILES = [
   'main.js', 'preload.js', 'night.js', 'telegram.js', 'detector.js', 'screen.js', 'restart.js',
-  'transcript.js', 'unread.js', 'ask-phrases.js', 'updater.js', 'updater-core.js', 'voice.js',
+  'transcript.js', 'ask-phrases.js', 'updater.js', 'updater-core.js', 'voice.js',
   'md.js', 'git.js', 'osc.js', 'pty-write.js', 'pty-loader.js', 'agent-rules.js', 'launch-line.js',
   'renderer/renderer.js', 'renderer/diffview.js', 'renderer/themes.js', 'renderer/tabstyle.js',
   'renderer/keybinds.js', 'renderer/logstore.js', 'renderer/resume.js', 'renderer/launch-word.js',

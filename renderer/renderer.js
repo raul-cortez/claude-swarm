@@ -3472,26 +3472,12 @@ function activate(id, opts) {
   // In pult mode the highlighted tab is the Пульт, not the agent you're reading.
   if (!pultOn) s.tab.classList.add('active');
   activeId = id;
-  reportViewing();
   renderGate();
   renderDigestStrip();
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
 }
-
-// Куда человек смотрит: активная вкладка И фокус окна вместе. Та же пара, по которой гасятся
-// уведомления («не звать про вкладку, в которую смотрят в упор») — но там она проверяется на
-// месте, а здесь нужна В MAIN, где решают судьбу вкладки с непрочитанным ответом (unread.js).
-//
-// Шлём на КАЖДОЕ изменение любой из половин, а не по опросу: переключение вкладки и возврат к
-// окну — это ровно те два действия, которыми человек говорит «я пришёл читать», и опрос раз в
-// сколько-то секунд превратил бы их в «когда-нибудь заметим».
-function reportViewing() {
-  window.swarm.reportViewing(activeId, document.hasFocus());
-}
-window.addEventListener('focus', reportViewing);
-window.addEventListener('blur', reportViewing);
 
 function closeSession(id) {
   const s = sessions.get(id);
