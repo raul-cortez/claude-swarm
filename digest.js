@@ -27,9 +27,9 @@
   const MIN_LEN = 100;
   const MAX_LEN = 1000;
 
-  // «Не задано» и «задано нулём» — разные вещи, та же ловушка, что у restart.clampPct: сюда
-  // приходит localStorage.getItem, а он на несохранённой настройке отдаёт null. Через Number(null)
-  // это 0 — конечное число, — и потолок молча улетел бы к MIN_LEN вместо умолчания.
+  // «Не задано» и «задано нулём» — разные вещи: сюда приходит localStorage.getItem, а он на
+  // несохранённой настройке отдаёт null. Через Number(null) это 0 — конечное число, — и потолок
+  // молча улетел бы к MIN_LEN вместо умолчания.
   function clampMaxLen(n) {
     if (n == null || n === '') return DEFAULT_LEN;
     const v = Math.round(Number(n));

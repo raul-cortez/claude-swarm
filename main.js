@@ -5387,7 +5387,6 @@ ipcMain.handle('shell:openPath', (_e, cwd, rel) => shell.openPath(path.join(cwd,
 // спрашивает агента. Снаружи «всё закоммичено» и «три файла разобраны наполовину» выглядят
 // одинаково, и цена ошибки здесь невозвратна.
 let RESTART_ENABLED = false;
-let RESTART_PCT = restart.DEFAULT_PCT;
 
 const RESTART_TICK_MS = 30_000;
 // Сроки, по которым автомат принимает решения, живут в restart.js — рядом с самими решениями и
@@ -5779,6 +5778,11 @@ function restartTick(id, d, now) {
   // он заведомо устаревший.
   const byPid = state.phase === 'exiting' && d.rsSignalled && d.rsShellBusy !== undefined;
   const pct = byPid ? 0 : restartPctOf(d, now);
+  // Стартовый размер контекста ЭТОЙ сессии — первое валидное число после её рождения
+  // (d.sessionStartAt, сбрасывается там же, где и оно — см. restartFire и создание вкладки).
+  // Фиксируем один раз и не трогаем до следующего рестарта. Байпасный путь (byPid) — не
+  // настоящий снимок расхода, в baseline его не берём.
+  if (!byPid && d.baselinePct == null && pct > 0) d.baselinePct = pct;
   // В каких состояниях читать файл ответа, решает автомат (restart.wantsAnswer) — и решает не для
   // экономии: ответ, прочитанный не вовремя, перезапускает вкладку по ответу про прошлый круг, а не
   // прочитанный вовремя — теряет готовое разрешение на часы.
@@ -5792,7 +5796,7 @@ function restartTick(id, d, now) {
   const r = restart.step(state, {
     now,
     enabled: RESTART_ENABLED,
-    threshold: RESTART_PCT,
+    baselinePct: d.baselinePct,
     pct,
     status: d.status,
     // «Работает в фоне» — это статус «работает» с отметкой. Для перезапуска разница
@@ -6116,6 +6120,7 @@ function restartFire(id, d) {
   d.turnStartedAt = 0;
   d.turnEndedAt = 0;
   d.sessionStartAt = Date.now();
+  d.baselinePct = null;
   d.launchAt = Date.now();
   d.launchPid = null;
   d.rsCheckAt = Date.now() + RESTART_CHECK_MS;   // а доехал ли запуск, см. restartVerify
@@ -6343,8 +6348,7 @@ function restartExit(id, d) {
 ipcMain.on('settings:restart', (_e, opts = {}) => {
   const was = RESTART_ENABLED;
   RESTART_ENABLED = !!(opts && opts.enabled);
-  RESTART_PCT = restart.clampPct(opts && opts.threshold);
-  restartLog(`настройка: ${RESTART_ENABLED ? 'вкл' : 'выкл'}, порог ${RESTART_PCT}%`);
+  restartLog(`настройка: перезапуск ${RESTART_ENABLED ? 'вкл' : 'выкл'}`);
   // Хук читает это из файла режимов: снятая галочка должна закрыть агенту и дверь самозвона, а
   // не только наши вопросы на пороге.
   tgWriteModes();
@@ -6452,6 +6456,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // (--settings, правило обращения) живут в окружении ЭТОГО pty, а оно задаётся один раз здесь.
     d0.launchCmd = cmd || '';
     d0.sessionStartAt = Date.now();
+    d0.baselinePct = null;
     if (cmd) {
       setTimeout(() => {
         // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
