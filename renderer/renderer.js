@@ -604,14 +604,31 @@ function updateAgents(s) {
 // рисуется только для активной вкладки, а смысл значка ровно в том, чтобы увидеть его СО
 // СТОРОНЫ, не переключаясь. Пишет его не агент, а сторонний хук проекта (см. digest.readCache) —
 // на подавляющем большинстве вкладок его вообще не будет, пока хук не подключат.
+//
+// Значение верно только на СТАРТЕ сессии — дальше оно не отражает ничего актуального, — поэтому
+// значок не висит на карточке всё время жизни вкладки: показали и через CACHE_BADGE_MS спрятали.
+// Дайджест-тик присылает то же значение cache ещё и на каждое изменение текста (см. digestTick в
+// main.js), так что «показать» делаем один раз за сессию (s.cacheBadgeShown), а не при каждом вызове.
+const CACHE_BADGE_MS = 15_000;
 function updateCacheBadge(s) {
   const el = s.tab.querySelector('.cache-badge');
   if (!el) return;
-  if (s.digestCache !== 'warm' && s.digestCache !== 'cold') { el.hidden = true; return; }
-  el.hidden = false;
+  if (s.digestCache !== 'warm' && s.digestCache !== 'cold') {
+    el.hidden = true;
+    if (s.cacheBadgeTimer) { clearTimeout(s.cacheBadgeTimer); s.cacheBadgeTimer = null; }
+    s.cacheBadgeShown = false;
+    return;
+  }
   const warm = s.digestCache === 'warm';
-  el.textContent = warm ? '🔥' : '❄️';
   el.title = warm ? 'старт тёплый: кэш подхватил префикс' : 'старт холодный: оплачен по полной';
+  if (s.cacheBadgeShown) return;
+  s.cacheBadgeShown = true;
+  el.textContent = warm ? '🔥' : '❄️';
+  el.hidden = false;
+  s.cacheBadgeTimer = setTimeout(() => {
+    s.cacheBadgeTimer = null;
+    el.hidden = true;
+  }, CACHE_BADGE_MS);
 }
 
 // Заполнение контекста на карточке вкладки. Число приходит готовым из main (ctxFillOf):
@@ -3488,6 +3505,7 @@ function closeSession(id) {
   if (activeId === id) closeDiffOverlay();
   if (s.runTimer) { clearTimeout(s.runTimer); s.runTimer = null; }
   if (s.leaveWaitTimer) { clearTimeout(s.leaveWaitTimer); s.leaveWaitTimer = null; }
+  if (s.cacheBadgeTimer) { clearTimeout(s.cacheBadgeTimer); s.cacheBadgeTimer = null; }
   hideLinkTip();
   window.swarm.killSession(id);
   s.term.dispose();
