@@ -30,6 +30,16 @@ function runHook(payload) {
   return signals[0] || null;
 }
 
+// Строку расхода лимита хук печатает начиная со ВТОРОГО хода сессии (см. isFirstPromptOfSession
+// в swarm-signal.mjs) — тестам про её содержимое нужен транскрипт с уже одним ответом внутри,
+// иначе они проверяли бы не свой предмет, а само подавление на первом ходе.
+function transcriptWithReply() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-transcript-'));
+  const file = path.join(dir, 'session.jsonl');
+  fs.writeFileSync(file, '{"type":"assistant","message":{}}\n');
+  return file;
+}
+
 test('UserPromptSubmit → busy', () => {
   assert.deepStrictEqual(runHook({ hook_event_name: 'UserPromptSubmit', session_id: 'abc' }),
     { token: 'busy', sessionId: 'abc', transcript: null });
@@ -489,7 +499,7 @@ test('снимок без аккаунта (строка статуса преж
 
 test('в начало хода уезжают числа расхода, а не отказ', () => {
   const m = H.loadMatcher(() => null);
-  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1', transcript_path: transcriptWithReply() }, m, [], 'desk',
     { usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 } }, nowSec: 0 });
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   assert.match(out.hookSpecificOutput.additionalContext, /5ч 93%/);
@@ -524,10 +534,23 @@ test('вкладка без мандата про итог не слышит', (
 
 test('числа расхода и просьба про итог едут вместе', () => {
   const m = H.loadMatcher(() => null);
-  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk',
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1', transcript_path: transcriptWithReply() }, m, [], 'desk',
     { usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 } }, autoSessions: ['s1'], nowSec: 0 });
   assert.match(out.hookSpecificOutput.additionalContext, /5ч 93%/);
   assert.match(out.hookSpecificOutput.additionalContext, /Задача кончилась/);
+});
+
+// Первый ход новой сессии — единственный момент, когда промпт сравнивают с чужим кэшем между
+// вкладками; минуты до сброса в строке расхода у каждой рвут это совпадение. Эксперимент
+// 2026-09-01: 14 прямых сессий без этого хука — 0% холодных, свормовские вкладки в те же дни —
+// 17-88%. Поэтому здесь строки быть не должно, даже если usage есть.
+test('на первом ходе сессии строку расхода не печатают', () => {
+  const m = H.loadMatcher(() => null);
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1', transcript_path: '/nonexistent/path.jsonl' }, m, [], 'desk',
+    { usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 } }, nowSec: 0 });
+  assert.ok(!out || !out.hookSpecificOutput || !out.hookSpecificOutput.additionalContext
+    || !out.hookSpecificOutput.additionalContext.includes('5ч 93%'),
+    'первый ход не должен нести числа расхода');
 });
 
 test('без снимка расхода начало хода выглядит как раньше', () => {
@@ -593,7 +616,7 @@ test('end to end: мандат одной вкладки читается с д�
 // человека несколько, окна у них разные, и «7д 84%» без имени не отвечает, на чём агент работает.
 test('агент слышит имя своей подписки вместе с числами', () => {
   const m = H.loadMatcher(() => null);
-  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1' }, m, [], 'desk', {
+  const out = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's1', transcript_path: transcriptWithReply() }, m, [], 'desk', {
     usage: { five: { spent: 93, resetsAt: 100 }, seven: { spent: 61 }, home: '/h/.claude-my' },
     subCards: [{ line: 'claude', name: 'рабочая', home: '/h/.claude' },
       { line: 'claude-my', name: 'личная', home: '/h/.claude-my' }],

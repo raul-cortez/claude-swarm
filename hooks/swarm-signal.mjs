@@ -499,6 +499,28 @@ function gatesSubagent(payload, usage, nowSec) {
   return null;
 }
 
+// Первый ход НОВОЙ сессии — единственный момент, когда промпт сравнивают с чужим кэшем
+// (общий разогретый префикс CLAUDE.md+тулы+память между параллельными вкладками). Дальше
+// сессия сравнивает себя с собой секунду назад — совпадает гарантированно, что бы мы сюда
+// ни печатали. А в usageNote() — минуты до сброса лимита, у каждой вкладки свои и меняются
+// ежеминутно: на первом ходе это ломает побайтовое совпадение префикса и стоит холодного
+// старта (2-2.5x цены хода). Подтверждено экспериментом 2026-09-01: 14 прямых сессий БЕЗ
+// этого хука (claude -p, без --settings сворма) — 0% холодных, те же дни в свормовских
+// вкладках — 17-88%. Поэтому на первом ходе строку не печатаем вовсе; начиная со второго
+// хода той же сессии печатать её уже бесплатно.
+function isFirstPromptOfSession(transcriptPath) {
+  const p = String(transcriptPath || '');
+  if (!p || !existsSync(p)) return true;
+  try {
+    return !readFileSync(p, 'utf8').includes('"type":"assistant"');
+  } catch {
+    // Файл на середине записи или права подвели — не знаем, первый ли ход. Показать строку
+    // безопаснее, чем молчать: худший исход тут — статус-кво (случайный холодный старт),
+    // а не новая поломка.
+    return false;
+  }
+}
+
 // Строка расхода в начало хода: то же знание, но мягко — агент сам решает, звать ли пятерых.
 // Ворота ловят край, а это лечит причину: агент, который видит числа, до края не доходит.
 //
@@ -725,6 +747,8 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // запретили, и агент сейчас пойдёт писать прозой или делать шаг сам.
   const seq = markerFor(payload, matcher, (deny || gate) ? 'busy' : null);
   const starts = !!(payload && payload.hook_event_name === 'UserPromptSubmit');
+  // Строку расхода лимита не печатаем на первом ходе сессии — см. комментарий у usageNote().
+  const showsUsage = starts && !isFirstPromptOfSession(payload && payload.transcript_path);
   // Начало хода — единственный миг, когда автономной вкладке можно положить требование в контекст
   // ДО работы. Сказать его в конце нельзя: конец хода мы узнаём тогда, когда агент уже замолчал,
   // и просить у него итог задним числом — значит будить вкладку ради того, что она сделала бы
@@ -736,7 +760,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // столько, сколько агент реально тянет с первой записью.
   const needsDigestNudge = starts && !isSubagent(payload) && ex.digest && ex.digest.on
     && !digestWritten(payload, digestFileFor(sid), fileInfo && fileInfo.digest);
-  const note = [starts ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
+  const note = [showsUsage ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
     wantsSummary ? summaryNote() : '',
     needsDigestNudge ? digestMissingNudge(fileInfo && fileInfo.digest) : '']
     .filter(Boolean).join('\n\n');
