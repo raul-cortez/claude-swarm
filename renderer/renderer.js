@@ -235,7 +235,6 @@ const gitBtn      = document.getElementById('git-branch');
 const gitMenu     = document.getElementById('git-menu');
 const gitMsgEl    = document.getElementById('git-msg');
 const gitDiffBtn  = document.getElementById('git-diff');
-const ctxThresholdEl = document.getElementById('ctx-threshold');
 
 // --- dockable terminal panel: DOM refs (see the section near the layout code) ---
 const stageAgentsEl   = document.getElementById('stage-agents');
@@ -462,15 +461,13 @@ function statusName(s) {
 const KIND_LABEL = { permission: 'разрешение', question: 'вопрос' };
 function waitLabel(s) { return KIND_LABEL[s && s.waitKind] || 'ждёт ответа'; }
 
-window.swarm.onStatus(({ id, status, detail, ctxPct, restartPct, question, sub, waitingKind, sure, done }) => {
+window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind, sure, done }) => {
   const s = sessions.get(id);
   if (!s || !s.alive) return;
 
   if (STATUS_DEBUG) console.debug('[status] ← main', statusName(s), 'raw:', status, 'detail:', detail, 'shown:', s.status);
 
   if (ctxPct !== undefined) { s.ctxPct = ctxPct; updateCtx(s); }
-  if (restartPct !== undefined) s.restartPct = restartPct;
-  if (id === activeId) renderCtxThreshold();
   if (question !== s.question) { s.question = question; renderPult(); }
   // Пустой kind приходит с ЛЮБЫМ не-ждущим статусом, а вкладка в этот миг может быть ещё
   // жёлтой: уход из «ждёт» дебаунсится, «работает» буферизуется (см. applyStatus). Затирать
@@ -651,23 +648,6 @@ function updateCtx(s) {
   ctx.querySelector('.ctx-num').textContent = val + '%';
   ctx.classList.remove('ctx-lo', 'ctx-mid', 'ctx-hi');
   ctx.classList.add(val < 50 ? 'ctx-lo' : val < 80 ? 'ctx-mid' : 'ctx-hi');
-}
-
-// Порог перезапуска АКТИВНОЙ вкладки, под строкой ввода — карточка полосу нарочно держит без
-// цифр (насыщенность цвета вместо процента), а этот порог у каждой вкладки свой (baseline ×
-// множитель, см. effectivePct в restart.js) и без числа его не с чем сравнить. Пишем реальный
-// расход рядом с ним же, чтобы было видно, когда один догонит другой.
-function renderCtxThreshold() {
-  if (!ctxThresholdEl) return;
-  const s = sessions.get(activeId);
-  const pct = s && Number(s.ctxPct);
-  const th = s && Number(s.restartPct);
-  if (!s || s.ctxPct == null || !isFinite(pct) || s.restartPct == null || !isFinite(th)) {
-    ctxThresholdEl.hidden = true;
-    return;
-  }
-  ctxThresholdEl.hidden = false;
-  ctxThresholdEl.textContent = `контекст ${Math.round(pct)}% · порог перезапуска ~${Math.round(th)}%`;
 }
 
 window.swarm.onExit(({ id }) => {
@@ -3504,7 +3484,6 @@ function activate(id, opts) {
   activeId = id;
   renderGate();
   renderDigestStrip();
-  renderCtxThreshold();
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
@@ -3542,7 +3521,7 @@ function closeSession(id) {
   if (activeId === id) {
     const next = sessions.keys().next();
     if (!next.done) { activate(next.value); }
-    else { activeId = null; renderGate(); renderCtxThreshold(); }
+    else { activeId = null; renderGate(); }
   }
 }
 

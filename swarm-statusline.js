@@ -345,8 +345,46 @@ function subNameFor(home) {
   return '';
 }
 
+// Включена ли функция автоперезапуска ВООБЩЕ — main.js пишет флаг рядом со скриптом тем же
+// приёмом, что и имя подписки (см. subNameFor), при каждой смене настройки. Без файла (функция
+// никогда не включалась, или это старая версия main.js без записи) считаем выключенной — молчать
+// про порог безопаснее, чем пообещать перезапуск, которого не будет.
+function restartEnabled() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'swarm-restart-flag.json'), 'utf8'));
+    return !!(raw && raw.enabled);
+  } catch (_) { return false; }
+}
+
+// Порог, при котором main.js попросит перезапуск ЭТОЙ вкладки — та же формула, что и
+// effectivePct в restart.js (`clamp(baseline × 7, 15, 60)`), продублирована здесь: этот скрипт
+// копируется в userData и запускается отдельным процессом на каждый ход (см. шапку файла), у
+// restart.js рядом с ним нет. Изменится множитель или потолок там — поправить и тут.
+const RESTART_MIN_PCT = 15;
+const RESTART_MAX_PCT = 60;
+const RESTART_MULT = 7;
+function restartThreshold(baseline) {
+  const b = Number(baseline);
+  if (!isFinite(b) || b <= 0) return null;
+  return Math.max(RESTART_MIN_PCT, Math.min(RESTART_MAX_PCT, Math.round(b * RESTART_MULT)));
+}
+
+// Точка отсчёта для ЭТОЙ сессии — первый известный расход после её рождения, дальше не
+// трогаем (см. effectivePct в restart.js). У статуслайна нет памяти между ходами — только диск,
+// поэтому храним её тут же, в снимке расхода (usage/<session>.json, см. writeUsage): читаем
+// СТАРЫЙ снимок ДО того, как перезапишем его новым.
+function readBaseline(session) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, USAGE_DIR, session + '.json'), 'utf8'));
+    const b = raw && raw.baseline;
+    return isFinite(b) && b > 0 ? b : null;
+  } catch (_) { return null; }
+}
+
 // The whole line, from the JSON Claude Code sends on stdin. Pure so it's testable.
-function renderLine(data, nowSec, subName) {
+// `restart` — { enabled, baseline } или null/undefined, когда функция выключена или порог ещё
+// не с чем считать (см. main()).
+function renderLine(data, nowSec, subName, restart) {
   const model = data.model?.display_name || 'Claude';
   const cwd = data.workspace?.current_dir || process.cwd();
   const dir = path.basename(cwd);
@@ -364,6 +402,10 @@ function renderLine(data, nowSec, subName) {
     else if (used < 65) ctx = ` \x1b[33m${bar} ${used}%\x1b[0m \x1b[2m${win}\x1b[0m`;
     else if (used < 80) ctx = ` \x1b[38;5;208m${bar} ${used}%\x1b[0m \x1b[2m${win}\x1b[0m`;
     else ctx = ` \x1b[5;31m💀 ${bar} ${used}%\x1b[0m \x1b[2m${win}\x1b[0m`;
+    // Порог — ПОСЛЕ бара и его %, чтобы регэксп полоски на карточке (`CTX_BAR_RE`, screen.js:
+    // ищет `%` сразу за блочными глифами) по-прежнему цеплял ровно бар, а не этот процент.
+    const th = restart && restart.enabled ? restartThreshold(restart.baseline) : null;
+    if (th != null) ctx += ` \x1b[2m· порог ${th}%\x1b[0m`;
   }
 
   return `\x1b[2m${model}\x1b[0m${nameSeg} │ \x1b[2m${dir}\x1b[0m${ctx}${pin}`;
@@ -399,8 +441,14 @@ function main() {
       // отработать до конца — из него живут полоска на карточке, /usage в телеге и порог
       // перезапуска. Чужая команда после него не может отнять у приложения ничего.
       const home = configRoot(data, process.env);
-      writeUsage(usageSnapshot(data, nowSec, home));
-      process.stdout.write(composeLine(renderLine(data, nowSec, subNameFor(home)), readForeign(data, input)));
+      const snap = usageSnapshot(data, nowSec, home);
+      // Старый baseline — ДО перезаписи снимка, иначе прочитаем то же число, что сами
+      // только что посчитали для ЭТОГО хода, и порог поедет за каждым ответом агента.
+      const baseline = readBaseline(snap.session) ?? (snap.ctx ? snap.ctx.used : null);
+      if (baseline != null) snap.baseline = baseline;
+      writeUsage(snap);
+      const restart = { enabled: restartEnabled(), baseline };
+      process.stdout.write(composeLine(renderLine(data, nowSec, subNameFor(home), restart), readForeign(data, input)));
     } catch (_) {
       // Bad/empty stdin must never make Claude show an error line — print nothing.
     }

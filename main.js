@@ -6421,6 +6421,14 @@ ipcMain.on('settings:restart', (_e, opts = {}) => {
   const was = RESTART_ENABLED;
   RESTART_ENABLED = !!(opts && opts.enabled);
   restartLog(`настройка: перезапуск ${RESTART_ENABLED ? 'вкл' : 'выкл'}`);
+  // Статуслайн — отдельный процесс на каждый ход, своей памяти у него нет. Порог он рисует
+  // сам (та же формула, что и здесь, см. swarm-statusline.js), но НУЖНО ли его вообще
+  // показывать — знает только это состояние, и без файла статуслайн рисовал бы порог даже
+  // при выключенной функции, обещая перезапуск, которого не будет.
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-restart-flag.json'),
+      JSON.stringify({ enabled: RESTART_ENABLED }));
+  } catch (e) { reportMainError(e); }
   // Хук читает это из файла режимов: снятая галочка должна закрыть агенту и дверь самозвона, а
   // не только наши вопросы на пороге.
   tgWriteModes();
