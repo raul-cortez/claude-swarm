@@ -14,27 +14,25 @@ const HOUR = 3600 * 1000;
 function ready(over) {
   return { pct: 40, status: 'ready', startedAt: 1000, ...over };
 }
-test('effectivePct зажат диапазоном 15–60', () => {
-  assert.strictEqual(R.effectivePct(1, 7), 15, 'совсем лёгкий проект — упирается в пол');
-  assert.strictEqual(R.effectivePct(5, 7), 35);
-  assert.strictEqual(R.effectivePct(20, 7), 60, 'совсем тяжёлый проект — упирается в потолок');
+test('порог зажат диапазоном 15–60', () => {
+  assert.strictEqual(R.clampPct(0), 15);
+  assert.strictEqual(R.clampPct(14), 15);
+  assert.strictEqual(R.clampPct(30), 30);
+  assert.strictEqual(R.clampPct(61), 60);
+  assert.strictEqual(R.clampPct(1000), 60);
+  assert.strictEqual(R.clampPct('нет'), R.DEFAULT_PCT);
+  assert.strictEqual(R.clampPct(undefined), R.DEFAULT_PCT);
 });
 
-// Раньше "не задано" тихо превращалось в самый агрессивный порог (Number(null) === 0, а 0 —
-// законное значение ползунка) — новый человек получал бы перезапуски вдвое чаще обещанного,
-// молча. Здесь цена такой же тихой подмены выше: пришлось бы решать "пора спрашивать" на
-// вкладке, у которой ещё не было ни одного снимка контекста. Поэтому — null, а не умолчание.
-test('effectivePct без известного baseline — null, а не умолчание', () => {
-  assert.strictEqual(R.effectivePct(null, 7), null);
-  assert.strictEqual(R.effectivePct(undefined, 7), null);
-  assert.strictEqual(R.effectivePct(0, 7), null);
-  assert.strictEqual(R.effectivePct(-5, 7), null);
-  assert.strictEqual(R.effectivePct('нет', 7), null);
-});
-
-test('effectivePct берёт множитель по умолчанию, если свой не передали', () => {
-  assert.strictEqual(R.effectivePct(5), R.effectivePct(5, R.DEFAULT_MULT));
-  assert.strictEqual(R.effectivePct(5, 0), R.effectivePct(5, R.DEFAULT_MULT), 'нулевой множитель — тоже не задан');
+// Сюда приходит localStorage.getItem, а он на несохранённой настройке даёт null. Через
+// Number(null) это ноль, то есть 15% — самый частый перезапуск, и молча: 15 законное значение.
+// Новый человек получал бы вдвое чаще обещанного, не тронув ползунок.
+test('незаданный порог — это умолчание, а не ноль', () => {
+  assert.strictEqual(R.clampPct(null), R.DEFAULT_PCT);
+  assert.strictEqual(R.clampPct(''), R.DEFAULT_PCT);
+  // А вот строка с числом — настоящая настройка, её уважаем.
+  assert.strictEqual(R.clampPct('45'), 45);
+  assert.strictEqual(R.clampPct('0'), 15);
 });
 
 // --- автомат ------------------------------------------------------------------
@@ -42,12 +40,10 @@ test('effectivePct берёт множитель по умолчанию, есл
 // вразброс. Здесь каждый найденный сценарий стал проверкой: «ревью нашло путь X» превращается в
 // «тест покрывает путь X».
 const NOW = 10 * HOUR;
-// baselinePct: 5 → эффективный порог 5×7=35 (клампы 15/75 не задействованы) — дефолтный
-// pct: 40 из sig() по-прежнему "за порогом", как раньше при threshold: 30.
 // Вкладка, которую спрашивать МОЖНО: контекст за порогом, покой, агент на месте, отработала час.
 function sig(over) {
   return {
-    now: NOW, enabled: true, baselinePct: 5, pct: 40, status: 'ready',
+    now: NOW, enabled: true, threshold: 30, pct: 40, status: 'ready',
     dialog: false, shellBusy: true, modeVisible: true, uptimeMs: HOUR,
     hasBase: true, hasLine: false, answer: null, ...over,
   };
@@ -65,21 +61,8 @@ test('порог пройден — спрашиваем', () => {
 test('ниже порога, при выключенной функции и в немоте — молчим', () => {
   assert.strictEqual(step(idle(), { pct: 29 }).action, 'nothing');
   assert.strictEqual(step(idle(), { enabled: false }).action, 'nothing');
-  assert.strictEqual(step(idle(), { pct: 40, baselinePct: 20 }).action, 'nothing');
+  assert.strictEqual(step(idle(), { pct: 40, threshold: 60 }).action, 'nothing');
   assert.strictEqual(R.step({ ...idle(), phase: 'muted' }, sig()).action, 'nothing');
-});
-
-// Новое покрытие: лёгкий проект должен получать вопрос РАНЬШЕ, чем при плоских 30% —
-// ровно то, ради чего формула и переделана (см. спеку).
-test('лёгкий baseline двигает порог ниже — спрашиваем раньше плоских 30%', () => {
-  // baseline 3×7=21: pct=25 при плоском пороге 30% "за порогом" не считался бы, теперь считается.
-  assert.strictEqual(step(idle(), { pct: 25, baselinePct: 3 }).action, 'ask');
-});
-
-test('baseline ещё не измерен — не спрашиваем, даже если pct высокий', () => {
-  for (const baselinePct of [null, undefined, 0, -1]) {
-    assert.strictEqual(step(idle(), { pct: 90, baselinePct }).action, 'nothing');
-  }
 });
 
 // Ревью правки про «+ на папке»: вкладку, которую нечем поднять, спрашивать нельзя вовсе. Иначе
@@ -116,27 +99,30 @@ test('спрашиваем вкладку, которая отдала ход, �
 
 // Агрессивный порог: не ждёт паузы хода, полагаясь на то, что Claude Code CLI сам ставит
 // напечатанное в очередь, пока агент занят (см. 2026-08-31-aggressive-restart-threshold-design.md).
+// Точка отсчёта — ручной порог человека (threshold: 30 по умолчанию из sig()), а не производная
+// от baseline: формулу от baseline откатили (см. clampPct в restart.js), сам агрессивный
+// коэффициент остался прежним.
 test('агрессивный порог печатает просьбу, не дожидаясь паузы хода', () => {
-  // baseline 5 → мягкий порог 5×7=35, агрессивный min(35×1.5, 60)=52.5.
-  const r = step(idle(), { pct: 53, status: 'running', bg: false });
+  // мягкий порог 30, агрессивный min(30×1.5, 60)=45.
+  const r = step(idle(), { pct: 45, status: 'running', bg: false });
   assert.strictEqual(r.action, 'ask');
 });
 
 test('мягкий порог пройден, агрессивный ещё нет — работающую вкладку по-прежнему не трогаем', () => {
-  // pct=40 ≥ мягкого порога 35, но < агрессивного 52.5 — как и до этой задачи.
+  // pct=40 ≥ мягкого порога 30, но < агрессивного 45.
   const r = step(idle(), { pct: 40, status: 'running', bg: false });
   assert.strictEqual(r.action, 'nothing');
 });
 
 test('агрессивный порог тоже упирается в общий потолок 60% — там оба порога совпадают', () => {
-  // baseline 20 → мягкий min(20×7, 60)=60, агрессивный min(60×1.5, 60)=60.
+  // threshold 60 (уже потолок) → мягкий min(60, 60)=60, агрессивный min(60×1.5, 60)=60.
   assert.strictEqual(
-    step(idle(), { pct: 59, baselinePct: 20, status: 'running', bg: false }).action,
+    step(idle(), { pct: 59, threshold: 60, status: 'running', bg: false }).action,
     'nothing',
     'до 60% ни мягкий, ни агрессивный ещё не пройдены',
   );
   assert.strictEqual(
-    step(idle(), { pct: 60, baselinePct: 20, status: 'running', bg: false }).action,
+    step(idle(), { pct: 60, threshold: 60, status: 'running', bg: false }).action,
     'ask',
     'на 60% оба порога совпадают — открывается агрессивный путь',
   );
@@ -272,7 +258,7 @@ test('после срока агент может и отказать сам —
 // агент чувствует, что потерял нить, человек это видит со стороны, а процент — только догадка.
 test('зов файлом работает и до порога, и на молодой вкладке', () => {
   const raw = '{"restart":true,"prompt":"дальше","handoff":"#215"}';
-  for (const over of [{ pct: 20 }, { pct: 0 }, { uptimeMs: 60_000 }, { baselinePct: 20 }]) {
+  for (const over of [{ pct: 20 }, { pct: 0 }, { uptimeMs: 60_000 }, { threshold: 60 }]) {
     const r = R.step(idle(), sig({ ...over, answer: { raw, mtime: NOW } }));
     assert.strictEqual(r.action, 'grant', JSON.stringify(over));
   }

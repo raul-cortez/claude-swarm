@@ -15,32 +15,35 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.SWARM_RESTART = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  // Эффективный порог для ЭТОЙ сессии — не абсолютный процент окна, а во сколько раз контекст
-  // вырос от того, с чем сессия стартовала. Тяжёлый проект (свой CLAUDE.md, большая память)
-  // стартует уже на заметном проценте — плоский порог спрашивал бы его почти сразу, ничего не
-  // сделав; лёгкий стартует дёшево — тот же плоский порог держит его до последнего, хотя работы
-  // уже накопилось много. Спека:
-  // docs/superpowers/specs/2026-08-31-dynamic-restart-threshold-design.md
+  // Порог — настройка КАЧЕСТВА, а не страховка от переполнения. Проценты отмерены от точки
+  // автосжатия (statusline.ctxUsed делит занятое на полезную часть окна), так что 100% — это
+  // момент, когда Клод сжимает разговор сам. Значит промах не смертелен: без нас получится
+  // сегодняшнее поведение.
+  //
+  // Между 26 августа и 1 сентября порог здесь на короткое время стал динамическим — не плоский
+  // процент, а множитель от того, с чем сессия стартовала (тяжёлый CLAUDE.md/память тяжёлого
+  // проекта давали более высокий порог). Идею откатили: см.
+  // docs/superpowers/specs/2026-09-01-manual-restart-threshold-revert.md — расчёт показал, что
+  // цена самого перезапуска в деньгах ничтожна что при 15%, что при 60%, а значит нет предмета
+  // для формулы, которая якобы считает «объективно верную» точку. Решает человек под свой
+  // проект, ползунком.
+  //
+  // 30% по умолчанию, потому что агент тупеет задолго до конца окна. Верх диапазона (60%, было
+  // 75% — понижено отдельным осознанным фиксом, это решение не отменяется) оставлен для другого
+  // намерения: не держать агента свежим, а просто не упереться в стену.
   const MIN_PCT = 15;
   const MAX_PCT = 60;
-  const DEFAULT_MULT = 7;
+  const DEFAULT_PCT = 30;
 
-  // baselinePct — то же самое число, что и текущий pct (ctxUsed), снятое на первом ходу сессии:
-  // main.js фиксирует его один раз и не трогает до следующего рестарта (см. d.baselinePct).
-  // Если снимка ещё не было — null, и это не «умолчание», а «рано решать»: раньше пустая
-  // настройка тихо превращалась в самый агрессивный порог (Number(null) === 0, законное
-  // значение ползунка) — здесь тихая подмена была бы опаснее: молчаливое «пора спрашивать» на
-  // вкладке, которая не сделала ни хода.
-  //
-  // MIN_PCT/MAX_PCT остались от старого ползунка, но роль сменили: не диапазон настройки, а
-  // предохранители формулы — снизу защёлка от вкладки, которая ничего не сделала, сверху —
-  // гарантия спросить раньше автосжатия при любом baseline.
-  function effectivePct(baselinePct, mult) {
-    const b = Number(baselinePct);
-    if (!isFinite(b) || b <= 0) return null;
-    const m = Number(mult);
-    const mm = isFinite(m) && m > 0 ? m : DEFAULT_MULT;
-    return Math.max(MIN_PCT, Math.min(MAX_PCT, b * mm));
+  // «Не задано» и «задано нулём» — разные вещи, и путать их дорого: сюда приходит
+  // localStorage.getItem, а он на несохранённой настройке возвращает null. Через Number(null)
+  // это ноль, то есть самый агрессивный порог — новый человек получал бы 15% вместо 30%,
+  // причём молча, потому что 15 — законное значение ползунка.
+  function clampPct(n) {
+    if (n == null || n === '') return DEFAULT_PCT;
+    const v = Math.round(Number(n));
+    if (!isFinite(v)) return DEFAULT_PCT;
+    return Math.max(MIN_PCT, Math.min(MAX_PCT, v));
   }
 
   // Сколько работы вкладка должна сделать после старта, прежде чем её можно спрашивать.
@@ -343,23 +346,21 @@
   function pctOver(s) {
     const pct = Number(s.pct);
     if (!isFinite(pct) || pct <= 0) return false;      // расхода нет — статуслайн молчит
-    const threshold = effectivePct(s.baselinePct, s.mult);
-    if (threshold == null) return false;                // baseline ещё не измерен — рано решать
-    return pct >= threshold;
+    return pct >= clampPct(s.threshold);
   }
 
   // Порог, при переходе которого просьбу можно печатать БЕЗ паузы хода — см.
   // docs/superpowers/specs/2026-08-31-aggressive-restart-threshold-design.md. Мягкий порог
   // (pctOver) остаётся мягким и по-прежнему ждёт turnOver — это только вторая, более высокая
   // планка: контекст настолько близок к автосжатию, что вежливость подождать паузу уже не
-  // оправдана.
+  // оправдана. Точка отсчёта — ручной порог человека (clampPct), а не производная от baseline:
+  // формулу от baseline откатили (см. clampPct выше), агрессивный путь остался независимым от неё
+  // с самого начала.
   const AGGRESSIVE_MULT = 1.5;
   function pctOverAggressive(s) {
     const pct = Number(s.pct);
     if (!isFinite(pct) || pct <= 0) return false;
-    const soft = effectivePct(s.baselinePct, s.mult);
-    if (soft == null) return false;
-    const threshold = Math.min(MAX_PCT, soft * AGGRESSIVE_MULT);
+    const threshold = Math.min(MAX_PCT, clampPct(s.threshold) * AGGRESSIVE_MULT);
     return pct >= threshold;
   }
 
@@ -818,10 +819,10 @@
   }
 
   return {
-    MIN_PCT, MAX_PCT, DEFAULT_MULT, AGGRESSIVE_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
+    MIN_PCT, MAX_PCT, DEFAULT_PCT, AGGRESSIVE_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
     MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS, GRANT_CALM_MS, RETRY_MIN_MS,
     PROMPT_MAX, PROMPT_CARRIED,
-    effectivePct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,
+    clampPct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,
     answerName,
     promptFits, handoffPrompt,
     // Наружу — ради такта вне очереди: main.js будит автомат не на всякое шевеление вкладки, а

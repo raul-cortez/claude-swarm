@@ -131,6 +131,7 @@ const APPEARANCE = window.SWARM_THEMES;       // terminal theme presets + helper
 const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scopes
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
+const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
 const SUBS_API = window.SWARM_SUBS;           // подписки: карточки запуска и что видно в панели
 const DIGEST_API = window.SWARM_DIGEST;       // дайджест вкладки: потолок длины, общий с main
 const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (мышь, ответы) — не печать человека
@@ -774,9 +775,10 @@ const hooksEnabled = true;
 let permMode = localStorage.getItem('swarm.permMode') || '';
 // «Перезапускать агента, когда контекст заполнится» (Settings → Запуск). Выключено по
 // умолчанию: функция сама решает, когда стереть разговор, и включать такое за человека нельзя.
-// Порог считает сам сворм — по тому, во сколько раз контекст вырос от старта конкретной
-// вкладки (restart.js), крутить здесь нечего.
+// Порог — в процентах с полоски контекста, то есть отмеренных от точки автосжатия. Логика вся
+// в restart.js, здесь только память о выборе.
 let restartOn = localStorage.getItem('swarm.restart') === '1';
+let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
 // «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
 // который агент сам не может себе включить, и человек не обязан его хотеть.
 let digestOn = localStorage.getItem('swarm.digest') === '1';
@@ -1571,11 +1573,24 @@ function showSettingsModal(tab) {
               <span class="set-hint" hidden>Агент тупеет задолго до конца окна, а сам себя почистить не может.
                 Спросим его, можно ли сейчас: он зафиксирует эстафету — записку себе будущему — и мы стартуем
                 свежую сессию в этой же вкладке, с её задачей. Решает он: пока стоит на середине работы, отвечает
-                «не сейчас». Нужна наша строка статуса — из неё берётся заполнение контекста. Порог, при котором
-                мы спросим, сворм считает сам — по тому, насколько контекст вырос от старта именно этой вкладки,
-                для каждого проекта свой. А если перезапуск нужен прямо сейчас, его зовут файлом
-                <span class="set-mono">.swarm-restart.json</span> в папке вкладки — как он устроен, написано в
-                инструкции.</span>
+                «не сейчас». Нужна наша строка статуса — из неё берётся заполнение контекста. А если перезапуск
+                нужен прямо сейчас, его зовут файлом <span class="set-mono">.swarm-restart.json</span> в папке
+                вкладки — как он устроен, написано в инструкции.</span>
+            </div>
+            <div class="set-sub">
+              <div class="set-field is-row">
+                <div class="set-head">
+                  <span class="set-label">Спрашивать при заполнении</span>
+                  <button type="button" class="set-q" aria-label="подсказка">?</button>
+                  <span class="set-hint" hidden>То же число, что на полоске контекста вкладки. Считается от точки
+                    автосжатия: на 100% Клод сжимает разговор сам, так что позже нас уже поздно. Левее — чаще
+                    перезапуски, агент свежее. Правее — реже, одна сессия живёт дольше.</span>
+                </div>
+                <div class="set-range">
+                  <input type="range" class="set-range-input" id="set-restart-pct" />
+                  <span class="set-range-num" id="set-restart-pct-num"></span>
+                </div>
+              </div>
             </div>
             <div class="set-row">
               <label class="set-check">
@@ -2286,10 +2301,27 @@ function showSettingsModal(tab) {
     permI.value = permTitles.has(permMode) ? permMode : '';
     syncPermNote();
   });
-  // Самоперезапуск: одна галочка. Порог больше не настройка — сворм считает его сам по
-  // старту конкретной вкладки (restart.js), крутить нечего.
+  // Самоперезапуск: галочка и порог. Границы ползунка приходят из restart.js — того же
+  // модуля, по которому main решает «пора спросить», иначе панель обещала бы порог, с
+  // которым перезапуск не работает.
   const restartI = overlay.querySelector('#set-restart');
   restartI.checked = restartOn;
+  const restartPctI = overlay.querySelector('#set-restart-pct');
+  const restartNumEl = overlay.querySelector('#set-restart-pct-num');
+  restartPctI.min = String(RESTART_API.MIN_PCT);
+  restartPctI.max = String(RESTART_API.MAX_PCT);
+  restartPctI.step = '5';
+  restartPctI.value = String(restartPct);
+  const syncRestart = () => {
+    restartNumEl.textContent = restartPctI.value + '%';
+    // Выключенная функция не должна выглядеть настраиваемой: серый ползунок объясняет
+    // порядок действий сам, без подписи «сначала включите».
+    restartPctI.disabled = !restartI.checked;
+    restartNumEl.classList.toggle('off', !restartI.checked);
+  };
+  restartPctI.addEventListener('input', syncRestart);
+  restartI.addEventListener('change', syncRestart);
+  syncRestart();
   const digestI = overlay.querySelector('#set-digest');
   digestI.checked = digestOn;
   // Своя формулировка — та же схема заготовки, что у ночных текстов ниже (nightFields/flatText):
@@ -3358,10 +3390,13 @@ function showSettingsModal(tab) {
       localStorage.setItem('swarm.permMode', permMode);
       window.swarm.setPermissionMode(permMode);  // main adds/drops --permission-mode
     }
-    if (restartI.checked !== restartOn) {
+    const nextRestartPct = RESTART_API.clampPct(restartPctI.value);
+    if (restartI.checked !== restartOn || nextRestartPct !== restartPct) {
       restartOn = restartI.checked;
+      restartPct = nextRestartPct;
       localStorage.setItem('swarm.restart', restartOn ? '1' : '0');
-      window.swarm.setRestart({ enabled: restartOn });
+      localStorage.setItem('swarm.restartPct', String(restartPct));
+      window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
     }
     saveNightTexts();
     saveTgDrafts();
@@ -6016,7 +6051,7 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 // carries (or omits) the hooks block before the first claude spawn.
 window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
-window.swarm.setRestart({ enabled: restartOn }); // порог теперь считает сам сворм, по старту вкладки
+window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
