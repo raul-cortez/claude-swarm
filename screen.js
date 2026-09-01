@@ -770,10 +770,27 @@ function hits(snapshot, re) {
 function limitHit(snapshot) { return hits(snapshot, LIMIT_RE); }
 function limitReset(snapshot) { return hits(snapshot, LIMIT_RESET_RE); }
 
+// --- временный сбой API посреди ответа -----------------------------------------
+// «⏺ API Error: Connection closed mid-response» / «...Server error mid-response» /
+// «...Your computer went to sleep mid-response» — Клод оборвал ход на сетевой ошибке,
+// а не на своём слове. Экран после этого выглядит как обычный конец хода (агент замолчал,
+// строка ввода свободна — «готов»), и без отдельного признака ночь ждала бы IDLE_MS и
+// спрашивала «этап или всё сделано» — вопрос не по делу для голого обрыва связи, ответить
+// на который нечего, кроме «продолжай».
+//
+// Формулировки — из живого моста (telegram.log.1, два случая), а не по памяти: слово перед
+// «Error» и причина обрыва у Клода разные («Connection closed», «Server error», «Your
+// computer went to sleep»…), общий у всех — суффикс «mid-response». Часть таких обрывов
+// Клод чинит сам за десятки секунд (один из двух случаев в логе — ушёл сам через ~35с),
+// поэтому признак только ЛОВИТ баннер — толкать сразу или подождать решает вызывающий.
+const API_ERROR_RE = /\bAPI Error:.*\bmid-response\b/i;
+
+function apiErrorHit(snapshot) { return hits(snapshot, API_ERROR_RE); }
+
 module.exports = {
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
-  parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset,
+  parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset, apiErrorHit,
   contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick,
   PICK_ROW_SRC,
 };

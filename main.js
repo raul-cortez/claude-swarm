@@ -517,7 +517,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, asksForInput, waitsForWork } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, apiErrorHit, asksForInput, waitsForWork } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent, hasPromptBox, trRunStale, RE_RUNNING } = require('./detector');
@@ -3302,8 +3302,18 @@ async function tgNotifyDone(id, d, fresh) {
   // человеку с телефона важно знать, что это ещё не конец и отвечать не нужно — агент
   // вернётся сам, когда фон досчитает.
   const bg = !!d.bg;
-  const head = `${bg ? '⏳' : '✅'} ${tgTabName(id)}${bg ? ' — жду фоновую задачу' : ''}`;
+  const head = `${tgResultIcon(bg, text)} ${tgTabName(id)}${bg ? ' — жду фоновую задачу' : ''}`;
   await tgAckResolve(id, d, `${head}${text ? '\n\n' + text : bg ? '.' : ' — готов.'}`);
+}
+
+// Значок доклада о ходе. ✅ читается как «сделано», а итог хода, оборвавшегося сетевой
+// ошибкой (см. apiErrorHit в screen.js), — это не «сделано», это баннер вместо ответа. Живой
+// случай: телеграм честно прислал «✅ fastio\n\nAPI Error: … mid-response», человек в пути
+// увидел галочку и прошёл мимо — ровно она и обещает, что смотреть не нужно. ⚠️ у обрыва
+// нарочно ставится ВМЕСТО ✅, а не рядом: два значка на одной строке читаются хуже одного.
+function tgResultIcon(pending, text) {
+  if (pending) return '⏳';
+  return apiErrorHit(text) ? '⚠️' : '✅';
 }
 
 async function tgNotifyWaiting(id, d) {
@@ -4422,7 +4432,7 @@ async function tgLastWord(u) {
     + ` (${fromTr ? 'стенограмма' : 'экран'})`);
   d.tgSentKey = fromTr ? `tr:${d.trReplyAt}` : `screen:${text}`;
   await tgSend({ threadId: u.threadId, rich: true,
-    text: `${working ? '⏳' : '✅'} ${tgTabName(id)}${working ? ' (ещё работает)' : ''}\n\n${text}` });
+    text: `${tgResultIcon(working, text)} ${tgTabName(id)}${working ? ' (ещё работает)' : ''}\n\n${text}` });
 }
 
 // --- IPC: the settings panel ---------------------------------------------------
@@ -4624,6 +4634,15 @@ const NIGHT_RESOLVE_MS = 120_000;
 // упёрлось (недельное отпускает через дни), и вкладка встанет снова — но бесконечно ловить
 // стену тоже нельзя.
 const NIGHT_MAX_WAKES = 3;
+// Тот же потолок, но для толчков после временного сбоя API (см. nightOnApiError) — отдельный
+// счётчик и отдельный журнал, чтобы «разбудил после лимита» и «толкнул после обрыва сети» не
+// путались в логе одной цифрой.
+const NIGHT_MAX_ERR_NUDGES = 3;
+// Сколько тишины на баннере ждём, прежде чем толкнуть. Часть таких обрывов Клод чинит сам —
+// живой случай в логе моста ожил через ~35с, — толкать раньше значило бы печатать «продолжай»
+// в ход, который вот-вот продолжится сам. Времени сброса тут нет (это не расход, а обрыв),
+// поэтому срок фиксированный, а не вычисленный, как у стены лимита.
+const NIGHT_ERR_GRACE_MS = 60_000;
 
 function nightSt(d) {
   if (!d.ni) {
@@ -4635,6 +4654,9 @@ function nightSt(d) {
       // потому, что сообщение о лимите остаётся на экране и ПОСЛЕ подъёма: без него ночь
       // ловила бы одну и ту же строку по кругу и печатала в работающую вкладку.
       limitAt: 0, wokeUntil: 0, limitMute: false, resetMute: false,
+      // errAt — когда увидели баннер сбоя API, errTimer — выдержка тишины перед толчком,
+      // errNudges — сколько раз уже толкнули за ночь (см. NIGHT_MAX_ERR_NUDGES).
+      errAt: 0, errTimer: null, errNudges: 0,
       stoodKey: '', stoodPhase: '',
     };
   }
@@ -4648,6 +4670,7 @@ function nightClear(d) {
   if (!st) return;
   if (st.nudgeTimer) { clearTimeout(st.nudgeTimer); st.nudgeTimer = null; }
   if (st.wakeTimer) { clearTimeout(st.wakeTimer); st.wakeTimer = null; }
+  if (st.errTimer) { clearTimeout(st.errTimer); st.errTimer = null; }
 }
 
 function nightReset(d) {
@@ -4816,6 +4839,33 @@ function nightOnLimitReset(id, d) {
   tgLog(`авто: вкладка ${id} дождалась сброса лимита — нажал за неё`);
 }
 
+// Ход оборвался баннером «API Error: … mid-response» (см. apiErrorHit в screen.js) — та же
+// беда, что и стена лимита (случай 4 ночного режима), только без времени сброса: досадный
+// обрыв сети, а не расход окна. Экран после него выглядит как обычный «готов», и без этой
+// проверки вопрос про порог фазы пришёл бы только через IDLE_MS и был бы не в тему — агенту
+// тут нечего решать, только повторить попытку.
+//
+// Часть таких обрывов Клод чинит сам за десятки секунд, поэтому не толкаем на первый же
+// такт: заводим выдержку (NIGHT_ERR_GRACE_MS) и проверяем баннер ЗАНОВО по её истечении —
+// вкладка могла ожить сама, и толчок в работающий ход был бы тем же мусором в строке ввода,
+// от которого перезапуск уворачивается везде.
+function nightOnApiError(id, d) {
+  const st = nightSt(d);
+  if (st.errTimer) return;
+  if (!st.errAt) st.errAt = Date.now();
+  if (st.errNudges >= NIGHT_MAX_ERR_NUDGES) return;
+  st.errTimer = setTimeout(() => {
+    st.errTimer = null;
+    if (!autoOn(d) || d.dead || nightBusyWithRestart(d)) return;
+    if (d.status !== 'ready' || d.bg || d.sub) return;   // ожила сама или занята другим
+    if (!apiErrorHit(snapshot(d))) { st.errAt = 0; return; }   // баннер сошёл с экрана сам
+    st.errNudges++;
+    st.errAt = 0;
+    nightType(id, night.errWord());
+    tgLog(`авто: вкладка ${id} встала на временном сбое API — толкнул (${st.errNudges}/${NIGHT_MAX_ERR_NUDGES})`);
+  }, NIGHT_ERR_GRACE_MS);
+}
+
 // Вопрос про порог фазы: вкладка простаивает, а работа могла и не кончиться.
 function nightAskPhase(id, d) {
   const st = nightSt(d);
@@ -4867,6 +4917,9 @@ setInterval(() => {
         // выше, сброс пришёл ниже), а значат противоположное — «жди ещё» и «жать прямо сейчас».
         if (limitReset(snap)) nightOnLimitReset(id, d);
         else if (limitHit(snap)) nightOnLimit(id, d);
+        // Временный сбой API — только у «готовой»: этот баннер кончает ход, а не оставляет
+        // вкладку в ожидании (см. apiErrorHit в screen.js).
+        else if (d.status === 'ready' && !st.errTimer && apiErrorHit(snap)) nightOnApiError(id, d);
       }
       // Ждущую вкладку разбираем и ЗДЕСЬ, а не только на перемене статуса. Такт статуса зовёт
       // nightOnWaiting по событию — «что-то в вкладке изменилось», — а вкладка, стоящая на
@@ -4878,7 +4931,13 @@ setInterval(() => {
       if (d.status === 'waiting') nightOnWaiting(id, d);
       nightResolvePhase(id, d, now);
       // Вкладка снова работает — значит стена лимита, если она была, кончилась сама.
-      if (d.status === 'running') { st.limitMute = false; st.resetMute = false; }
+      if (d.status === 'running') {
+        st.limitMute = false; st.resetMute = false;
+        // И сбой API, если ждал выдержки, — тоже: ход продолжился сам, толкать уже некого.
+        // errNudges НЕ сбрасываем — это счётчик за ночь, а не за один обрыв.
+        if (st.errTimer) { clearTimeout(st.errTimer); st.errTimer = null; }
+        st.errAt = 0;
+      }
       // Сколько вкладка простаивает. Считаем здесь, а не в такте статуса: там это лишнее поле
       // в горячем цикле, а здесь — две строчки раз в двадцать секунд.
       // !d.sub — экран мог отчитаться «готов» (зелёным), пока подагенты Task ещё считают в
@@ -4890,7 +4949,8 @@ setInterval(() => {
       else st.readyAt = 0;
       if (st.askedAt) continue;               // ждём, чем кончится прошлый вопрос
       const dec = night.phaseDecision(st, {
-        auto: autoOn(d), status: d.status, bg: d.bg, sub: d.sub || 0, limited: !!st.wakeTimer, done: !!d.done,
+        auto: autoOn(d), status: d.status, bg: d.bg, sub: d.sub || 0,
+        limited: !!st.wakeTimer || !!st.errTimer, done: !!d.done,
         // Сказала ли вкладка хоть слово в этой своей жизни. Голос стенограммы: пока в
         // разговоре нет ни одной реплики, вердикта нет вовсе (trState пуст), а «прошлая
         // жизнь» восстановленной вкладки его не даёт тоже — см. transcript.isPastLife.

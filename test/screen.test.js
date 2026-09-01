@@ -980,6 +980,34 @@ test('сообщение о сбросе лимита узнаётся и сте
   assert.strictEqual(S.limitReset(''), false);
 });
 
+// --- временный сбой API посреди ответа -----------------------------------------
+// Живые формулировки из моста (telegram.log.1, два реальных случая): вкладка кончила ход
+// баннером об оборвавшейся сети, а не своим словом.
+test('баннер временного сбоя API узнаётся в разных формулировках', () => {
+  assert.strictEqual(S.apiErrorHit('API Error: Connection closed mid-response'), true);
+  assert.strictEqual(S.apiErrorHit('API Error: Your computer went to sleep mid-response'), true);
+  assert.strictEqual(S.apiErrorHit('⏺ API Error: Server error mid-response'), true);
+});
+
+// Обычная ошибка API (не оборвавшая ход, а севшая диалогом с кнопками, или случившаяся ДО
+// первого байта ответа) под этот признак не подходит нарочно — только суффикс «mid-response»
+// значит «ход брошен на полуслове, и спросить агенту нечего».
+test('ошибка API без mid-response баннером обрыва не считается', () => {
+  assert.strictEqual(S.apiErrorHit('API Error: 401 Invalid API key'), false);
+  assert.strictEqual(S.apiErrorHit('API Error: overloaded_error'), false);
+});
+
+// Разговор ОБ ошибке — не сама ошибка: агент цитирует баннер в кавычках, или пишет по-русски.
+test('цитата и русская проза об ошибке API не принимаются', () => {
+  assert.strictEqual(S.apiErrorHit('⏺ поймал "API Error: Connection closed mid-response" — повторяю запрос'), false);
+  assert.strictEqual(S.apiErrorHit('Похоже, у меня оборвалась сеть mid-response, как в API Error — попробую снова'), false);
+});
+
+test('обычный вывод агента за сбой API не принимается', () => {
+  assert.strictEqual(S.apiErrorHit('⏺ Готово, тесты зелёные'), false);
+  assert.strictEqual(S.apiErrorHit(''), false);
+});
+
 // --- какому числу верить про заполнение контекста ----------------------------
 // Живой случай: человек чистит вкладку, разговор становится новым — а снимок расхода лежит
 // по одному на сессию, и приложение продолжает читать файл умершего. Полоска стоит полной на

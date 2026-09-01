@@ -232,6 +232,13 @@ function wakeWord() {
   return 'Окно лимита сбросилось, можно работать. Продолжай с того места, где остановился.';
 }
 
+// Толчок после временного сбоя API (см. screen.js apiErrorHit). Коротко и не по духу вопроса
+// про порог фазы: тут нечего решать, ход оборвала сеть, а не сам агент, — вся эстафета и так
+// у него в голове, дожидаться нечего, дошло дело до простого «попробуй ещё раз».
+function errWord() {
+  return 'Похоже, ход оборвался на сетевой ошибке (API Error). Продолжай с того места, где остановился.';
+}
+
 // --- «ночной режим включён» — это не флаг, а счёт вкладок ----------------------
 // Хранить его отдельно значит завести второе состояние на одно решение, и оно немедленно
 // начинает спорить с первым: карточка отмечена, общий режим снят — она ночная или нет? общий
@@ -485,7 +492,7 @@ function short(text, max) {
 return {
   NIGHT, IDLE_MS, NUDGE_DELAY_MS, WARMUP_MS, BOOT_MS, WAKE_LAG_MS, MAX_CONTINUES, MAX_NUDGES,
   MAX_ASKS, GATE_FIVE, GATE_SEVEN,
-  rule, phaseAsk, wakeWord, ruleText, askText, ruleBody, askBody, summaryNote, protocol,
+  rule, phaseAsk, wakeWord, errWord, ruleText, askText, ruleBody, askBody, summaryNote, protocol,
   PERMIT_GIT, permitDecision, nightOn,
   nudgeDecision, phaseDecision, clock, short,
 };
