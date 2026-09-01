@@ -729,6 +729,13 @@ function newConversation(id, d, prev) {
   d.statusline = '';          // пусто ≠ прежней строке, значит следующий такт пересчитает
   restartClearPending(d);
   d.rs = restart.initial();
+  // Точка отсчёта тоже принадлежит ПРОШЛОМУ разговору — если её не сбросить, порог для нового
+  // разговора считается от чужого, уже разросшегося baseline и застревает у потолка (см.
+  // effectivePct в restart.js). Сбрасываем вместе с sessionStartAt — как это уже делает
+  // restartFire для СВОЕГО перезапуска (main.js:6182): для формулы порога чужая смена
+  // разговора — такое же рождение сессии, как и наша.
+  d.baselinePct = null;
+  d.sessionStartAt = Date.now();
   // И уговор «отвечаешь коротко и в телегу»: он живёт в первом сообщении разговора и умирает
   // вместе с ним. Телеграмный /clear это уже снимал у себя (см. forgets в tgTypeClaudeCommand),
   // а тот же /clear с клавиатуры — нет, и следующее сообщение с телефона приходило без уговора.
@@ -868,7 +875,12 @@ setInterval(() => {
         d.sub = sub;
         d.waitingKind = kind;
         d.done = done;
-        safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure, done });
+        // Порог, при котором ЭТА вкладка попросит перезапуск (см. effectivePct в restart.js) —
+        // не абсолютный, свой у каждой вкладки от её baselinePct. Рендерер показывает его рядом
+        // с расходом под активной вкладкой, чтобы было видно, когда именно расход его перейдёт.
+        // null, пока baseline ещё не снят, или когда функция выключена совсем.
+        const restartPct = RESTART_ENABLED ? restart.effectivePct(d.baselinePct) : null;
+        safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, restartPct, question, sub, waitingKind: kind, sure, done });
         // Смена цвета — в журнал, вместе с показаниями всех каналов (см. statusWhy).
         if (next.status !== prev || next.detail !== prevDetail) {
           statusLog(`tab=${id}${d.name ? ' (' + d.name + ')' : ''} ${prev || '—'}/${prevDetail || '—'} → ${next.status}/${next.detail} | ${statusWhy(d, now, snap, sub)}`);

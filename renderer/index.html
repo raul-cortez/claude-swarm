@@ -92,6 +92,10 @@
       <span class="d-del"></span>
     </button>
     <span id="git-msg" class="git-msg"></span>
+    <!-- Порог перезапуска активной вкладки — свой у каждой сессии (см. effectivePct в
+         restart.js), поэтому одним числом в настройках его не показать. Видно только пока
+         известен baseline и функция включена; заполняет renderCtxThreshold(). -->
+    <span id="ctx-threshold" class="ctx-threshold" hidden></span>
     <!-- Action icons (VS Code style), pinned to the right of the bar. -->
     <div id="bar-actions">
       <!-- Red "!" surfaces captured errors; click opens the logs modal. Hidden until an error occurs. -->
