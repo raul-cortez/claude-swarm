@@ -48,6 +48,14 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:proc', handler);
   },
 
+  // Загрузка CPU деревом процессов вкладки, посчитанная тем же тиком, что и session:proc
+  // (main.js: scanTabProcesses). cb({ id, cpuPct }). Возвращает отписку.
+  onTabCpu: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:cpu', handler);
+    return () => ipcRenderer.removeListener('session:cpu', handler);
+  },
+
   // Send user keystrokes to a session's pty.
   sendInput: (id, data) => ipcRenderer.send('session:input', { id, data }),
 

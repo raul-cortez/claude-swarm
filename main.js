@@ -189,6 +189,7 @@ const statusline = require('./swarm-statusline');   // числа расхода
 const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
+const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
@@ -557,6 +558,10 @@ function makeDetector(cols, rows) {
     // снимок, а байты перерисовки не считаются работой. См. snapshot() ниже.
     scrolledBack: false, liveSnap: '', livePrompt: '',
     status: '', detail: '', statusline: '', ctxPct: null, question: null, sub: 0, dead: false,
+    // Загрузка CPU деревом процессов вкладки: прошлый снимок (сумма CPU-секунд + время
+    // снимка), с которым scanTabProcesses сравнивает следующий, чтобы получить проценты
+    // между тиками (см. cpu.js). cpuPct — последнее посчитанное значение для рассылки.
+    cpuPrev: null, cpuPct: null,
     // Ход кончился словами «ничего, жду замер стенда»: статус «работает», но работает
     // не агент, а фоновая задача, и человеку это докладывают иначе. См. detector.js.
     bg: false,
@@ -1368,24 +1373,59 @@ const PROC_EVERY_MS = 5000;
 // вкладке «clear» вместо агента.
 const PROC_SETTLE_MS = 2000;
 
+// Сумма CPU-секунд по всему дереву процессов вкладки (шелл + агент + все его потомки —
+// сабагенты node живут глубже первого потомка). csByPid и kids — снимок одного тика
+// scanTabProcesses; обходим в ширину, а не рекурсией, чтобы случайный цикл в данных ps
+// (в жизни не бывает, но `ps` — внешний ввод) не уронил приложение стек-оверфлоу.
+function treeCpuSeconds(kids, csByPid, rootPid) {
+  let total = csByPid.get(rootPid) || 0;
+  const seen = new Set([rootPid]);
+  const queue = (kids.get(rootPid) || []).map((e) => e.pid);
+  while (queue.length) {
+    const pid = queue.shift();
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    total += csByPid.get(pid) || 0;
+    for (const e of (kids.get(pid) || [])) queue.push(e.pid);
+  }
+  return total;
+}
+
 function scanTabProcesses() {
-  execFile('ps', ['-eo', 'pid=,ppid=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
+  const now = Date.now();
+  execFile('ps', ['-eo', 'pid=,ppid=,time=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
     if (err) return;                     // ps недоступен — молча живём как раньше
     const kids = new Map();              // ppid -> [{ pid, args }]
+    const csByPid = new Map();           // pid -> накопленные CPU-секунды процесса
     for (const line of String(out).split('\n')) {
-      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+:\d+(?:\.\d+)?)\s+(.*)$/);
       if (!m) continue;
       const list = kids.get(m[2]) || [];
-      list.push({ pid: m[1], args: m[3] });
+      list.push({ pid: m[1], args: m[4] });
       kids.set(m[2], list);
+      const cs = cpu.cpuSecondsFromTime(m[3]);
+      if (cs != null) csByPid.set(m[1], cs);
     }
     for (const [id, child] of sessions) {
       const shellPid = child && child.pid != null ? String(child.pid) : null;
       if (!shellPid) continue;
+      const dd = det.get(id);
+      // Загрузка CPU — по всему дереву шелла, независимо от того, распознали ли команду
+      // ниже: пустой шелл (агент вышел) даёт дереву из одного процесса, что тоже честный
+      // снимок (обычно ~0%), а не повод молчать до следующего запуска.
+      if (dd) {
+        const cs = treeCpuSeconds(kids, csByPid, shellPid);
+        const prev = dd.cpuPrev;
+        dd.cpuPrev = { ts: now, cs };
+        if (prev) {
+          const pct = cpu.cpuPctFromDelta(prev.cs, cs, prev.ts, now);
+          dd.cpuPct = pct;
+          safeSend('session:cpu', { id, cpuPct: pct });
+        }
+      }
       // Первый потомок шелла и есть запущенная команда. Глубже не идём: `claude` там уже
       // будет своими node-процессами, а нам нужно имя, которым его зовут.
       const run = (kids.get(shellPid) || [])[0];
-      const dd = det.get(id);
       // Пусто ли в оболочке — на этом стоит самоперезапуск: свежий запуск нельзя печатать,
       // пока прежний агент не вышел, иначе строка уедет ему в поле ввода репликой в разговор.
       // Флаг остаётся undefined там, где `ps` недоступен (Windows) — там перезапуск ждёт по
@@ -2817,10 +2857,37 @@ function tgWriteModes() {
     digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
     files,
   });
-  if (body === tgModesWritten) return;         // nothing changed — don't touch the disk
+  if (body !== tgModesWritten) {
+    try {
+      fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-tgmode.json'), body);
+      tgModesWritten = body;
+    } catch (e) { reportMainError(e); }
+  }
+  writeTabsMap();
+}
+
+// Диск-копия «ярлык вкладки → её ТЕКУЩИЙ id разговора», от лица main-процесса — не рендерера.
+// Единственная копия этой связки раньше жила в localStorage рендерера (persistTabs); жёсткий
+// креш приложения (не штатное закрытие, см. историю в fastio 2026-09-02: агент убил 11
+// процессов) стирал её вместе со всем окном, и восстановить, каким разговором была вкладка,
+// можно было только грепом стенограмм по ярлыку — а тот же ярлык законно висит на НЕСКОЛЬКИХ
+// файлах: он переживает рестарт вкладки нарочно (см. resume.js). Различить, какой из них
+// последний, снаружи процесса было нечем — у части вкладок не нашлось и записи в restart.log.
+// Пишется тем же путём и по тем же поводам, что swarm-tgmode.json (вызов из tgWriteModes,
+// см. все места, где меняется claudeSessionId) — отдельного триггера не заводим, чтобы не
+// рисковать забытым местом.
+let tabsMapWritten = '';
+function writeTabsMap() {
+  const rows = {};
+  for (const [id, d] of det) {
+    if (!d || d.dead || !d.claudeSessionId) continue;
+    rows[id] = { cwd: d.cwd || '', sessionKey: d.sessionKey || '', claudeSessionId: d.claudeSessionId };
+  }
+  const body = JSON.stringify(rows);
+  if (body === tabsMapWritten) return;          // ничего не изменилось — диск не трогаем
   try {
-    fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-tgmode.json'), body);
-    tgModesWritten = body;
+    fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-tabs.json'), body);
+    tabsMapWritten = body;
   } catch (e) { reportMainError(e); }
 }
 
@@ -6229,6 +6296,10 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
   d.rsPendingBase = built.cmd;
   d.rsPendingSession = built.sessionId || null;
   d.rsKey = String(opts.sessionKey || '') || null;
+  // Тот же ярлык, но не стирается в конце круга (см. restartClearPending) — d.sessionKey живёт
+  // всю вкладку и уходит в writeTabsMap. Обновляем, только если рендерер его прислал: рестарт
+  // без ярлыка (агент не Клод, панель) не должен затирать то, что уже знали.
+  if (d.rsKey) d.sessionKey = d.rsKey;
   restartLog(`вкладка ${id}: строка запуска готова, ярлык ${d.rsKey || '—'}`);
   // Гасить прежнего агента теперь есть чем — и ждать общего такта незачем: строка приходит через
   // миллисекунды после разрешения, а такт добавлял к ним до полминуты пустого стояния.
@@ -6505,6 +6576,11 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // `--resume <id>` keeps that id, so the tab binds precisely from the first tick
     // instead of guessing by folder + mtime.
     d0.claudeSessionId = pinned.sessionId || String(opts.resumeId || '') || null;
+    // Ярлык вкладки — рендерер прислал его тем же полем, которым сам метил команду (см.
+    // createSession). Держим его весь срок жизни вкладки (в отличие от d.rsKey, который
+    // рестарт стирает в конце каждого круга), потому что это единственное, чем writeTabsMap
+    // подписывает id разговора для внешней форензики.
+    d0.sessionKey = String(opts.sessionKey || '') || null;
     // Карта абсолютных путей restart/digest (files, см. tgWriteModes) должна знать про эту
     // вкладку с первого же тика — иначе самозвон в первые секунды жизни вкладки не нашёл бы
     // себя в карте и откатился бы на прежний шаблон (не ошибка, но и не тот путь, что чинили).

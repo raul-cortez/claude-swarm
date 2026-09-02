@@ -284,6 +284,14 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* значок температуры промпт-кэша (❄️/🔥), пишет сторонний хук проекта — см. digest.readCache */
 .tab .cache-badge { flex: none; margin-left: auto; font-size: 10px; line-height: 1; }
 .tab .cache-badge[hidden] { display: none; }
+/* значок загрузки CPU (🌡NN%) — три оттенка тех же цветов, что у полоски контекста
+   (см. cpu.js: HIDE_BELOW/MID_AT/HI_AT), но своя палитра: это не то же измерение. */
+.tab .cpu-badge { flex: none; margin-left: auto; display: flex; align-items: center; gap: 2px; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }
+.tab .cpu-badge[hidden] { display: none; }
+.tab .cpu-badge svg { width: 12px; height: 12px; flex: none; }
+.tab .cpu-badge.cpu-lo  { color: var(--ready); }
+.tab .cpu-badge.cpu-mid { color: var(--run); }
+.tab .cpu-badge.cpu-hi  { color: var(--danger); }
 
 /* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
    кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,

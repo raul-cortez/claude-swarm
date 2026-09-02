@@ -300,6 +300,9 @@ const ICONS = {
   grip: SVG('<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>'),
   // Lucide "bot" — the sub-agent badge.
   agents: SVG('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'),
+  // Lucide "cpu" — значок загрузки CPU на карточке. Монохромный, currentColor: цвет
+  // задаёт тир (cpu-lo/mid/hi, styles.css), а не сама иконка.
+  cpu: SVG('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>'),
   // Lucide "monitor" / "smartphone" — «где я сейчас»: за столом или с одним телефоном.
   monitor: SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   phone: SVG('<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>'),
@@ -649,6 +652,21 @@ function updateCtx(s) {
   ctx.querySelector('.ctx-num').textContent = val + '%';
   ctx.classList.remove('ctx-lo', 'ctx-mid', 'ctx-hi');
   ctx.classList.add(val < 50 ? 'ctx-lo' : val < 80 ? 'ctx-mid' : 'ctx-hi');
+}
+
+// Значок загрузки CPU (🌡NN%) в подвале карточки. Не полоска, как у контекста: контекст —
+// то, что решает судьбу вкладки (перезапуск), а нагрузка — просто «горячо ли сейчас», и не
+// заслуживает своей строки на КАЖДОЙ карточке всегда. Ниже порога значка нет вовсе (см.
+// cpu.js HIDE_BELOW) — единицы процентов есть у любого живого разговора и ничего не значат.
+function updateCpu(s, pct) {
+  const el = s.tab.querySelector('.cpu-badge');
+  if (!el) return;
+  const b = window.SWARM_CPU.formatCpuBadge(pct);
+  el.classList.remove('cpu-lo', 'cpu-mid', 'cpu-hi');
+  if (b.hidden) { el.hidden = true; return; }
+  el.classList.add('cpu-' + b.tier);
+  el.querySelector('.cpu-num').textContent = b.text;
+  el.hidden = false;
 }
 
 window.swarm.onExit(({ id }) => {
@@ -1099,6 +1117,15 @@ window.swarm.onTabProcess(({ id, cmd }) => {
   persistTabs();
 });
 
+// Та же посылка scanTabProcesses (main.js), другое поле: сколько CPU за последний тик
+// сожрало дерево процессов вкладки. cpuPct может быть null (первый тик после запуска —
+// не с чем сравнивать) — updateCpu(null) корректно прячет значок через formatCpuBadge.
+window.swarm.onTabCpu(({ id, cpuPct }) => {
+  const s = sessions.get(id);
+  if (!s) return;
+  updateCpu(s, cpuPct);
+});
+
 // Вкладка сменила агента. Флаги СТИРАЕМ вместе с именем: они были от прежнего запуска, а какие
 // набрал человек — мы не знаем. Иначе папка, открытая как `claude --model opus`, после ручного
 // перехода на codex предлагала бы в меню «codex --model opus» и запускала бы codex с чужим
@@ -1217,6 +1244,13 @@ async function createSession(opts = {}) {
     // секунду выглядела бы своей.
     auto: !!opts.auto || (!opts.restored && !!nightNow.on),            // восстановленная вкладка возвращается со своим мандатом
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
+    // Ярлык вкладки (swarm-…), если он у неё есть — main держит его рядом с claudeSessionId в
+    // своём собственном файле на диске (см. writeTabsMap), а не только здесь в localStorage.
+    // Раньше единственной копией связки «ярлык → текущий id» была она, и жёсткий креш
+    // приложения (не штатное закрытие) стирал её вместе с процессом — восстановить, каким
+    // разговором была вкладка, было неоткуда, кроме грепа стенограмм, где тот же ярлык законно
+    // висит на нескольких файлах (см. resume.js: ярлык переживает рестарт вкладки нарочно).
+    sessionKey: sessionKey || null,
   });
 
   // Wire keystrokes -> pty. Strip focus in/out reports (CSI I / CSI O): with
@@ -1298,6 +1332,7 @@ async function createSession(opts = {}) {
         <span class="sub">готов</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
         <span class="cache-badge" hidden></span>
+        <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки">${ICONS.cpu}<span class="cpu-num"></span></span>
       </span>
     </span>
     ${tabTools()}
