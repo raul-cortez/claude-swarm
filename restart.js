@@ -416,7 +416,7 @@
       };
     }
     return {
-      state: { ...initial(), phase: 'granted', at: now, prompt: a.prompt, handoff: a.handoff, text: a.text },
+      state: { ...initial(), phase: 'granted', at: now, prompt: a.prompt, handoff: a.handoff, text: a.text, model: a.model },
       action: 'grant',
       note: early ? 'освободился раньше срока и позвал перезапуск сам'
         : wasMuted ? 'позвал перезапуск сам, хотя я уже молчал по этой вкладке — принимаю'
@@ -453,7 +453,7 @@
     // Разрешение есть. Счётчик молчания обнуляем: он про ПОДРЯД идущие неответы, иначе три
     // случайных промаха за ночь, между которыми агент отвечал, навсегда выключали бы функцию.
     return {
-      state: { ...initial(), phase: 'granted', at: now, prompt: a.prompt, handoff: a.handoff, text: a.text },
+      state: { ...initial(), phase: 'granted', at: now, prompt: a.prompt, handoff: a.handoff, text: a.text, model: a.model },
       action: 'grant',
     };
   }
@@ -659,6 +659,8 @@
       '  prompt   — КОРОТКИЙ промпт для свежей сессии: чем заняться и где записка. Печатается в',
       '             терминал, поэтому подробности — в text или в записку: длинный промпт мы',
       '             всё равно унесём в файл и заменим указателем на него',
+      '  model    — на какой модели поднять свежую сессию: fable, opus, sonnet или haiku. Не',
+      '             указал — поднимем на той же, на какой вкладку открыли',
       '',
       'Работу новую пока не начинай — ответь и жди.',
     ].join('\n');
@@ -703,13 +705,14 @@
     const prompt = trimStr(obj.prompt, 2000);
     const handoff = trimStr(obj.handoff, 500);
     const text = trimStr(obj.text, 20000);
+    const model = modelOf(obj.model);
     // Валидное «можно» — с промптом и указателем на эстафету — исполняем ПЕРВЫМ делом, даже
     // если рядом стоит done: живой случай (fastio, 2026-08-30/31) — агент час за часом слал
     // {"restart":true,"done":true,...}, считая «done» пометкой «эта задача закончена», а не
     // «вкладке больше не о чем говорить». Когда оба поля описывают ЗАКОНЧЕННЫЙ перезапуск
     // (промпт и эстафета на месте), молчать об этом ради спора о смысле done — значит терять
     // готовый ответ, который агент уже дал.
-    if (go && prompt && (handoff || text)) return { restart: true, prompt, handoff, text };
+    if (go && prompt && (handoff || text)) return { restart: true, prompt, handoff, text, model };
     // Третий ответ: «работа здесь закончена». Отсрочки для этого не хватало, и это была не
     // придирка к словам: доделанную вкладку сворм переспрашивал бы каждые двадцать минут до
     // самого её закрытия, а согласиться агент не может — перезапускать готовое нельзя, свежая
@@ -809,6 +812,36 @@
     return head ? `${head}. ${tail}` : tail;
   }
 
+  // Модель для свежей сессии. Необязательное поле ответа, и живой случай у него ровно один:
+  // задачу обсудили на дорогой модели, дальше идёт механическая работа — и вкладка поднимает
+  // себя на дешёвой, унося тот же разговор той же эстафетой. Наоборот тоже бывает: разбор,
+  // упёршийся в тонкое место, просит модель поумнее.
+  //
+  // Белый список, а не «что дал, то и подставим». Строка едет в НАСТОЯЩУЮ команду запуска, и
+  // цена ошибки здесь та же, что у --permission-mode: незнакомое значение Клод не проглатывает,
+  // он отказывается стартовать, и вкладка встречает человека мёртвой оболочкой вместо агента —
+  // а перезапуск уже случился, разговор уже стёрт. Пропускаем только псевдонимы последних
+  // моделей (`claude --help`, 2.1.239: «an alias for the latest model — 'fable', 'opus' или
+  // 'sonnet'»), полные имена вроде claude-opus-5 не пропускаем: они стареют, а вкладка,
+  // поднявшаяся на прошлогодней модели, об этом не скажет.
+  const MODELS = ['fable', 'opus', 'sonnet', 'haiku'];
+  function modelOf(v) {
+    const s = String(v == null ? '' : v).trim().toLowerCase();
+    return MODELS.includes(s) ? s : '';
+  }
+
+  // Подменить модель в базовой команде вкладки. Названная модель ЗАМЕЩАЕТ флаг из строки
+  // запуска — иначе вкладка, открытую `claude --model opus`, никакой ответ с полки не сдвинет:
+  // на два `--model` Клод смотрит на первый. Не названа — не трогаем ничего, включая уже
+  // стоящий там флаг: это выбор человека, открывшего вкладку, и подменять его нашей догадкой
+  // нельзя (ровно как с --dangerously-skip-permissions в restartLaunchLine).
+  function withModel(cmd, model) {
+    const base = String(cmd || '').trim();
+    const m = modelOf(model);
+    if (!base || !m) return base;
+    return base.replace(/\s--model(=|\s+)[^\s]+/g, '').trim() + ' --model ' + m;
+  }
+
   // Строка запуска: команда, собранная приложением (свой ярлык, свои флаги), плюс промпт
   // агента отдельным аргументом.
   function launchLine(base, prompt, family) {
@@ -822,7 +855,9 @@
     MIN_PCT, MAX_PCT, DEFAULT_PCT, AGGRESSIVE_MULT, MIN_UPTIME_MS, RETRY_MS, ANSWER_WAIT_MS,
     MAX_SILENT, PENDING_MS, EXIT_BLIND_MS, GONE_GAP_MS, GRANT_WAIT_MS, GRANT_CALM_MS, RETRY_MIN_MS,
     PROMPT_MAX, PROMPT_CARRIED,
+    MODELS,
     clampPct, initial, step, wantsAnswer, goneStep, askText, askAgainText, parseAnswer, retryMsOf, quoteArg, launchLine,
+    modelOf, withModel,
     answerName,
     promptFits, handoffPrompt,
     // Наружу — ради такта вне очереди: main.js будит автомат не на всякое шевеление вкладки, а

@@ -5876,6 +5876,9 @@ function restartClearPending(d) {
   d.rsPendingBase = '';
   d.rsPendingSession = null;
   d.rsKey = null;
+  // И названную агентом модель: она про ЭТОТ ответ. Оставить её значило бы поднять следующий
+  // перезапуск, о модели не просивший, на модели из позавчерашнего разговора.
+  d.rsModel = '';
   // Отметка «уход просили сигналом» живёт ровно один круг: с ней остаётся и частый такт фазы
   // выхода, и короткий срок ожидания, а следующий круг может пойти совсем другим путём.
   d.rsSignalled = false;
@@ -6132,6 +6135,12 @@ function restartGrant(id, d, state) {
     if (!saved) { d.rs = { ...restart.initial(), retryAt: Date.now() + restart.RETRY_MS }; return; }
     prompt = restart.handoffPrompt(prompt, saved);
   }
+  // Модель — не через рендерер, а полем вкладки: рендереру она не нужна ни для чего (он несёт
+  // только ярлык нового разговора), а обратно строка приходит в session:relaunch, где эта вкладка
+  // уже под рукой. Пустая строка — обычный случай: поля в ответе не было, и тогда --model в
+  // команде запуска мы не трогаем вовсе.
+  d.rsModel = String(state.model || '');
+  if (d.rsModel) restartLog(`вкладка ${id}: поднимаю свежую сессию на модели ${d.rsModel}`);
   restartLog(`вкладка ${id}: разрешил перезапуск, эстафета ${state.handoff || 'текстом'}`);
   safeSend('app:restartAgent', { id, prompt });
 }
@@ -6141,7 +6150,7 @@ function restartGrant(id, d, state) {
 // обращения), а окружение задаётся при создании pty и позже недоступно. Пересборка «как для
 // новой вкладки» дала бы ссылку на переменную, которой в этой оболочке нет, — и Клод отказался
 // бы стартовать, оставив вкладку с мёртвой оболочкой.
-function restartLaunchLine(base, sessionKey, mode) {
+function restartLaunchLine(base, sessionKey, mode, model) {
   let cmd = String(base || '').trim();
   if (!cmd) return { cmd: '', sessionId: null };
   // Метки прежнего разговора: и ярлык, и id. Иначе новая сессия унаследует чужую.
@@ -6163,6 +6172,10 @@ function restartLaunchLine(base, sessionKey, mode) {
   if (flag && !skipFlag && resume.supports(launcherOf(cmd))) {
     cmd = cmd.replace(/\s--permission-mode(=|\s+)[^\s]+/g, '').trim() + ` --permission-mode ${flag}`;
   }
+  // Модель, которую агент назвал в ответе. Проверку значения делает restart.withModel — сюда
+  // приходит уже разобранное поле, и незнакомое в команду не попадёт. Не назвал — команда
+  // остаётся как была, вместе со своим `--model`, если человек его туда написал.
+  if (resume.supports(launcherOf(cmd))) cmd = restart.withModel(cmd, model);
   if (sessionKey && resume.supports(launcherOf(cmd))) cmd += ` -n ${sessionKey}`;
   return injectSessionId(cmd);
 }
@@ -6284,7 +6297,7 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
     restartLog(`вкладка ${id}: строка запуска пришла не ко времени (фаза ${d.rs ? d.rs.phase : '—'})`);
     return { ok: false };
   }
-  const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode);
+  const built = restartLaunchLine(d.launchCmd, String(opts.sessionKey || ''), d.mode, d.rsModel || '');
   const line = restart.launchLine(built.cmd, opts.prompt || '', shellFamily(pickShell()));
   if (!line) {
     // Пустая база — вкладка, которую мы не запускали (чистый терминал, агент набран руками).

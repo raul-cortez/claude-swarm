@@ -727,6 +727,67 @@ test('«не сейчас» несёт срок переспроса', () => {
   assert.strictEqual(R.parseAnswer('{"restart":false,"retry":-5}').retryMs, R.RETRY_MS);
 });
 
+// --- смена модели при перезапуске -------------------------------------------------------------
+// Живой случай: задачу обсудили на дорогой модели, дальше механическая работа — вкладка поднимает
+// себя на дешёвой, унося тот же разговор той же эстафетой.
+test('модель из ответа доезжает до разрешения', () => {
+  const a = R.parseAnswer('{"restart":true,"prompt":"делай","handoff":"#215","model":"sonnet"}');
+  assert.strictEqual(a.restart, true);
+  assert.strictEqual(a.model, 'sonnet');
+  // И дальше в состояние, откуда её берёт main.js: без этого поле умирало бы в разборе.
+  const raw = '{"restart":true,"prompt":"делай","handoff":"#215","model":"haiku"}';
+  const r = R.step({ ...idle(), phase: 'asked', askedAt: NOW }, sig({ answer: { raw, mtime: NOW } }));
+  assert.strictEqual(r.action, 'grant');
+  assert.strictEqual(r.state.model, 'haiku');
+});
+
+// Поле необязательное, и его отсутствие не должно менять НИ ОДНОЙ ветки: обычный самоперезапуск
+// после этой правки обязан вести себя ровно как до неё.
+test('без модели разрешение остаётся прежним', () => {
+  const a = R.parseAnswer('{"restart":true,"prompt":"делай","handoff":"#215"}');
+  assert.strictEqual(a.restart, true);
+  assert.strictEqual(a.model, '');
+  assert.strictEqual(R.withModel('claude -n swarm-ab12', ''), 'claude -n swarm-ab12');
+  assert.strictEqual(R.withModel('claude -n swarm-ab12', undefined), 'claude -n swarm-ab12');
+});
+
+// Строка едет в НАСТОЯЩУЮ команду запуска: незнакомое значение Клод не проглатывает, он
+// отказывается стартовать — и вкладка встречает человека мёртвой оболочкой, когда разговор уже
+// стёрт. Поэтому белый список, а не «что дал, то и подставим».
+test('в флаг --model попадают только известные псевдонимы', () => {
+  for (const m of R.MODELS) assert.strictEqual(R.modelOf(m), m, m);
+  assert.strictEqual(R.modelOf('  Sonnet '), 'sonnet', 'регистр и пробелы — не повод отказать');
+  assert.strictEqual(R.modelOf('claude-opus-5'), '', 'полные имена стареют, псевдонимы — нет');
+  assert.strictEqual(R.modelOf('sonnet; rm -rf ~'), '');
+  assert.strictEqual(R.modelOf('--dangerously-skip-permissions'), '');
+  assert.strictEqual(R.modelOf(null), '');
+  // И мусор в поле не должен ронять весь ответ: перезапуск с уже написанной эстафетой дороже
+  // смены модели, поэтому непонятную модель мы просто не берём.
+  const a = R.parseAnswer('{"restart":true,"prompt":"делай","handoff":"#215","model":"gpt"}');
+  assert.strictEqual(a.restart, true);
+  assert.strictEqual(a.model, '');
+});
+
+test('названная модель замещает флаг из строки запуска, а не добавляется вторым', () => {
+  // На два `--model` Клод смотрит на первый — без вычистки вкладка, открытая `claude --model
+  // opus`, так и осталась бы на опусе.
+  assert.strictEqual(R.withModel('claude --model opus -n swarm-ab12', 'sonnet'),
+    'claude -n swarm-ab12 --model sonnet');
+  assert.strictEqual(R.withModel('claude --model=opus', 'sonnet'), 'claude --model sonnet');
+  // Флага не было вовсе — добавляем.
+  assert.strictEqual(R.withModel('claude -n swarm-ab12', 'sonnet'), 'claude -n swarm-ab12 --model sonnet');
+  // Пустая база остаётся пустой: вкладку, которую мы не запускали, поднимать нечем.
+  assert.strictEqual(R.withModel('', 'sonnet'), '');
+});
+
+// Тот же уговор, что у `--dangerously-skip-permissions` в restartLaunchLine: флаг, написанный
+// человеком руками, нашей догадкой не подменяется.
+test('без модели в ответе чужой --model в команде не трогаем', () => {
+  assert.strictEqual(R.withModel('claude --model claude-opus-5 -n swarm-ab12', ''),
+    'claude --model claude-opus-5 -n swarm-ab12');
+  assert.strictEqual(R.withModel('claude --model opus', 'нет такой'), 'claude --model opus');
+});
+
 test('мусор вместо ответа — null, а не догадка', () => {
   assert.strictEqual(R.parseAnswer(''), null);
   assert.strictEqual(R.parseAnswer('можно, перезапускай'), null);
