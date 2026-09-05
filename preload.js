@@ -56,6 +56,14 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:cpu', handler);
   },
 
+  // Агент ушёл из живой оболочки — упал сам или вышел (main.js: agentGone).
+  // cb({ id, how, why, word, label, reset, resumeId, canResume }). Возвращает отписку.
+  onAgentGone: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:agentGone', handler);
+    return () => ipcRenderer.removeListener('session:agentGone', handler);
+  },
+
   // Send user keystrokes to a session's pty.
   sendInput: (id, data) => ipcRenderer.send('session:input', { id, data }),
 

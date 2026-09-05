@@ -190,6 +190,7 @@ const subs = require('./subs');                     // подписки: кар�
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
+const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
@@ -1396,6 +1397,61 @@ function treeCpuSeconds(kids, csByPid, rootPid) {
   return total;
 }
 
+// Агент ушёл из ЖИВОЙ оболочки: `claude` кончился, а `zsh` остался стоять с приглашением.
+//
+// Снаружи это выглядит спокойно — статус вкладки сползает в «готов», карточка ничем не отличается
+// от той, что просто ничего не делает. Именно так выглядит и падение посреди ночной работы: утром
+// человек находит вкладку, по которой не сказать ни что случилось, ни о чём вообще была работа.
+// Живой случай, с которого функция и заведена: Claude Code 2.1.239 упал внутренней ловушкой через
+// шесть секунд после запуска четырёх фоновых агентов, оболочка написала `zsh: killed` и осталась.
+//
+// ⛔ Смерть ВКЛАДКИ — это другое событие (session:exit): там уходит сам шелл, и тогда вкладка
+// закрывается. Здесь вкладка остаётся рабочей, в неё можно печатать, и разговор чаще всего цел:
+// стенограмма Клода дописана до последней секунды и поднимается по `--resume`.
+function agentGone(id, d, wasBusy) {
+  // Сначала дешёвая проверка перехода, и только потом экран: снимать снимок терминала на каждом
+  // такте у каждой вкладки ради ответа «ничего не случилось» — работа впустую, да ещё и по
+  // общему состоянию прокрутки (см. snapshot).
+  if (!deadtab.leftShell(wasBusy, d.shellBusy)) return;
+  // Слово оболочки читаем с экрана, а не из кода возврата: код возврата принадлежит `claude`,
+  // а умер он у ЗАПУСТИВШЕЙ его оболочки, до которой нам не дотянуться. Зато оболочка сама
+  // печатает `zsh: killed …` перед следующим приглашением — это и есть протокол смерти.
+  let word = '';
+  try { word = deadtab.shellDeathWord(snapshot(d)); } catch (_) { word = ''; }
+  const v = deadtab.verdict({
+    wasBusy,
+    busy: d.shellBusy,
+    word,
+    // Ход, оборванный на середине. Руками `/exit` пишут, когда агент молчит и ждёт, — а не
+    // посреди его собственного ответа.
+    turnActive: (d.turnStartedAt || 0) > (d.turnEndedAt || 0),
+    // Пока крутится круг самоперезапуска, `/exit` печатаем МЫ САМИ. Называть это падением
+    // значило бы показывать «агент упал» на каждом ночном перезапуске — то есть обесценить
+    // сообщение ровно до того, как оно понадобится по-настоящему.
+    expected: !!(d.rsPendingLine || (d.rs && d.rs.phase === 'exiting')),
+  });
+  if (!v.gone) return;
+  // Гасим наследство агента в эмуляторе ВСЕГДА, не только на падении: после честного `/exit`
+  // Клод убирает за собой сам, и лишний сброс ничего не стоит (в строке одни выключения), а
+  // после падения убрать некому — и каждое движение мыши сыплет `35;57;4M` в приглашение.
+  safeSend('session:agentGone', {
+    id,
+    how: v.how,
+    why: v.why,
+    word,
+    label: deadtab.goneLabel(v.how, v.why, word),
+    reset: deadtab.RESET_SEQ,
+    // Разговор цел почти всегда — но поднять его можно, лишь когда известен и id, и чем вкладку
+    // запускали: `--resume` есть не у всякого запускателя (см. resume.supports).
+    resumeId: d.claudeSessionId || '',
+    canResume: canResumeTab(d),
+  });
+  if (v.how === 'crash') {
+    restartLog(`вкладка ${id}: агент ушёл сам (${v.why === 'signal' ? word : 'ход оборван'}), `
+      + `разговор ${d.claudeSessionId || '—'}`);
+  }
+}
+
 function scanTabProcesses() {
   const now = Date.now();
   execFile('ps', ['-eo', 'pid=,ppid=,time=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
@@ -1435,7 +1491,13 @@ function scanTabProcesses() {
       // пока прежний агент не вышел, иначе строка уедет ему в поле ввода репликой в разговор.
       // Флаг остаётся undefined там, где `ps` недоступен (Windows) — там перезапуск ждёт по
       // часам и по экрану, а не по процессам (см. restart.goneStep).
-      if (dd) dd.shellBusy = !!run;
+      if (dd) {
+        // Тот же переход отвечает и на другой вопрос: агент из вкладки УШЁЛ. Прежнее значение
+        // берём до перезаписи — «было занято, стало пусто» есть только здесь (см. agentGone).
+        const wasBusy = dd.shellBusy;
+        dd.shellBusy = !!run;
+        try { agentGone(id, dd, wasBusy); } catch (e) { reportMainError(e); }
+      }
       if (!run) continue;                // в шелле пусто — вкладка помнит прежнее
       const d = dd;
       if (!d) continue;
@@ -5198,6 +5260,18 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
     checked: !!d.auto,
     click: () => setTabAuto(key, !d.auto, 'меню карточки'),
   }];
+  // Поднять упавшего агента. Пункт стоит ВСЕГДА, а не появляется на упавшей вкладке: меню
+  // ищут глазами, и пункт, которого в спокойное время не видно, невозможно запомнить. Когда
+  // поднимать нечего — он просто серый, и подпись говорит почему.
+  const canResume = canResumeTab(d);
+  items.push({ type: 'separator' });
+  items.push({
+    label: d.shellBusy !== false ? 'Поднять упавший разговор (агент на месте)'
+      : !canResume ? 'Поднять упавший разговор (нечем: нет id или --resume)'
+        : 'Поднять упавший разговор',
+    enabled: d.shellBusy === false && canResume,
+    click: () => resumeAgentNow(key, d, 'меню карточки'),
+  });
   // Оговорки «сейчас в силе общий режим» здесь больше нет, и её отсутствие — это и есть
   // починка: галочка вкладки — единственное состояние, а «ночь включена» считается по
   // галочкам. Никакого второго слоя, который «в силе», под ней не лежит.
@@ -6155,15 +6229,33 @@ function restartGrant(id, d, state) {
 // обращения), а окружение задаётся при создании pty и позже недоступно. Пересборка «как для
 // новой вкладки» дала бы ссылку на переменную, которой в этой оболочке нет, — и Клод отказался
 // бы стартовать, оставив вкладку с мёртвой оболочкой.
-function restartLaunchLine(base, sessionKey, mode, model) {
-  let cmd = String(base || '').trim();
-  if (!cmd) return { cmd: '', sessionId: null };
-  // Метки прежнего разговора: и ярлык, и id. Иначе новая сессия унаследует чужую.
-  cmd = cmd.replace(/\s--session-id(=|\s+)[^\s]+/g, '')
+// Метки прежнего разговора: и ярлык, и id. Иначе следующий запуск унаследует чужую сессию.
+// Общее у перезапуска и у подъёма упавшего: там строка собирается под НОВЫЙ разговор, здесь под
+// прежний, но снимать с неё надо одно и то же — и делать это в двух местах врозь значит однажды
+// поправить одно.
+function stripConversationFlags(cmd) {
+  return String(cmd || '')
+    .replace(/\s--session-id(=|\s+)[^\s]+/g, '')
     .replace(/\s(-n|--name)(=|\s+)[^\s]+/g, '')
     .replace(/\s(--resume|-r)(=|\s+)[^\s]+/g, '')
     .replace(/\s(--continue|-c)(\s|$)/g, ' ')
     .trim();
+}
+
+// Режим разрешений, в котором вкладка работала, — накладывается на строку запуска. Тоже общее
+// у перезапуска и подъёма: `--dangerously-skip-permissions` не трогаем никогда (это выбор
+// человека, написавшего его руками), прочее заменяем живым режимом с экрана.
+function withPermissionMode(cmd, mode) {
+  const flag = modeFlag(mode);
+  const skipFlag = /(^|\s)--dangerously-skip-permissions(\s|$)/.test(cmd);
+  if (!flag || skipFlag) return cmd;
+  return cmd.replace(/\s--permission-mode(=|\s+)[^\s]+/g, '').trim() + ` --permission-mode ${flag}`;
+}
+
+function restartLaunchLine(base, sessionKey, mode, model) {
+  let cmd = String(base || '').trim();
+  if (!cmd) return { cmd: '', sessionId: null };
+  cmd = stripConversationFlags(cmd);
   // Режим разрешений, в котором вкладка РАБОТАЛА. Всё, что накопилось внутри сессии, вместе с
   // ней и умирает, а Shift+Tab (и кнопка из телеги) настройкой не помнится — без этого агент
   // после ночного перезапуска встал бы на первом же вопросе, хотя весь вечер работал сам.
@@ -6172,17 +6264,53 @@ function restartLaunchLine(base, sessionKey, mode, model) {
   // вкладка работает сейчас, а флаг говорит лишь о том, в чём её когда-то открыли. Не прочитали
   // режим — флаг остаётся как был. `--dangerously-skip-permissions` не трогаем вовсе: это выбор
   // человека, написавшего его руками, и подменять его нашей догадкой нельзя.
-  const flag = modeFlag(mode);
-  const skipFlag = /(^|\s)--dangerously-skip-permissions(\s|$)/.test(cmd);
-  if (flag && !skipFlag && resume.supports(launcherOf(cmd))) {
-    cmd = cmd.replace(/\s--permission-mode(=|\s+)[^\s]+/g, '').trim() + ` --permission-mode ${flag}`;
-  }
+  if (resume.supports(launcherOf(cmd))) cmd = withPermissionMode(cmd, mode);
   // Модель, которую агент назвал в ответе. Проверку значения делает restart.withModel — сюда
   // приходит уже разобранное поле, и незнакомое в команду не попадёт. Не назвал — команда
   // остаётся как была, вместе со своим `--model`, если человек его туда написал.
   if (resume.supports(launcherOf(cmd))) cmd = restart.withModel(cmd, model);
   if (sessionKey && resume.supports(launcherOf(cmd))) cmd += ` -n ${sessionKey}`;
   return injectSessionId(cmd);
+}
+
+// Строка «поднять тот же разговор» для вкладки, у которой упал агент. Из той же базы, что и
+// перезапуск (restartLaunchLine), и по той же причине: в исходной строке уже стоят ссылки на
+// окружение ЭТОЙ оболочки (--settings и прочее), а собрать их заново неоткуда.
+//
+// Отличие от перезапуска ровно одно и оно смысловое: там разговор начинается новый, здесь —
+// продолжается прежний, поэтому вместо свежего `--session-id` ставим `--resume <id>`.
+//
+// ⚠️ Клод волен продолжить разговор ПОД ДРУГИМ id (форк от `--resume`). Ничего чинить не надо:
+// привязка к стенограмме это заметит сама и перепишет d.claudeSessionId настоящим (см. блок
+// «привязались сканом, хотя id был прикреплён»).
+function resumeLaunchLine(base, sessionId, mode) {
+  const cmd = stripConversationFlags(String(base || '').trim());
+  if (!cmd || !sessionId) return '';
+  if (!resume.supports(launcherOf(cmd))) return '';
+  return `${withPermissionMode(cmd, mode)} --resume ${sessionId}`;
+}
+
+// Можно ли поднять разговор этой вкладки. Два условия, и оба обязательны: мы знаем id
+// разговора и знаем, чем вкладку запускали (`--resume` есть не у всякого запускателя).
+function canResumeTab(d) {
+  return !!(d && d.claudeSessionId && d.launchCmd && resume.supports(launcherOf(d.launchCmd)));
+}
+
+// Поднять упавшего агента в его же вкладке. Возвращает, поехало ли.
+function resumeAgentNow(id, d, from) {
+  if (!d || !sessions.has(id) || !canResumeTab(d)) return false;
+  // ⛔ Только в ПУСТУЮ оболочку. Иначе строка запуска уедет живому агенту в поле ввода —
+  // репликой в разговор, ровно та же беда, от которой бережётся самоперезапуск.
+  if (d.shellBusy !== false) return false;
+  const line = resumeLaunchLine(d.launchCmd, d.claudeSessionId, d.mode);
+  if (!line) return false;
+  ptyType(id, clearPrefix(pickShell()) + line + '\r');
+  // Как у свежего запуска: пусть скан процессов не примет наш же `claude` за команду,
+  // которую человек набрал во вкладке руками (см. PROC_SETTLE_MS).
+  d.launchAt = Date.now();
+  d.launchPid = null;
+  restartLog(`вкладка ${id}: подъём упавшего разговора ${d.claudeSessionId} (${from})`);
+  return true;
 }
 
 // Доехал ли напечатанный запуск. Строку мы отдаём оболочке и на этом успокаиваемся — а она
