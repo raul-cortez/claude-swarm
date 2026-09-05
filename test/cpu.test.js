@@ -21,28 +21,36 @@ test('cpuSecondsFromTime rejects garbage without throwing', () => {
   assert.strictEqual(C.cpuSecondsFromTime('20-22:09:10'), null); // etime, не time
 });
 
-test('cpuPctFromDelta: one full core busy the whole window is 100%', () => {
-  const pct = C.cpuPctFromDelta(0, 5, 0, 5000); // +5s CPU за 5s стенных
+test('cpuPctFromDelta: the whole machine busy the whole window is 100%', () => {
+  const pct = C.cpuPctFromDelta(0, 40, 0, 5000, 8); // 8 ядер по 5s CPU за 5s стенных
   assert.ok(Math.abs(pct - 100) < 1e-9, pct);
 });
 
-test('cpuPctFromDelta: idle process over a window is 0%', () => {
-  assert.strictEqual(C.cpuPctFromDelta(10, 10, 0, 5000), 0);
+test('cpuPctFromDelta: one busy core is a share of the machine, not 100%', () => {
+  const pct = C.cpuPctFromDelta(0, 5, 0, 5000, 10); // +5s CPU за 5s стенных = 1 ядро из 10
+  assert.ok(Math.abs(pct - 10) < 1e-9, pct);
 });
 
-test('cpuPctFromDelta: multi-core tree can exceed 100%', () => {
-  const pct = C.cpuPctFromDelta(0, 10, 0, 5000); // +10s CPU за 5s стенных = 2 ядра
-  assert.ok(Math.abs(pct - 200) < 1e-9, pct);
+test('cpuPctFromDelta: idle process over a window is 0%', () => {
+  assert.strictEqual(C.cpuPctFromDelta(10, 10, 0, 5000, 8), 0);
+});
+
+test('cpuPctFromDelta: missing or nonsense core count is read as a single core', () => {
+  // Так вёл себя расчёт до перевода на всю машину — на нём и остаёмся, если ядер не назвали:
+  // это хотя бы честный процент одного ядра, а не деление на ноль и Infinity на карточке.
+  assert.strictEqual(C.cpuPctFromDelta(0, 5, 0, 5000), 100);
+  assert.strictEqual(C.cpuPctFromDelta(0, 5, 0, 5000, 0), 100);
+  assert.strictEqual(C.cpuPctFromDelta(0, 5, 0, 5000, NaN), 100);
 });
 
 test('cpuPctFromDelta: shrinking tree (process exited) never goes negative', () => {
-  const pct = C.cpuPctFromDelta(50, 10, 0, 5000); // дерево сменилось, cs "упало"
+  const pct = C.cpuPctFromDelta(50, 10, 0, 5000, 8); // дерево сменилось, cs "упало"
   assert.strictEqual(pct, 0);
 });
 
 test('cpuPctFromDelta: zero or negative wall time is not a measurement', () => {
-  assert.strictEqual(C.cpuPctFromDelta(0, 5, 1000, 1000), null);
-  assert.strictEqual(C.cpuPctFromDelta(0, 5, 2000, 1000), null);
+  assert.strictEqual(C.cpuPctFromDelta(0, 5, 1000, 1000, 8), null);
+  assert.strictEqual(C.cpuPctFromDelta(0, 5, 2000, 1000, 8), null);
 });
 
 test('cpuTier: below HIDE_BELOW is hidden (null)', () => {
@@ -50,13 +58,17 @@ test('cpuTier: below HIDE_BELOW is hidden (null)', () => {
   assert.strictEqual(C.cpuTier(C.HIDE_BELOW - 0.01), null);
 });
 
-test('cpuTier: three bands above the hide threshold', () => {
-  assert.strictEqual(C.cpuTier(C.HIDE_BELOW), 'lo');
-  assert.strictEqual(C.cpuTier(C.MID_AT - 0.01), 'lo');
-  assert.strictEqual(C.cpuTier(C.MID_AT), 'mid');
+test('cpuTier: two bands above the hide threshold, no quiet green one', () => {
+  assert.strictEqual(C.cpuTier(C.HIDE_BELOW), 'mid');
   assert.strictEqual(C.cpuTier(C.HI_AT - 0.01), 'mid');
   assert.strictEqual(C.cpuTier(C.HI_AT), 'hi');
-  assert.strictEqual(C.cpuTier(999), 'hi');
+  assert.strictEqual(C.cpuTier(100), 'hi');
+});
+
+test('cpuTier: a merely alive tab does not light the badge', () => {
+  // Смысл значка — «эта вкладка жёстко грузит машину». Одно ядро из восьми под разговором —
+  // норма, а не новость, и значка на такой вкладке быть не должно.
+  assert.strictEqual(C.cpuTier(C.cpuPctFromDelta(0, 5, 0, 5000, 8)), null);
 });
 
 test('formatCpuBadge: hidden pct carries no tier or text', () => {
@@ -65,10 +77,15 @@ test('formatCpuBadge: hidden pct carries no tier or text', () => {
 });
 
 test('formatCpuBadge: visible pct rounds and matches its tier', () => {
-  const b = C.formatCpuBadge(173.4);
+  const b = C.formatCpuBadge(73.4);
   assert.strictEqual(b.hidden, false);
   assert.strictEqual(b.tier, 'hi');
-  assert.strictEqual(b.text, '173%');
+  assert.strictEqual(b.text, '73%');
+});
+
+test('formatCpuBadge: never shows more than 100% of the machine', () => {
+  // Округление и дрожание тиков могут дать 100.4 — «101%» на карточке читалось бы как ошибка.
+  assert.strictEqual(C.formatCpuBadge(100.4).text, '100%');
 });
 
 (async () => {

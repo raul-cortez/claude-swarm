@@ -301,7 +301,9 @@ const ICONS = {
   // Lucide "bot" — the sub-agent badge.
   agents: SVG('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'),
   // Lucide "cpu" — значок загрузки CPU на карточке. Монохромный, currentColor: цвет
-  // задаёт тир (cpu-lo/mid/hi, styles.css), а не сама иконка.
+  // задаёт тир (cpu-mid/cpu-hi, styles.css), а не сама иконка. Рисуется мелко (9px), поэтому
+  // в styles.css ему поднят stroke-width: на такой уменьшке штатные 2 единицы виуборда
+  // вырождаются в еле видимую серую дымку, особенно ножки по краям.
   cpu: SVG('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>'),
   // Lucide "monitor" / "smartphone" — «где я сейчас»: за столом или с одним телефоном.
   monitor: SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
@@ -654,15 +656,16 @@ function updateCtx(s) {
   ctx.classList.add(val < 50 ? 'ctx-lo' : val < 80 ? 'ctx-mid' : 'ctx-hi');
 }
 
-// Значок загрузки CPU (🌡NN%) в подвале карточки. Не полоска, как у контекста: контекст —
-// то, что решает судьбу вкладки (перезапуск), а нагрузка — просто «горячо ли сейчас», и не
-// заслуживает своей строки на КАЖДОЙ карточке всегда. Ниже порога значка нет вовсе (см.
-// cpu.js HIDE_BELOW) — единицы процентов есть у любого живого разговора и ничего не значат.
+// Значок загрузки CPU в подвале карточки. Не полоска, как у контекста: контекст — то, что
+// решает судьбу вкладки (перезапуск), а нагрузка — просто «жарко ли сейчас», и не заслуживает
+// своей строки на КАЖДОЙ карточке всегда. Больше того, ниже порога значка нет вовсе (см.
+// cpu.js HIDE_BELOW): он отвечает на вопрос «какие вкладки жёстко грузят машину», и пока
+// показывался на любой живой, ответа в нём не было.
 function updateCpu(s, pct) {
   const el = s.tab.querySelector('.cpu-badge');
   if (!el) return;
   const b = window.SWARM_CPU.formatCpuBadge(pct);
-  el.classList.remove('cpu-lo', 'cpu-mid', 'cpu-hi');
+  el.classList.remove('cpu-mid', 'cpu-hi');
   if (b.hidden) { el.hidden = true; return; }
   el.classList.add('cpu-' + b.tier);
   el.querySelector('.cpu-num').textContent = b.text;
@@ -1332,7 +1335,7 @@ async function createSession(opts = {}) {
         <span class="sub">готов</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
         <span class="cache-badge" hidden></span>
-        <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки">${ICONS.cpu}<span class="cpu-num"></span></span>
+        <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки — доля всей машины">${ICONS.cpu}<span class="cpu-num"></span></span>
       </span>
     </span>
     ${tabTools()}

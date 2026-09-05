@@ -11,14 +11,17 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.SWARM_CPU = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  // Ниже порога — значка нет: единицы процентов у идущего разговора есть всегда (сам
-  // терминал, детектор экрана), и держать значок вечно видимым обесценивало бы его как
-  // сигнал «тут прямо сейчас жарко». Дальше — три оттенка, как у полоски контекста
-  // (styles.css: ctx-lo/mid/hi), но с другими порогами: тут можно больше 100% — деревом
-  // считаем несколько ядер сразу (агент + сабагенты), и 150% — это уже весь процессор занят.
-  const HIDE_BELOW = 15;
-  const MID_AT = 70;
-  const HI_AT = 150;
+  // Проценты — от ВСЕЙ машины: 100% значит «занят весь процессор», а не «занято одно ядро».
+  // По ядру считать бессмысленно для сигнала «тут прямо сейчас жарко»: одно занятое ядро на
+  // 4-ядерном ноутбуке и на 16-ядерной станции — совсем разная новость, а число выходило одно.
+  //
+  // Тиров два, не три, и спокойного зелёного среди них нет намеренно. Значок отвечает на один
+  // вопрос — «какие вкладки жёстко грузят машину»; пока у него была нижняя зелёная ступень, он
+  // висел почти на каждой живой вкладке и этим ничего не сообщал. Поэтому ниже HIDE_BELOW
+  // значка нет вовсе, а всё, что видно, — уже заметная нагрузка: 'mid' (var(--run)) и от
+  // HI_AT — 'hi' (var(--danger)), половина машины на одной вкладке.
+  const HIDE_BELOW = 25;
+  const HI_AT = 50;
 
   // 'M+:SS.ss' → CPU-секунды. Минуты не ограничены (у долгоживущего процесса запросто
   // четырёхзначные), поэтому не (\d{1,2}) а (\d+).
@@ -30,30 +33,32 @@
   }
 
   // Процент между двумя снимками одного дерева процессов. prevCs/currCs — сумма CPU-секунд
-  // по дереву, prevTs/currTs — время снимков (ms, Date.now()). CPU-секунды процесса не
-  // убывают, но дерево между тиками могло смениться (процесс вышел, другой пришёл на его
-  // место) — поэтому отрицательную дельту не считаем провалом в минус, а просто нулём.
-  function cpuPctFromDelta(prevCs, currCs, prevTs, currTs) {
+  // по дереву, prevTs/currTs — время снимков (ms, Date.now()), cores — сколько ядер у машины
+  // (os.cpus().length у зовущего; мусор и ноль читаем как 1, чтобы не делить на пустоту и не
+  // выдать Infinity). CPU-секунды процесса не убывают, но дерево между тиками могло смениться
+  // (процесс вышел, другой пришёл на его место) — поэтому отрицательную дельту не считаем
+  // провалом в минус, а просто нулём.
+  function cpuPctFromDelta(prevCs, currCs, prevTs, currTs, cores) {
     const dtMs = currTs - prevTs;
     if (!(dtMs > 0) || !isFinite(prevCs) || !isFinite(currCs)) return null;
+    const n = isFinite(cores) && cores >= 1 ? cores : 1;
     const diffS = Math.max(0, currCs - prevCs);
-    return (diffS * 1000 / dtMs) * 100;
+    return (diffS * 1000 / dtMs) * 100 / n;
   }
 
   function cpuTier(pct) {
     if (pct == null || !isFinite(pct) || pct < HIDE_BELOW) return null;
-    if (pct < MID_AT) return 'lo';
-    if (pct < HI_AT) return 'mid';
-    return 'hi';
+    return pct < HI_AT ? 'mid' : 'hi';
   }
 
   // Что показать на значке: тир решает цвет и видимость разом, чтобы вызывающему не
-  // сверять их отдельно и не рассинхронить.
+  // сверять их отдельно и не рассинхронить. Больше 100% быть не может — считаем от всей
+  // машины, — но округление вверх на границе прижимаем, чтобы не мелькало «101%».
   function formatCpuBadge(pct) {
     const tier = cpuTier(pct);
     if (!tier) return { hidden: true, tier: null, text: '' };
-    return { hidden: false, tier, text: Math.round(pct) + '%' };
+    return { hidden: false, tier, text: Math.min(100, Math.round(pct)) + '%' };
   }
 
-  return { HIDE_BELOW, MID_AT, HI_AT, cpuSecondsFromTime, cpuPctFromDelta, cpuTier, formatCpuBadge };
+  return { HIDE_BELOW, HI_AT, cpuSecondsFromTime, cpuPctFromDelta, cpuTier, formatCpuBadge };
 });

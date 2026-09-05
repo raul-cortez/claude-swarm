@@ -1373,6 +1373,11 @@ const PROC_EVERY_MS = 5000;
 // вкладке «clear» вместо агента.
 const PROC_SETTLE_MS = 2000;
 
+// Сколько ядер у машины — делитель для процента загрузки: значок показывает долю ВСЕЙ машины,
+// а не одного ядра (см. cpu.js). Считаем один раз: за жизнь окна ядра не появляются и не
+// исчезают, а os.cpus() каждые пять секунд на каждую вкладку — лишняя работа на ровном месте.
+const CPU_CORES = Math.max(1, (os.cpus() || []).length);
+
 // Сумма CPU-секунд по всему дереву процессов вкладки (шелл + агент + все его потомки —
 // сабагенты node живут глубже первого потомка). csByPid и kids — снимок одного тика
 // scanTabProcesses; обходим в ширину, а не рекурсией, чтобы случайный цикл в данных ps
@@ -1418,7 +1423,7 @@ function scanTabProcesses() {
         const prev = dd.cpuPrev;
         dd.cpuPrev = { ts: now, cs };
         if (prev) {
-          const pct = cpu.cpuPctFromDelta(prev.cs, cs, prev.ts, now);
+          const pct = cpu.cpuPctFromDelta(prev.cs, cs, prev.ts, now, CPU_CORES);
           dd.cpuPct = pct;
           safeSend('session:cpu', { id, cpuPct: pct });
         }
