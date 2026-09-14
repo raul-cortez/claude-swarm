@@ -10,7 +10,7 @@
 // Contract: read the event JSON on stdin, print {"terminalSequence": "<OSC>"} on
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { realpathSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 
 // --- «агент зовёт тебя»: теги и фразы ----------------------------------------
@@ -412,6 +412,22 @@ const digestMaxLenClamped = (n) => {
   return Math.min(DIGEST_MAX_LEN, Math.max(DIGEST_MIN_LEN, v));
 };
 
+// Одна строка про реестр соседей — на старте сессии, как selfRestartNote и digestNote, и по
+// той же причине один раз: она печатается в КАЖДУЮ вкладку и платит контекстом за всех, а
+// пригождается той одной, что раздаёт работу. Поэтому коротко и без уговоров: где лежит и что
+// внутри. Агент, которому это не нужно, пробежит глазами и забудет.
+//
+// Строка нужна, потому что файл иначе не найти: он лежит в userData приложения, а не в проекте,
+// и агент о нём знать неоткуда. Без неё реестр есть, а читателей у него нет.
+const peersNote = (absPath) => [
+  `[сворм] Соседние вкладки перечислены в ${absPath} — проект, ярлык, мандат «работает без`,
+  'человека» (auto), статус и дайджест каждой. Читай его ПЕРЕД тем, как писать соседней сессии:',
+  'имя вида swarm-<проект>-<хекс> в списке агентов говорит, чья вкладка, а всё остальное — только',
+  'этот файл. Вкладки из ЧУЖОГО проекта задач твоего проекта не возьмут: проектные скиллы',
+  'подгружаются от рабочего каталога, и команды вроде /task у них просто нет.',
+  'Файл только для чтения: он рассказывает, кто есть кто, и ничем не управляет.',
+].join('\n');
+
 // Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote выше. cfg — объект digest
 // из swarm-tgmode.json: .max — потолок длины (Settings → Запуск, по умолчанию DIGEST_DEFAULT_LEN),
 // .note — своя формулировка человека поверх заготовки, пусто если заготовки хватает. `absPath` —
@@ -780,7 +796,15 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // а не про то, чем занят один её сабагент.
   const digestIntro = (isStart && ex.digest && ex.digest.on)
     ? digestNote(ex.digest, fileInfo && fileInfo.digest) : '';
-  const intro = [restartIntro, digestIntro].filter(Boolean).join('\n\n');
+  // Реестр соседей. Не за галочкой: это не функция, которую включают, а сведения о том, что и
+  // так происходит, — сворм пишет этот файл всегда. Подагенту не говорим по той же причине, что
+  // и про дайджест: он живёт внутри чужого хода и соседним вкладкам не пишет.
+  // Нет файла — молчим. Тот же принцип, что у restart и digest выше: обещать агенту дверь,
+  // которой нет, хуже, чем не обещать. Так молчит и прежняя версия приложения, где реестра ещё
+  // не было, — а хук рядом с ней может оказаться свежим.
+  const peersFile = fileURLToPath(new URL('./swarm-tabs.json', import.meta.url));
+  const peersIntro = (isStart && existsSync(peersFile)) ? peersNote(peersFile) : '';
+  const intro = [restartIntro, digestIntro, peersIntro].filter(Boolean).join('\n\n');
   if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;

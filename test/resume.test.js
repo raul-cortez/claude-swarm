@@ -17,10 +17,38 @@ test('supports Claude family stems', () => {
   assert.strictEqual(R.supports('glm'), false);
 });
 
-test('newSessionKey is swarm- + 8 hex', () => {
+test('newSessionKey is swarm- + 8 hex when the folder is unknown', () => {
   const k = R.newSessionKey();
   assert.match(k, /^swarm-[0-9a-f]{8}$/);
   assert.notStrictEqual(R.newSessionKey(), R.newSessionKey());
+});
+
+test('newSessionKey carries the project name — peers read it in the agent list', () => {
+  assert.match(R.newSessionKey('/Users/e/WebstormProjects/fastio'), /^swarm-fastio-[0-9a-f]{8}$/);
+  // Ворктри несёт номер задачи в имени каталога — значит и ключ его несёт, даром.
+  assert.match(R.newSessionKey('/Users/e/WebstormProjects/fastio-686'), /^swarm-fastio-686-[0-9a-f]{8}$/);
+  assert.match(R.newSessionKey('C:\\Projects\\Fastio'), /^swarm-fastio-[0-9a-f]{8}$/);
+  // Хвостовой разделитель не должен съедать имя целиком.
+  assert.match(R.newSessionKey('/Users/e/fastio/'), /^swarm-fastio-[0-9a-f]{8}$/);
+  // Уникальность не должна пострадать: два окна на одном репозитории — обычное дело.
+  assert.notStrictEqual(R.newSessionKey('/a/fastio'), R.newSessionKey('/a/fastio'));
+});
+
+test('newSessionKey falls back to bare hex when the name has nothing usable', () => {
+  // Ключ уезжает в командную строку без кавычек. Нелатинское имя каталога должно исчезнуть
+  // целиком, а не попасть в команду: сломанная команда открыла бы вкладку без агента.
+  for (const cwd of ['/Users/e/Проекты/касса', '/', '', null, undefined, '/Users/e/!!!']) {
+    assert.match(R.newSessionKey(cwd), /^swarm-[0-9a-f]{8}$/, 'cwd=' + cwd);
+  }
+});
+
+test('newSessionKey keeps the project name short and free of a dangling dash', () => {
+  // Имя читает человек в чужом списке сессий, поэтому оно обрезается.
+  assert.match(R.newSessionKey('/a/monorepo-packages-admin-ui'), /^swarm-monorepo-packages-ad-[0-9a-f]{8}$/);
+  // Обычное имя резаться не должно: на этом потолок и подняли с 16 до 20.
+  assert.match(R.newSessionKey('/a/claude-swarm-lite'), /^swarm-claude-swarm-lite-[0-9a-f]{8}$/);
+  // Обрез попал ровно на дефис — иначе вышло бы swarm-aaa--a3f91c2e с двойным дефисом.
+  assert.match(R.newSessionKey('/a/' + 'a'.repeat(19) + '-bbb'), /^swarm-a{19}-[0-9a-f]{8}$/);
 });
 
 test('stripSessionFlags drops continue/resume/name', () => {

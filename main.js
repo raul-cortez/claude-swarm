@@ -188,6 +188,7 @@ const { envPassing, clearPrefix, tabEnv, shellFamily } = require('./launch-line'
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
 const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
+const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
@@ -882,6 +883,9 @@ setInterval(() => {
         safeSend('session:status', { id, status: next.status, detail: next.detail, ctxPct, question, sub, waitingKind: kind, sure, done });
         // Смена цвета — в журнал, вместе с показаниями всех каналов (см. statusWhy).
         if (next.status !== prev || next.detail !== prevDetail) {
+          // Занятость вкладки видят соседи (peers.js) — реестр обязан меняться вместе с цветом
+          // карточки, иначе прораб раздаст работу по вчерашней картине.
+          writeTabsMap();
           statusLog(`tab=${id}${d.name ? ' (' + d.name + ')' : ''} ${prev || '—'}/${prevDetail || '—'} → ${next.status}/${next.detail} | ${statusWhy(d, now, snap, sub)}`);
         }
         // Вкладка кончила ход — а перезапуск как раз этого и ждал: ответ агента ложится на диск в
@@ -2941,16 +2945,20 @@ function tgWriteModes() {
 // файлах: он переживает рестарт вкладки нарочно (см. resume.js). Различить, какой из них
 // последний, снаружи процесса было нечем — у части вкладок не нашлось и записи в restart.log.
 // Пишется тем же путём и по тем же поводам, что swarm-tgmode.json (вызов из tgWriteModes,
-// см. все места, где меняется claudeSessionId) — отдельного триггера не заводим, чтобы не
-// рисковать забытым местом.
+// см. все места, где меняется claudeSessionId), плюс по смене статуса и дайджеста — их
+// добавила вторая обязанность файла, см. ниже. Отдельного такта не заводим: тело сравнивается
+// со прошлым, и лишний вызов стоит одного JSON.stringify, а не записи на диск.
+//
+// ВТОРАЯ ОБЯЗАННОСТЬ (сентябрь 2026): это же файл — реестр вкладок для СОСЕДНИХ сессий.
+// Агент видит соседей списком, где у вкладки есть только имя, и по `swarm-267a6161` нельзя
+// понять ни проекта, ни занятости — на этом две вкладки-прораба подряд раздали задачи в чужие
+// репозитории. Состав строки и причины, почему изменчивое (мандат, статус) живёт здесь, а не
+// в имени сессии, — в peers.js. Файл был готовой опорой: тот же ключ (id вкладки), та же
+// частота, тот же сравниватель. Заводить рядом второй с тем же содержимым значило бы завести
+// и второй способ разойтись с правдой.
 let tabsMapWritten = '';
 function writeTabsMap() {
-  const rows = {};
-  for (const [id, d] of det) {
-    if (!d || d.dead || !d.claudeSessionId) continue;
-    rows[id] = { cwd: d.cwd || '', sessionKey: d.sessionKey || '', claudeSessionId: d.claudeSessionId };
-  }
-  const body = JSON.stringify(rows);
+  const body = JSON.stringify(peers.rows(det));
   if (body === tabsMapWritten) return;          // ничего не изменилось — диск не трогаем
   try {
     fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-tabs.json'), body);
@@ -5711,6 +5719,10 @@ function digestTick(id, d) {
   d.digestText = text;
   d.digestCache = cache;
   safeSend('session:digest', { id, text, cache });
+  // Дайджест — единственное в реестре, что рассказывает соседям О ЗАДАЧЕ, а не о вкладке.
+  // Обновляем только при textChanged: значок температуры кэша в реестр не идёт и будить
+  // запись не должен.
+  if (textChanged) writeTabsMap();
 }
 
 setInterval(() => {

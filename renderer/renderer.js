@@ -1232,7 +1232,10 @@ async function createSession(opts = {}) {
   let sessionKey = opts.sessionKey || null;
   const claudeCmd = !blank && RESUME_API.supports(cmd);
   const canPin = claudeCmd && resumeSessions;
-  if (canPin && !sessionKey) sessionKey = RESUME_API.newSessionKey();
+  // cwd — чтобы ключ нёс имя проекта: его читают соседние вкладки в списке сессий.
+  // Каталог здесь ещё не разрешён главным процессом, и если вкладку создали без него,
+  // имени проекта не будет — ключ просто останется прежним swarm-<хекс>.
+  if (canPin && !sessionKey) sessionKey = RESUME_API.newSessionKey(cwd);
   // Restoring: reopen the exact conversation by its Claude session id — main pins one
   // for every Claude tab, so this works for tabs that were already open when you ticked
   // the setting. The swarm-* name is the fallback for tabs saved before ids were kept.
@@ -6175,7 +6178,7 @@ window.swarm.onRestartAgent(async ({ id, prompt }) => {
   const sid = String(id);
   const s = sessions.get(sid);
   if (!s || s.blank) return;
-  const key = resumeSessions && RESUME_API.supports(s.cmd) ? RESUME_API.newSessionKey() : null;
+  const key = resumeSessions && RESUME_API.supports(s.cmd) ? RESUME_API.newSessionKey(s.cwd) : null;
   // Ответ на вызов нам не нужен: и ярлык, и новый claudeSessionId приезжают известиями
   // (session:restarted и session:claude), потому что напечатать запуск может не только этот
   // вызов, но и main сам, позже — когда прежний агент вышел не сразу. Сохранение по ответу
