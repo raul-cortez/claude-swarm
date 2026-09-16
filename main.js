@@ -230,6 +230,36 @@ function provisionNodeLauncher(dir, srcName, base) {
   return `sh "${launcher}"`;
 }
 
+// Справка про перезапуск — единственный файл, который мы кладём рядом с хуком не для себя, а
+// для АГЕНТА: он читает её по абсолютному пути, когда решил перезапуститься. В ней длинная часть
+// протокола (что унести в эстафету, полная схема ответа, выбор модели), которую раньше печатали
+// в разговор целиком — и платили ею за каждую вкладку, дошедшую до порога, включая те, что
+// отвечали «не сейчас». Читателей у файла двое, и оба берут его по одному и тому же пути: хук на
+// старте сессии (selfRestartNote) и просьба на пороге (restart.askText).
+//
+// Копируем на каждом запуске, как и сам скрипт хука, — иначе обновление приложения оставило бы
+// вчерашнюю справку рядом со свежим скриптом. Молча переживаем неудачу: без справки оба текста
+// работают, просто теряют длинную часть (см. guideLines в restart.js).
+const RESTART_GUIDE = 'swarm-restart-guide.md';
+
+function provisionRestartGuide(dir) {
+  try {
+    // Путь источника literal'ом, а не через RESTART_GUIDE: контрактный тест упаковки
+    // (test/package-files.test.js) ищет именно path.join(__dirname, '…') со строками внутри.
+    fs.copyFileSync(path.join(__dirname, 'hooks', 'swarm-restart-guide.md'),
+      path.join(dir, RESTART_GUIDE));
+  } catch (_) { /* не скопировалось — просьба обойдётся без ссылки */ }
+}
+
+// Путь, который видит агент. Пусто, если файла нет: указывать агенту на то, чего он не прочтёт,
+// хуже, чем не указывать вовсе, — он потратит ход на Read и получит ошибку.
+function restartGuidePath() {
+  try {
+    const p = path.join(app.getPath('userData'), RESTART_GUIDE);
+    return fs.existsSync(p) ? p : '';
+  } catch (_) { return ''; }
+}
+
 // (Re)write swarm-settings.json: the statusline and the hooks block, each only when the
 // user left it on. Called at startup and whenever either pref changes — new Claude sessions
 // read the file at launch, so a change takes effect on the next one.
@@ -275,6 +305,7 @@ function provisionStatusline() {
   // Rewritten every launch so upgrades take.
   STATUSLINE_COMMAND = provisionNodeLauncher(dir, 'swarm-statusline.js', 'swarm-statusline');
   HOOK_COMMAND = provisionNodeLauncher(dir, path.join('hooks', 'swarm-signal.mjs'), 'swarm-signal');
+  provisionRestartGuide(dir);
   writeSwarmSettings();
   applyAskPhrases();
   // Файл рядом с хуком переживает выключение, и без этой строчки в нём оставалось бы
@@ -5909,7 +5940,7 @@ function restartAsk(id, d, pct) {
   // затевался.
   const text = (d.rs && d.rs.silent > 0)
     ? restart.askAgainText({ pct, answerFile: file })
-    : restart.askText({ pct, answerFile: file, sub: d.sub || 0 });
+    : restart.askText({ pct, answerFile: file, sub: d.sub || 0, guide: restartGuidePath() });
   if (!restartType(id, text)) {
     // Печать не удалась — вкладки уже нет. Возвращаем автомат в исходное, иначе он будет ждать
     // ответа на просьбу, которой никто не видел.
