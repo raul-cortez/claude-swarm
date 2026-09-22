@@ -212,6 +212,9 @@ contextBridge.exposeInMainWorld('swarm', {
     // переключатель — им пользуется гейт ввода, когда человек забирает вкладку себе.
     tabMenu:  (id) => ipcRenderer.invoke('tab:menu', { id }),
     setTab:   (id, auto) => ipcRenderer.invoke('tab:setAuto', { id, auto }),
+    // Родство: id вкладки живёт один запуск, поэтому сохранённое родство (по tabKey)
+    // пересобирается ЗДЕСЬ, после restoreOrStart, а не передаётся при создании.
+    setParent: (id, parentId) => ipcRenderer.invoke('tab:setParent', { id, parentId }),
     // Все вкладки разом — луна в нижней панели.
     setAll:   (auto) => ipcRenderer.invoke('night:setAll', { auto }),
     onTab:    (cb) => ipcRenderer.on('tab:auto', (_e, s) => cb(s)),

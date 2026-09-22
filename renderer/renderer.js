@@ -1286,6 +1286,7 @@ async function createSession(opts = {}) {
     // создании): здесь это не второй источник правды, а зеркало, без которого карточка
     // секунду выглядела бы своей.
     auto: !!opts.auto || (!opts.restored && !!nightNow.on),            // восстановленная вкладка возвращается со своим мандатом
+    parentId: opts.parentId || null,        // усыновление/восстановление несут его с собой
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
     // Ярлык вкладки (swarm-…), если он у неё есть — main держит его рядом с claudeSessionId в
     // своём собственном файле на диске (см. writeTabsMap), а не только здесь в localStorage.
@@ -1419,6 +1420,9 @@ async function createSession(opts = {}) {
     // Мандат «работает без меня». Живёт вместе с вкладкой (persistTabs) и дублирует то, что
     // знает main: окну он нужен для отметки на карточке и для границы владения (см. typeInto).
     auto: !!opts.auto,
+    // Родитель бригады — id вкладки-прораба. Тот же приём, что у мандата: главный процесс уже
+    // решил это при создании (main.js session:create), здесь — зеркало для карточки.
+    parentId: opts.parentId || null,
     // The conversation this tab is in. Saved with the tab; the next launch resumes it.
     claudeSessionId: claudeSessionId || null,
   });
@@ -3666,6 +3670,10 @@ function persistTabs() {
         // Мандат принадлежит вкладке, а не сеансу приложения: обновление сворма не должно
         // забирать у отданной вкладки разрешение работать.
         auto: !!s.auto,
+        // Родство переживает перезапуск НЕ по id (main выдаёт их заново на каждом запуске —
+        // см. setTabParent в main.js), а по tabKey родителя: тот самый ключ, что держит
+        // Telegram-тему и переживает relaunch. restoreOrStart пересобирает id из него.
+        parentTabKey: s.parentId ? (sessions.get(s.parentId)?.tabKey || null) : null,
       });
     }
   }
@@ -6110,12 +6118,27 @@ async function restoreOrStart() {
       claudeSessionId: (dupId ? null : t.claudeSessionId) || undefined,
       tabKey: t.tabKey || undefined,   // same tab → same Telegram topic as before
       auto: !!t.auto,                  // отданная вкладка остаётся отданной
+      // parentId сюда не передаём: он был id вчерашней сессии, который main.js уже выдал
+      // кому-то другому сегодня. Родство пересобираем ПОСЛЕ, вторым проходом — см. ниже.
       // Восстановление — не рождение: вкладка возвращается ровно такой, какой была. Без этой
       // отметки первая же отданная вкладка делала бы «ночь включена» (отдана единственная
       // живая), и следующие восстанавливались бы отданными, хотя человек их не отдавал.
       restored: true,
       resume: !!(resumeSessions && ((t.claudeSessionId && !dupId) || (t.sessionKey && !dupKey))),
     });
+  }
+  // Родство — вторым проходом, когда у ВСЕХ восстановленных вкладок уже есть свежий id.
+  // Сохранённое на диске родство держит tabKey (см. persistTabs), а не вчерашний id — этим
+  // проходом мы находим, кому какой id main.js выдал сегодня, и сообщаем ему пары.
+  const byTabKey = new Map();
+  for (const [id, s] of sessions) if (s.tabKey) byTabKey.set(s.tabKey, id);
+  for (const t of saved) {
+    if (!t.parentTabKey || !t.tabKey) continue;
+    const childId = byTabKey.get(t.tabKey);
+    const parentId = byTabKey.get(t.parentTabKey);
+    if (!childId || !parentId) continue; // родитель не пережил рестарт — бригада не соберётся сама
+    const ok = await window.swarm.night.setParent(childId, parentId);
+    if (ok) sessions.get(childId).parentId = parentId;
   }
   const first = sessions.keys().next();
   if (!first.done) activate(first.value);

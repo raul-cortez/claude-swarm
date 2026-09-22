@@ -939,6 +939,72 @@ test('подагенту про перезапуск вкладки не рас�
     null, [], 'desk', { restart: { on: true } }), null);
 });
 
+// --- бригада: кто прораб, кто ребёнок, кто одиночка --------------------------
+// Спека: docs/superpowers/specs/2026-09-22-crew-design.md. Решение «кто кого видит» живёт в
+// peers.js (peers.test.js гоняет там таблицу случаев); здесь — только то, что хук честно
+// повторяет то же решение (peersViewFor — дубликат, модулей приложения ему не видно) и что оно
+// доезжает до текста на старте сессии.
+test('фильтр реестра в хуке решает так же, как peers.viewFor', () => {
+  const P = require('../peers');
+  const rows = P.rows([
+    ['boss', { claudeSessionId: 'boss-sid', name: 'Прораб', cwd: '/p', crew: true }],
+    ['kid1', { claudeSessionId: 'kid1-sid', name: 'Кид 1', cwd: '/p', parentId: 'boss' }],
+    ['free', { claudeSessionId: 'free-sid', name: 'Одна', cwd: '/p' }],
+  ]);
+  for (const sid of ['boss-sid', 'kid1-sid', 'free-sid', 'неизвестный']) {
+    assert.deepStrictEqual(H.peersViewFor(rows, sid), P.viewFor(rows, sid), 'sid=' + sid);
+  }
+});
+
+test('прорабу — своя бригада и число свободных, не общий текст «иди почитай файл»', () => {
+  const view = { role: 'prorab', crew: { kid1: { tab: 'Кид 1' }, kid2: { tab: 'Кид 2' } }, free: 3 };
+  const t = H.crewNote(view, '/x/swarm-tabs.json');
+  assert.match(t, /Ты прораб/);
+  assert.match(t, /Кид 1, Кид 2/);
+  assert.match(t, /Свободных вкладок сейчас: 3/);
+  assert.match(t, /Разрешения.*человеку/s);
+});
+
+test('прораб с пустой бригадой — роль не снимается, текст это признаёт, а не молчит', () => {
+  const t = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x/swarm-tabs.json');
+  assert.match(t, /Ты прораб/);
+  assert.match(t, /пока никого/);
+});
+
+test('ребёнку — только «твой прораб — вкладка такая-то», без протокола процесса', () => {
+  const t = H.childNote({ role: 'child', parentId: 'boss', parent: { tab: 'Прораб' } });
+  assert.match(t, /Твой прораб — вкладка «Прораб»/);
+  assert.ok(!/CLAUDE\.md/.test(t), 'правила проекта хук ребёнку не пересказывает — он их и так читает сам');
+});
+
+test('ребёнок мёртвого прораба — остаётся в бригаде и ждёт, а не паникует', () => {
+  const t = H.childNote({ role: 'child', parentId: 'boss', parent: null });
+  assert.match(t, /недоступен/);
+  assert.match(t, /остаёшься в.*бригаде/s);
+});
+
+test('end to end: прораб и ребёнок получают разный SessionStart-текст с одного и того же файла', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-crew-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  const P = require('../peers');
+  const rows = P.rows([
+    ['boss', { claudeSessionId: 'boss-sid', name: 'Прораб', cwd: dir, crew: true }],
+    ['kid1', { claudeSessionId: 'kid1-sid', name: 'Кид 1', cwd: dir, parentId: 'boss' }],
+    ['free', { claudeSessionId: 'free-sid', name: 'Одна', cwd: dir }],
+  ]);
+  fs.writeFileSync(path.join(dir, 'swarm-tabs.json'), JSON.stringify(rows));
+  const run = (sid) => JSON.parse(execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid, cwd: dir }),
+    encoding: 'utf8',
+  }));
+  assert.match(run('boss-sid').hookSpecificOutput.additionalContext, /Ты прораб: твоя бригада — Кид 1/);
+  assert.match(run('kid1-sid').hookSpecificOutput.additionalContext, /Твой прораб — вкладка «Прораб»/);
+  // Одиночка — прежний общий текст, реестр этим шагом никак не сужен.
+  assert.match(run('free-sid').hookSpecificOutput.additionalContext, /Соседние вкладки перечислены в/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

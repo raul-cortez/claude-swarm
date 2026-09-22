@@ -660,6 +660,14 @@ function makeDetector(cols, rows) {
     // в другой сидит сам. Общий ночной режим мандат не переписывает, а поднимает всем сразу; что
     // в силе для конкретной вкладки, считает autoOn().
     auto: false,
+    // Родитель бригады — тоже свой у вкладки и живёт тем же путём, что мандат: в det и в
+    // persistTabs рендерера, чтобы пережить перезапуск. Спека:
+    // docs/superpowers/specs/2026-09-22-crew-design.md.
+    parentId: null,
+    // Роль прораба не снимается, даже когда детей не осталось — стала правдой один раз (нанял
+    // первого исполнителя) и остаётся ею до закрытия вкладки. Поэтому отдельное поле, а не
+    // «есть ли сейчас хоть один ребёнок».
+    crew: false,
     cwd: '', startedAt: Date.now(), claudeSessionId: null,
     trFile: null, trMtime: 0, trEntries: null, trState: null, trText: '', trWhy: '', trTryAt: 0,
     // trHint — адрес разговора, названный самим Клодом (хук). claudeHome — конфиг, в котором
@@ -5204,6 +5212,32 @@ function setTabAuto(id, on, from) {
   return next;
 }
 
+// Родство — тоже одна дверь: создание вкладки (session:create) и реконсиляция после
+// перезапуска (renderer restoreOrStart) ведут сюда же. Дверь одна и потому, что id вкладки
+// живёт только один запуск приложения — сохранённое на диске родство хранит не его, а
+// tabKey (переживает перезапуск), и renderer пересобирает по нему свежие id уже ПОСЛЕ того,
+// как все вкладки созданы — отсюда и вторая дверь снаружи, а не только параметр session:create.
+//
+// Один уровень (ребёнок прорабом не становится) и без самозамыкания — спека, раздел «Границы».
+function setTabParent(id, parentId, from) {
+  const key = String(id == null ? '' : id);
+  const d = det.get(key);
+  if (!d) return false;
+  const pid = String(parentId == null ? '' : parentId);
+  if (!pid) {
+    if (d.parentId) { d.parentId = null; tgWriteModes(); }
+    return true;
+  }
+  if (pid === key) return false;
+  const parent = det.get(pid);
+  if (!parent || parent.parentId) return false; // нет родителя или сам чей-то ребёнок
+  d.parentId = pid;
+  parent.crew = true; // роль не снимается — см. комментарий у d.crew в makeDetector
+  tgLog(`родство (${from || '—'}): вкладка ${key} — в бригаде ${pid}`);
+  tgWriteModes();
+  return true;
+}
+
 // Отдать или забрать ВСЕ вкладки разом — вторая дверь к тому же мандату (первая — полумесяц на
 // карточке). Отдельной сущности «общий ночной режим» под ней нет: она просто проходит по
 // вкладкам, а «включён» считается по ним же.
@@ -5281,6 +5315,10 @@ setInterval(subsPush, SUBS_PUSH_MS);
 
 // Мандат вкладке из окна: меню карточки и кнопка «забрать себе» в гейте ввода.
 ipcMain.handle('tab:setAuto', (_e, { id, auto } = {}) => setTabAuto(id, auto, 'окно'));
+
+// Родство из окна: реконсиляция после перезапуска (id вчерашних вкладок мертвы, см.
+// setTabParent) и, позже, жест «перетащить карточку в пунктир бригады».
+ipcMain.handle('tab:setParent', (_e, { id, parentId } = {}) => setTabParent(id, parentId, 'окно'));
 
 // Все вкладки разом — луна в нижней панели. Возвращаем, скольких это коснулось: окну оно не
 // нужно, а журналу и телеге нужно (см. tgNightCmd).
@@ -6739,6 +6777,10 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // открыл вкладку в три часа — и общий режим погас, а с ним и всё, что он держит.
     d0.auto = !!opts.auto || nightLegacy || (!opts.restored && awayAll());
     det.set(id, d0);
+    // Родство при рождении — например, протокол найма (прораб просит открыть вкладку) передаёт
+    // parentId сразу. При восстановлении после перезапуска id ещё не существовали, поэтому эту
+    // же дверь дёргает и renderer.restoreOrStart, вторым проходом (см. setTabParent).
+    if (opts.parentId) setTabParent(id, opts.parentId, 'создание');
     if (d0.auto) { tgWriteModes(); nightPush(); tgApplyKeepAwake(); }
   }
 

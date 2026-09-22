@@ -66,6 +66,12 @@ function row(d) {
     // Мандат «работай без меня». Главное поле для того, кто раздаёт работу: вкладке без
     // мандата задачу на ночь давать бессмысленно — она встанет на первом же вопросе.
     auto: !!d.auto,
+    // Родитель бригады — id вкладки-прораба, если эта вкладка нанята им. Пусто у прораба и
+    // у одиночки. Спека: docs/superpowers/specs/2026-09-22-crew-design.md.
+    parentId: d.parentId || null,
+    // Роль прораба не снимается, даже когда детей не осталось — см. комментарий у d.crew
+    // в main.js (makeDetector).
+    crew: !!d.crew,
     // 'ready' | 'running' | 'waiting' — то же, что цвет карточки (detector.js).
     // 'waiting' здесь важнее 'running': вкладка, стоящая на вопросе, выглядит занятой, а на
     // деле её работа стоит и ждёт человека. По списку это должно быть видно без домыслов.
@@ -91,4 +97,45 @@ function rows(entries) {
   return out;
 }
 
-module.exports = { rows, row, projectOf, short, DIGEST_MAX };
+// Кто что видит — спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел
+// «Кто что видит». Принимает УЖЕ готовый reestr (то, что вернул `rows()`, ключ — id вкладки) и
+// id разговора ЧИТАТЕЛЯ (payload.session_id хука — единственное, что знает о себе сам агент).
+//
+// Продублирована в hooks/swarm-signal.mjs (модулей приложения там нет), сверяется тестом —
+// решение остаётся здесь одно, хук только его повторяет.
+function viewFor(rows, sid) {
+  const id = sid == null ? '' : String(sid);
+  let selfId = '';
+  if (id) {
+    for (const k in rows) { if (rows[k].claudeSessionId === id) { selfId = k; break; } }
+  }
+  // Себя не нашли — старая версия main.js без claudeSessionId в реестре, или это не вкладка
+  // сворма вовсе. Фильтровать не от чего: отдаём всё, как одиночке.
+  if (!selfId) return { role: 'solo', rows };
+
+  const self = rows[selfId];
+  // Ребёнок — видит только своего прораба. Прораб мог умереть или перезапуститься: тогда его
+  // строки в реестре уже нет (rows() мёртвых не пишет), и `parent` придёт пустым — сама вкладка
+  // остаётся в бригаде и ждёт, реестр здесь только рассказывает.
+  if (self.parentId) {
+    return { role: 'child', parentId: self.parentId, parent: rows[self.parentId] || null };
+  }
+
+  // Прораб — видит свою бригаду и «свободных: N». Роль не снимается, даже когда живых детей
+  // сейчас нет (см. self.crew в row()) — тогда бригада пуста, но это всё ещё прораб, не
+  // одиночка.
+  const crew = {};
+  for (const k in rows) { if (k !== selfId && rows[k].parentId === selfId) crew[k] = rows[k]; }
+  if (self.crew || Object.keys(crew).length) {
+    let free = 0;
+    for (const k in rows) {
+      if (k === selfId || crew[k]) continue;
+      if (!rows[k].parentId) free++;
+    }
+    return { role: 'prorab', crew, free };
+  }
+
+  return { role: 'solo', rows };
+}
+
+module.exports = { rows, row, viewFor, projectOf, short, DIGEST_MAX };

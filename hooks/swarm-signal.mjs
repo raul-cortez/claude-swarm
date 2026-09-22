@@ -429,6 +429,70 @@ const peersNote = (absPath) => [
   'Файл только для чтения: он рассказывает, кто есть кто, и ничем не управляет.',
 ].join('\n');
 
+// --- бригада: кто прораб, кто ребёнок, кто одиночка --------------------------------
+// Спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел «Кто что видит».
+//
+// Дубликат peers.viewFor — модулей приложения здесь нет, сверяется тестом. Принимает УЖЕ
+// готовый реестр (то, что лежит в swarm-tabs.json, ключ — id вкладки) и id разговора ЧИТАТЕЛЯ
+// (payload.session_id — единственное, что хук знает про себя).
+function peersViewFor(rows, sid) {
+  const id = sid == null ? '' : String(sid);
+  let selfId = '';
+  if (id) {
+    for (const k in rows) { if (rows[k].claudeSessionId === id) { selfId = k; break; } }
+  }
+  if (!selfId) return { role: 'solo', rows };
+
+  const self = rows[selfId];
+  if (self.parentId) {
+    return { role: 'child', parentId: self.parentId, parent: rows[self.parentId] || null };
+  }
+
+  const crew = {};
+  for (const k in rows) { if (k !== selfId && rows[k].parentId === selfId) crew[k] = rows[k]; }
+  if (self.crew || Object.keys(crew).length) {
+    let free = 0;
+    for (const k in rows) {
+      if (k === selfId || crew[k]) continue;
+      if (!rows[k].parentId) free++;
+    }
+    return { role: 'prorab', crew, free };
+  }
+
+  return { role: 'solo', rows };
+}
+
+// Прорабу — механику и только её (как он ведёт бригаду — не наше дело, см. спеку «Правила
+// прораба»): кто его вкладки и что вопросы детей идут ему, а не человеку. Протокола найма в
+// этом шаге ещё нет (следующий по порядку работ) — про него пока не говорим, чтобы не
+// обещать дверь, которой нет.
+const crewNote = (view, absPath) => {
+  const names = Object.values(view.crew).map((r) => r.tab || r.project || '?');
+  const list = names.length ? names.join(', ') : 'пока никого — бригада пуста';
+  return [
+    `[сворм] Ты прораб: твоя бригада — ${list}.`,
+    `Свободных вкладок сейчас: ${view.free}.`,
+    'Вопросы детей по задаче — тебе, ты сам решаешь, что решить самому, а с чем идти к человеку.',
+    'Разрешения на запись и команды — исключение: они всегда к человеку, это не про задачу.',
+    `Полный реестр — ${absPath}: там же видно, кто чем занят и кто ждёт ответа.`,
+  ].join('\n');
+};
+
+// Ребёнку — только механика («твой прораб — вкладка такая-то»): он обычная вкладка и правила
+// процесса читает из CLAUDE.md и скиллов проекта, как любая другая (спека, раздел «Кто что
+// видит»). Прораб умер или перезапускается — строки о нём в реестре уже нет (rows() мёртвых не
+// пишет), но сама вкладка остаётся в бригаде и ждёт: реестр только рассказывает, а не управляет.
+const childNote = (view) => {
+  const p = view.parent;
+  if (!p) {
+    return '[сворм] Твой прораб сейчас недоступен (упал или перезапускается) — ты остаёшься в'
+      + ' его бригаде и продолжаешь работу как обычно; вопросы копи, спросишь, когда он вернётся.';
+  }
+  const name = p.tab || p.project || 'вкладка прораба';
+  return `[сворм] Твой прораб — вкладка «${name}». Вопросы по задаче — ему, а не человеку;`
+    + ' разрешения на запись и команды — как обычно, человеку.';
+};
+
 // Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote выше. cfg — объект digest
 // из swarm-tgmode.json: .max — потолок длины (Settings → Запуск, по умолчанию DIGEST_DEFAULT_LEN),
 // .note — своя формулировка человека поверх заготовки, пусто если заготовки хватает. `absPath` —
@@ -810,7 +874,20 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // которой нет, хуже, чем не обещать. Так молчит и прежняя версия приложения, где реестра ещё
   // не было, — а хук рядом с ней может оказаться свежим.
   const peersFile = fileURLToPath(new URL('./swarm-tabs.json', import.meta.url));
-  const peersIntro = (isStart && existsSync(peersFile)) ? peersNote(peersFile) : '';
+  let peersIntro = '';
+  if (isStart && existsSync(peersFile)) {
+    // Прорабу и ребёнку — своя формулировка вместо общего «иди почитай файл»: у прораба
+    // бригада мала (до нескольких вкладок), у ребёнка — вовсе одна строка, и назвать их
+    // прямо здесь дешевле, чем заставлять агента идти читать и фильтровать реестр самому
+    // (человек уже жаловался ровно на то, что это сейчас приходится объяснять словами).
+    // Одиночке текст не меняем: у него реестр большой и читать его целиком — их работа.
+    let raw = null;
+    try { raw = JSON.parse(readFileSync(peersFile, 'utf8')); } catch (_) { raw = null; }
+    const view = raw ? peersViewFor(raw, sid) : { role: 'solo' };
+    peersIntro = view.role === 'prorab' ? crewNote(view, peersFile)
+      : view.role === 'child' ? childNote(view)
+        : peersNote(peersFile);
+  }
   const intro = [restartIntro, digestIntro, peersIntro].filter(Boolean).join('\n\n');
   if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
@@ -1007,4 +1084,5 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
-  DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN };
+  DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN,
+  peersNote, peersViewFor, crewNote, childNote };
