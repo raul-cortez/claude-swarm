@@ -190,6 +190,7 @@ const subs = require('./subs');                     // подписки: кар�
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
+const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
 const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
@@ -2959,12 +2960,14 @@ function tgWriteModes() {
     if (!d || d.dead || !d.claudeSessionId) continue;
     const rf = restartAnswerFile(tid, d);
     const df = digestFileFor(d);
-    if (rf || df) files[d.claudeSessionId] = { restart: rf || '', digest: df || '' };
+    const hf = hireFileFor(d);
+    if (rf || df || hf) files[d.claudeSessionId] = { restart: rf || '', digest: df || '', hire: hf || '' };
   }
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
     restart: { on: RESTART_ENABLED },
     digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
+    crew: { max: CREW_MAX },
     files,
   });
   if (body !== tgModesWritten) {
@@ -5833,6 +5836,121 @@ ipcMain.on('settings:digest', (_e, opts = {}) => {
   }
 });
 
+// --- Бригада: найм по просьбе прораба -----------------------------------------------
+// Спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел «Протокол найма». Механика —
+// та же, что у digest/restart, и по той же причине: она уже работает и не требует нового
+// канала. Прораб пишет файл в свою рабочую папку, сворм опрашивает его тактом, проверяет потолок,
+// открывает вкладку и печатает задачу ПЕРВЫМ ДЕЛОМ — сам, а не просит агента написать её
+// сообщением (лишний ход и новая точка отказа: он может забыть, а человеку это не видно).
+let CREW_MAX = hire.DEFAULT_MAX;
+const HIRE_TICK_MS = 5_000;
+// Сколько ждать, пока свежая вкладка домигает до «готов», прежде чем напечатать в неё задачу.
+// Не бесконечно: оболочка могла упасть на старте (битые флаги, разлогинен), и вечно ждать хуже,
+// чем один раз сдаться и оставить вкладку пустой — прораб её всё равно увидит в своей бригаде.
+const HIRE_FIRE_WAIT_MS = 5 * 60_000;
+
+// Файл лежит в папке прораба, как файлы дайджеста и рестарта, и по той же причине: путь за
+// пределами рабочей папки Клод спрашивает отдельным разрешением. Назван по id разговора — ключа
+// вкладки хук не знает (см. digestFileFor).
+function hireFileFor(d) {
+  const cwd = d && d.cwd;
+  const name = hire.fileName(d && d.claudeSessionId);
+  if (!name || !cwd || !fs.existsSync(cwd)) return '';
+  return path.join(cwd, name);
+}
+
+// Печатает текст в pty, как будто его набрали за клавиатурой — тот же путь, что у tgAnswer, но
+// без телеграм-бухгалтерии (d.tgOwes/d.tgMode ей не нужны: источник не телефон, а сам сворм).
+function typeIntoTab(id, text) {
+  const p = sessions.get(id);
+  if (!p) return false;
+  const [body, enter] = telegram.inputWrites(text);
+  if (!body) return false;
+  ptyType(id, body);
+  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
+  const d = det.get(id);
+  if (d) markAnswered(d, Date.now());
+  return true;
+}
+
+// Живых детей бригады — тех, чей процесс ещё жив. Мёртвая вкладка место в потолке не занимает:
+// человек намерен видеть его свободным, не разбираясь, что там закрылось само.
+function crewLiveChildren(prorabId) {
+  let n = 0;
+  for (const d of det.values()) if (d.parentId === prorabId && !d.dead) n++;
+  return n;
+}
+
+// Читает заявку прораба (если файл поменялся с прошлого раза), проверяет потолок и открывает
+// принятых через тот же путь, что и «/new» из телеги (main не умеет делать xterm и DOM сам).
+function hireTick(id, d) {
+  if (!d.crew) return;                 // нанимают только прорабы
+  const file = hireFileFor(d);
+  if (!file) return;
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return; }
+  if (st.mtimeMs === d.hireMtime) return;    // не менялся с прошлого такта — читать незачем
+  d.hireMtime = st.mtimeMs;
+  let raw = '';
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
+  const entries = hire.parseRequest(raw);
+  if (!entries.length) return;
+  const room = Math.max(0, CREW_MAX - crewLiveChildren(id));
+  const accepted = entries.slice(0, room);
+  const skipped = entries.length - accepted.length;
+  for (const entry of accepted) {
+    safeSend('app:createTab', {
+      cwd: d.cwd, parentId: id, name: entry.name, model: entry.model || '', hireTask: entry.prompt,
+    });
+    tgLog(`найм (прораб ${id}): открываю «${entry.name}»`);
+  }
+  // Потолок — известен сразу, говорим о нём тут же. «Кого открыл и как зовётся» — отдельной
+  // строкой из session:create, как только у вкладки появится sessionKey (см. там): раньше
+  // этого момента сворм сам не знает, каким именем её назовут в списке агентов.
+  if (skipped > 0) {
+    typeIntoTab(id, `[сворм] Потолок бригады (${CREW_MAX}) не пускает ещё ${skipped}: сначала`
+      + ' закрой кого-то из бригады или подними потолок в настройках.');
+  }
+}
+
+// Свежей вкладке с задачей от найма — печатаем её, как только Claude домигает до «готов» (тот
+// же сигнал, которым весь сворм проверяет «можно ли класть в неё что-то новое», см. tgOnDone).
+// Раньше нельзя: клавиши улетят в грузящуюся оболочку, а не в разговор.
+function hireFireTick(now) {
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead || !d.hireTask) continue;
+    if (d.status === 'ready' && !d.bg) {
+      const task = d.hireTask;
+      d.hireTask = '';
+      typeIntoTab(id, task);
+      continue;
+    }
+    if (now - (d.hireAt || now) > HIRE_FIRE_WAIT_MS) {
+      tgLog(`найм: вкладка ${id} не дозрела до «готов» за ${Math.round(HIRE_FIRE_WAIT_MS / 60000)}`
+        + ' мин — задачу не печатаю, вкладка остаётся пустой в бригаде.');
+      d.hireTask = '';
+    }
+  }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead || !d.crew) continue;
+    try { hireTick(id, d); } catch (e) { reportMainError(e); }
+  }
+  try { hireFireTick(now); } catch (e) { reportMainError(e); }
+}, HIRE_TICK_MS);
+
+ipcMain.on('settings:crew', (_e, opts = {}) => {
+  CREW_MAX = hire.clampCeiling(opts && opts.max);
+  // Хук читает потолок из файла режимов, чтобы сказать прорабу актуальное число, а не то, с
+  // которым сворм запустился.
+  tgWriteModes();
+});
+
 function restartTabsInCwd(cwd) {
   let n = 0;
   for (const id of sessions.keys()) {
@@ -6785,12 +6903,21 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // И ещё: пока в силе общее положение «меня нет», НОВАЯ вкладка рождается отданной. Иначе
     // она одна разрушала бы сумму, по которой это положение и считается (см. nightReconcile):
     // открыл вкладку в три часа — и общий режим погас, а с ним и всё, что он держит.
-    d0.auto = !!opts.auto || nightLegacy || (!opts.restored && awayAll());
+    // Найм рождает вкладку сразу с мандатом — безусловно, не как следствие общего «меня нет»:
+    // прораб нанимает ИМЕННО ЗАТЕМ, чтобы исполнитель работал сам, а вопросы шли ему, а не
+    // человеку (спека «Настройки бригады»: «ребёнок всегда работает без человека»). Без этого
+    // нанятая вкладка встала бы на первом же вопросе и позвала бы человека — то есть найм ничего
+    // не решал бы.
+    d0.auto = !!opts.hireTask || !!opts.auto || nightLegacy || (!opts.restored && awayAll());
     // Роль прораба переживает перезапуск сама по себе (renderer её персистит и присылает
     // назад, как мандат) — НЕЗАВИСИМО от того, пережил ли рестарт хоть один ребёнок. Без
     // этого прораб с нулём детей на момент перезапуска терял бы роль, хотя спека прямо
     // запрещает её снимать.
     d0.crew = !!opts.crew;
+    // Найм по просьбе прораба (hireTick выше) метит новорождённую вкладку задачей и тем, кто
+    // нанял: hireFireTick напечатает задачу, как только вкладка домигает до «готов» (искать
+    // parentId незачем — он уже есть в opts, см. ниже).
+    if (opts.hireTask) { d0.hireTask = String(opts.hireTask); d0.hireAt = Date.now(); }
     det.set(id, d0);
     // Родство при рождении — например, протокол найма (прораб просит открыть вкладку) передаёт
     // parentId сразу. При восстановлении после перезапуска id ещё не существовали, поэтому эту
@@ -6827,6 +6954,20 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // рестарт стирает в конце каждого круга), потому что это единственное, чем writeTabsMap
     // подписывает id разговора для внешней форензики.
     d0.sessionKey = String(opts.sessionKey || '') || null;
+    // Обратная связь прорабу — одна строка, сразу как узнали имя, которым эту вкладку назовёт
+    // список агентов (spec «Протокол найма»): раньше сворм сам этого не знает — sessionKey
+    // рендерер собирает у себя (RESUME_API.newSessionKey), и здесь первый миг, когда он известен.
+    // Задачу эта строка не печатает — только докладывает; саму задачу вставит hireFireTick,
+    // когда вкладка домигает до «готов».
+    if (opts.hireTask && opts.parentId) {
+      const boss = det.get(String(opts.parentId));
+      if (boss && !boss.dead) {
+        const label = d0.name || '?';
+        const named = d0.sessionKey ? `«${d0.sessionKey}»` : 'без закреплённого имени (не-Claude агент)';
+        typeIntoTab(String(opts.parentId), `[сворм] Открыл «${label}» — в списке агентов она`
+          + ` зовётся ${named}.`);
+      }
+    }
     // Карта абсолютных путей restart/digest (files, см. tgWriteModes) должна знать про эту
     // вкладку с первого же тика — иначе самозвон в первые секунды жизни вкладки не нашёл бы
     // себя в карте и откатился бы на прежний шаблон (не ошибка, но и не тот путь, что чинили).

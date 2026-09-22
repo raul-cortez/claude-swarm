@@ -462,18 +462,41 @@ function peersViewFor(rows, sid) {
   return { role: 'solo', rows };
 }
 
+// Имя файла заявки на найм — по id разговора, той же причине, что у restartFileFor/digestFileFor
+// (хук не видит модулей приложения). Дубликат hire.fileName, сверяется тестом.
+const hireFileFor = (sid) => {
+  const id = String(sid == null ? '' : sid).replace(/[^\w.-]/g, '_');
+  return id ? '.swarm-hire-' + id + '.json' : '';
+};
+
+// Потолок бригады по умолчанию — своя копия hire.DEFAULT_MAX (модулей приложения здесь нет),
+// сверяется тестом. Печатается только если main.js не прислал число сам (старая версия).
+const CREW_MAX_DEFAULT = 6;
+
 // Прорабу — механику и только её (как он ведёт бригаду — не наше дело, см. спеку «Правила
-// прораба»): кто его вкладки и что вопросы детей идут ему, а не человеку. Протокола найма в
-// этом шаге ещё нет (следующий по порядку работ) — про него пока не говорим, чтобы не
-// обещать дверь, которой нет.
-const crewNote = (view, absPath) => {
+// прораба»): кто его вкладки, что вопросы детей идут ему, а не человеку, и как нанять
+// исполнителя. `hireFile` — абсолютный путь заявки ЭТОЙ вкладки, если известен (см. absPath у
+// selfRestartNote/digestNote выше — та же причина и то же поведение с кэшем).
+const crewNote = (view, absPath, hireFile, max) => {
   const names = Object.values(view.crew).map((r) => r.tab || r.project || '?');
   const list = names.length ? names.join(', ') : 'пока никого — бригада пуста';
+  const ceiling = Number.isFinite(max) ? max : CREW_MAX_DEFAULT;
+  const where = hireFile
+    ? `положи АБСОЛЮТНЫЙ путь ${hireFile} — пиши туда всегда, даже если сам сейчас в другой`
+      + ' папке (worktree, поддиректория задачи): именно этот файл я читаю для этой вкладки.'
+    : 'подставь значение $CLAUDE_CODE_SESSION_ID (переменная окружения твоей же сессии,'
+      + ' `Write` сам `$VAR` не разворачивает) и положи в рабочую папку файл'
+      + ' .swarm-hire-$CLAUDE_CODE_SESSION_ID.json.';
   return [
     `[сворм] Ты прораб: твоя бригада — ${list}.`,
-    `Свободных вкладок сейчас: ${view.free}.`,
+    `Свободных вкладок сейчас: ${view.free}. Потолок бригады: ${ceiling}.`,
     'Вопросы детей по задаче — тебе, ты сам решаешь, что решить самому, а с чем идти к человеку.',
     'Разрешения на запись и команды — исключение: они всегда к человеку, это не про задачу.',
+    `Нанять исполнителя можешь сам, не дожидаясь человека: ${where}`,
+    'Файл — одним JSON: {"hire": [{"name": "#629", "prompt": "что сделать", "model": "sonnet"}]}.',
+    'Массив — можно нанять нескольких разом; model необязателен. Задачу печатаю я сам, как только',
+    'вкладка откроется, — тебе писать ей отдельно не нужно; отвечу тебе строкой, кого открыл и как',
+    'зовут в списке агентов, либо почему не открыл (упёрлись в потолок).',
     `Полный реестр — ${absPath}: там же видно, кто чем занят и кто ждёт ответа.`,
   ].join('\n');
 };
@@ -884,7 +907,8 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
     let raw = null;
     try { raw = JSON.parse(readFileSync(peersFile, 'utf8')); } catch (_) { raw = null; }
     const view = raw ? peersViewFor(raw, sid) : { role: 'solo' };
-    peersIntro = view.role === 'prorab' ? crewNote(view, peersFile)
+    const crewMax = ex.crew && Number.isFinite(ex.crew.max) ? ex.crew.max : CREW_MAX_DEFAULT;
+    peersIntro = view.role === 'prorab' ? crewNote(view, peersFile, fileInfo && fileInfo.hire, crewMax)
       : view.role === 'child' ? childNote(view)
         : peersNote(peersFile);
   }
@@ -1004,6 +1028,7 @@ async function main() {
   let autoSessions = [];
   let restartModes = null;
   let digestModes = null;
+  let crewModes = null;
   let fileMap = null;
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
@@ -1023,7 +1048,10 @@ async function main() {
     // Включён ли дайджест вкладки. Та же логика, что у restartModes: файла от прежней версии
     // сворма нет — молчим, обещанная дверь, которую сворм не откроет, хуже, чем не обещать.
     digestModes = (tg.digest && typeof tg.digest === 'object') ? tg.digest : null;
-    // Карта id-разговора → абсолютные пути файлов ЭТОЙ вкладки (restart/digest), см.
+    // Потолок бригады. Нет поля (файл от прежней версии) — crewNote берёт свою заготовку
+    // CREW_MAX_DEFAULT, а не врёт числом, которого сворм не подтверждал.
+    crewModes = (tg.crew && typeof tg.crew === 'object') ? tg.crew : null;
+    // Карта id-разговора → абсолютные пути файлов ЭТОЙ вкладки (restart/digest/hire), см.
     // selfRestartNote/digestNote выше. Нет поля (файл от прежней версии сворма) — молчим про
     // абсолютный путь, а не про сам файл: ниже это откатывает на прежний шаблон с
     // $CLAUDE_CODE_SESSION_ID, ровно как раньше.
@@ -1050,7 +1078,7 @@ async function main() {
       const usage = wantsUsage ? readUsage(payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
         { usage, nightRule: nightCustom, autoSessions, restart: restartModes, digest: digestModes,
-          subCards, files: fileMap });
+          crew: crewModes, subCards, files: fileMap });
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -1085,4 +1113,4 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
   DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN,
-  peersNote, peersViewFor, crewNote, childNote };
+  peersNote, peersViewFor, crewNote, childNote, hireFileFor, CREW_MAX_DEFAULT };

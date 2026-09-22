@@ -1005,6 +1005,53 @@ test('end to end: прораб и ребёнок получают разный S
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- найм по просьбе прораба --------------------------------------------------------
+// Спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел «Протокол найма». Разбор
+// заявки и потолок живут в hire.js (hire.test.js гоняет там свою таблицу случаев); здесь —
+// только то, что хук честно называет тот же файл, что читает main.js, и что протокол
+// действительно доезжает до текста прорабу.
+test('свежей сессии сворм называет тот файл заявки, который сам читает', () => {
+  const hire = require('../hire');
+  const sid = 'c0ffee-hire';
+  assert.strictEqual(H.hireFileFor(sid), hire.fileName(sid));
+});
+
+test('прорабу — протокол найма: файл, формат JSON, потолок и что задачу печатает сворм', () => {
+  const view = { role: 'prorab', crew: {}, free: 5 };
+  const t = H.crewNote(view, '/x/swarm-tabs.json', '/p/.swarm-hire-c0ffee.json', 6);
+  assert.match(t, /\/p\/\.swarm-hire-c0ffee\.json/);
+  assert.match(t, /\{"hire": \[\{"name"/);
+  assert.match(t, /Потолок бригады: 6/);
+  assert.match(t, /Задачу печатаю я сам/);
+});
+
+test('нет абсолютного пути заявки — печатается шаблон с переменной окружения, не молчание', () => {
+  const t = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x/swarm-tabs.json', '', H.CREW_MAX_DEFAULT);
+  assert.match(t, /\$CLAUDE_CODE_SESSION_ID/);
+  assert.match(t, new RegExp(`Потолок бригады: ${H.CREW_MAX_DEFAULT}`));
+});
+
+test('end to end: прораб получает абсолютный путь заявки и потолок из swarm-tgmode.json', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-hire-')));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  const P = require('../peers');
+  const rows = P.rows([['boss', { claudeSessionId: 'boss-sid', name: 'Прораб', cwd: dir, crew: true }]]);
+  fs.writeFileSync(path.join(dir, 'swarm-tabs.json'), JSON.stringify(rows));
+  const hireFile = path.join(dir, '.swarm-hire-boss-sid.json');
+  fs.writeFileSync(path.join(dir, 'swarm-tgmode.json'), JSON.stringify({
+    sessions: [], presence: 'desk', crew: { max: 4 },
+    files: { 'boss-sid': { hire: hireFile } },
+  }));
+  const out = JSON.parse(execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'boss-sid', cwd: dir }),
+    encoding: 'utf8',
+  }));
+  assert.match(out.hookSpecificOutput.additionalContext, new RegExp(hireFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(out.hookSpecificOutput.additionalContext, /Потолок бригады: 4/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

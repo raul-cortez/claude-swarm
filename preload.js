@@ -153,7 +153,12 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:digest', handler);
   },
 
-  // main просит открыть вкладку (это /new из телеги: main не умеет делать xterm и DOM).
+  // Потолок бригады: сколько исполнителей прораб может нанять разом (hire.js).
+  setCrew: (opts) => ipcRenderer.send('settings:crew', opts),
+
+  // main просит открыть вкладку — это «/new» из телеги (просто {cwd}) или найм по просьбе
+  // прораба (cwd + parentId/name/model/hireTask, см. hireTick в main.js): main не умеет делать
+  // xterm и DOM сам.
   onCreateTab: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('app:createTab', handler);

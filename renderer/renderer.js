@@ -134,6 +134,7 @@ const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility /
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
 const SUBS_API = window.SWARM_SUBS;           // подписки: карточки запуска и что видно в панели
 const DIGEST_API = window.SWARM_DIGEST;       // дайджест вкладки: потолок длины, общий с main
+const HIRE_API = window.SWARM_HIRE;           // найм по просьбе прораба: потолок бригады, общий с main
 const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (мышь, ответы) — не печать человека
 
 // Global terminal appearance (theme + font + cursor). One setting for all tabs,
@@ -826,6 +827,9 @@ let digestNote = localStorage.getItem('swarm.digestNote') || '';
 // Потолок длины дайджеста в знаках — та же цифра режет текст на диске (digest.readText) и
 // уезжает агенту в тексте инструкции, чтобы он не писал длиннее, чем реально влезет.
 let digestMaxLen = DIGEST_API.clampMaxLen(localStorage.getItem('swarm.digestMaxLen'));
+// Потолок бригады (Settings → Запуск) — сколько исполнителей прораб может нанять разом. Не
+// тумблер: роль прораба не назначается настройкой (см. спеку «Понятие»), это чистое число.
+let crewMax = HIRE_API.clampCeiling(localStorage.getItem('swarm.crewMax'));
 // Split a "cmd --flags" line into { cmd, flags }: first token = launcher, rest = flags.
 function parseAgentLine(line) {
   const t = (line || '').trim();
@@ -1294,6 +1298,7 @@ async function createSession(opts = {}) {
     auto: !!opts.auto || (!opts.restored && !!nightNow.on),            // восстановленная вкладка возвращается со своим мандатом
     parentId: opts.parentId || null,        // усыновление/восстановление несут его с собой
     crew: !!opts.crew,                      // роль прораба переживает перезапуск, как и мандат
+    hireTask: opts.hireTask || null,        // найм: задача, которую main напечатает, когда вкладка будет готова
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
     // Ярлык вкладки (swarm-…), если он у неё есть — main держит его рядом с claudeSessionId в
     // своём собственном файле на диске (см. writeTabsMap), а не только здесь в localStorage.
@@ -1732,6 +1737,21 @@ function showSettingsModal(tab) {
                   <input type="range" class="set-range-input" id="set-digest-maxlen" />
                   <span class="set-range-num" id="set-digest-maxlen-num"></span>
                 </div>
+              </div>
+            </div>
+            <div class="set-group-h">Бригада</div>
+            <div class="set-field is-row">
+              <div class="set-head">
+                <span class="set-label">Потолок бригады</span>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>Сколько исполнителей вкладка-прораб может держать разом. Прораб
+                  просит открыть вкладку файлом заявки в своей рабочей папке — сворм читает его сам, открывает
+                  вкладку и печатает в неё задачу; на упор в потолок прорабу тоже отвечает сворм, одной строкой.
+                  Не тумблер: прорабом вкладка становится, наняв первого исполнителя, а не этой настройкой.</span>
+              </div>
+              <div class="set-range">
+                <input type="range" class="set-range-input" id="set-crew-max" />
+                <span class="set-range-num" id="set-crew-max-num"></span>
               </div>
             </div>
           </section>
@@ -2461,6 +2481,16 @@ function showSettingsModal(tab) {
   digestMaxLenI.addEventListener('input', syncDigest);
   digestI.addEventListener('change', syncDigest);
   syncDigest();
+  // Потолок бригады — не за тумблером: роль прораба не выключается настройкой (см. спеку
+  // «Понятие»), значит и число, которое её ограничивает, не гасится вместе с чем-то ещё.
+  const crewMaxI = overlay.querySelector('#set-crew-max');
+  const crewMaxNumEl = overlay.querySelector('#set-crew-max-num');
+  crewMaxI.min = String(HIRE_API.MIN_MAX);
+  crewMaxI.max = String(HIRE_API.MAX_MAX);
+  crewMaxI.step = '1';
+  crewMaxI.value = String(crewMax);
+  crewMaxI.addEventListener('input', () => { crewMaxNumEl.textContent = crewMaxI.value; });
+  crewMaxNumEl.textContent = crewMaxI.value;
   // --- Telegram panel -------------------------------------------------------
   // Everything here applies IMMEDIATELY (like the updates panel), not on «Сохранить»:
   // connecting a bot and binding a chat are actions, not preferences. The token field is
@@ -3525,6 +3555,12 @@ function showSettingsModal(tab) {
         for (const s of sessions.values()) s.digestText = '';
         renderDigestStrip();
       }
+    }
+    const nextCrewMax = HIRE_API.clampCeiling(crewMaxI.value);
+    if (nextCrewMax !== crewMax) {
+      crewMax = nextCrewMax;
+      localStorage.setItem('swarm.crewMax', String(crewMax));
+      window.swarm.setCrew({ max: crewMax });
     }
     pultEnabled = pultI.checked;
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
@@ -6324,6 +6360,7 @@ window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
+window.swarm.setCrew({ max: crewMax }); // потолок бригады
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
 // то, что ест whisper.cpp. Обратно уходит Float32, WAV собирает main.
@@ -6346,8 +6383,21 @@ window.swarm.onDecodeAudio(async ({ reqId, bytes }) => {
   }
 });
 
-// /new из телеги: main знает папку, но вкладку умеет делать только рендерер.
-window.swarm.onCreateTab(({ cwd }) => createSession({ cwd }));
+// /new из телеги: main знает папку, но вкладку умеет делать только рендерер. Найм по просьбе
+// прораба (hireTick в main.js) несёт больше — кого назвать (name), какой моделью (model) и что
+// напечатать, как только вкладка будет готова (hireTask; саму печать делает main, см.
+// hireFireTick). Пикера агента здесь нет и не должно быть — нанимать некому отвечать на вопрос
+// «какой командой открыть»: берём агента, которым уже открыта соседняя вкладка этой папки, или
+// умолчание — то же самое наследование, что и у обычной новой вкладки, просто без переспроса.
+window.swarm.onCreateTab((payload = {}) => {
+  const { cwd, parentId, name, model, hireTask } = payload;
+  if (!hireTask) { createSession({ cwd }); return; }
+  const inherited = folderChoice(cwd);
+  const base = (inherited && !inherited.blank && inherited.cmd)
+    ? inherited : { cmd: launch.cmd, flags: launch.flags };
+  const cmd = model ? RESTART_API.withModel(base.cmd, model) : base.cmd;
+  createSession({ cwd, parentId, name, hireTask, cmd, flags: base.flags || '' });
+});
 
 // Тему переименовали в телеге — переносим имя на вкладку. Обратно в телегу оно не поедет:
 // main сравнивает имя с названием темы и на совпадении молчит, так что круга не возникает.
