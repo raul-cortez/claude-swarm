@@ -332,6 +332,9 @@ const ICONS = {
   // скрытое меню («ещё» / kebab), а это переключатель, а не меню.
   tabsTop: SVG('<rect width="4" height="18" x="3" y="3" rx="1"/><rect width="4" height="18" x="10" y="3" rx="1"/><rect width="4" height="18" x="17" y="3" rx="1"/>'),
   tabsLeft: SVG('<rect width="18" height="4" x="3" y="3" rx="1"/><rect width="18" height="4" x="3" y="10" rx="1"/><rect width="18" height="4" x="3" y="17" rx="1"/>'),
+  // Lucide "share-2" — три связанных узла: знак бригады у карточки прораба (спека:
+  // docs/superpowers/specs/2026-09-22-crew-design.md, «Карточка прораба»).
+  crew: SVG('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>'),
 };
 
 // Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
@@ -409,6 +412,9 @@ function setStatus(id, status, detail) {
     // которого на вкладке не видно — цвет держат буферы, — проступал бы миганием подписи.
     if (status !== 'waiting') s.waitKind = null;
     renderPult();
+    // Статус ребёнка красит точку в подвале ЕГО прораба — единственное изменение, которое
+    // relayoutTabs() само не ловит (оно не вызывается на каждую смену статуса).
+    if (s.parentId) { const p = sessions.get(s.parentId); if (p) renderCrewDots(p); }
   }
   if (detail != null) {
     const sub = s.tab.querySelector('.sub');
@@ -1287,6 +1293,7 @@ async function createSession(opts = {}) {
     // секунду выглядела бы своей.
     auto: !!opts.auto || (!opts.restored && !!nightNow.on),            // восстановленная вкладка возвращается со своим мандатом
     parentId: opts.parentId || null,        // усыновление/восстановление несут его с собой
+    crew: !!opts.crew,                      // роль прораба переживает перезапуск, как и мандат
     resumeId: doResume ? resumeId : null,   // restoring: the id this tab reopens
     // Ярлык вкладки (swarm-…), если он у неё есть — main держит его рядом с claudeSessionId в
     // своём собственном файле на диске (см. writeTabsMap), а не только здесь в localStorage.
@@ -1367,7 +1374,13 @@ async function createSession(opts = {}) {
          капсуле появляются вместе, как на обычной карточке. -->
     <span class="dot-moon">${ICONS.moon}</span>
     <span class="body">
-      <span class="label"></span>
+      <span class="name">
+        <!-- Знак бригады — только у прораба (.is-crew), см. paintCrew(). Перед именем, а не
+             внутри .label: тот же элемент читает persistTabs()/attachRename по textContent, и
+             значок внутри него испортил бы и то, и другое. -->
+        <span class="crew-icon" title="Прораб: распоряжается бригадой">${ICONS.crew}</span>
+        <span class="label"></span>
+      </span>
       <span class="ctx" hidden>
         <span class="ctx-track"><span class="ctx-fill"></span></span>
         <span class="ctx-num"></span>
@@ -1377,6 +1390,13 @@ async function createSession(opts = {}) {
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
         <span class="cache-badge" hidden></span>
         <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки — доля всей машины">${ICONS.cpu}<span class="cpu-num"></span></span>
+        <!-- Подвал прораба: точки детей вместо его собственного статуса/сабагентов — см.
+             спеку, «подвал принадлежит тому, что в этой вкладке работает». Наполняется
+             renderCrewDots(), сама вкладка ничего не решает. -->
+        <span class="crew-dots" title="Бригада — клик разворачивает, клик по точке открывает вкладку">
+          <span class="crew-dot-list"></span>
+          <span class="crew-waiting-num" hidden></span>
+        </span>
       </span>
     </span>
     ${tabTools()}
@@ -1423,6 +1443,9 @@ async function createSession(opts = {}) {
     // Родитель бригады — id вкладки-прораба. Тот же приём, что у мандата: главный процесс уже
     // решил это при создании (main.js session:create), здесь — зеркало для карточки.
     parentId: opts.parentId || null,
+    // Роль прораба — тоже персистится, как мандат (см. крестик в persistTabs): без этого
+    // прораб с нулём детей терял бы свою карточку на каждом перезапуске.
+    crew: !!opts.crew,
     // The conversation this tab is in. Saved with the tab; the next launch resumes it.
     claudeSessionId: claudeSessionId || null,
   });
@@ -1431,6 +1454,7 @@ async function createSession(opts = {}) {
   if (!withinOrder.has(okey)) withinOrder.set(okey, []);
   if (!withinOrder.get(okey).includes(id)) withinOrder.get(okey).push(id);
   if (opts.auto || (!opts.restored && nightNow.on)) applyTabAuto(id, true);
+  if (opts.crew) paintCrew(sessions.get(id));
   relayoutTabs();
   persistTabs();
   setStatus(id, 'ready', 'готов');
@@ -3674,6 +3698,9 @@ function persistTabs() {
         // см. setTabParent в main.js), а по tabKey родителя: тот самый ключ, что держит
         // Telegram-тему и переживает relaunch. restoreOrStart пересобирает id из него.
         parentTabKey: s.parentId ? (sessions.get(s.parentId)?.tabKey || null) : null,
+        // Роль прораба — отдельно от родства: должна пережить рестарт, даже если на тот
+        // момент детей не осталось ни одного (см. комментарий у d.crew в main.js).
+        crew: !!s.crew,
       });
     }
   }
@@ -3888,6 +3915,12 @@ function relayoutTabs() {
   }
   // Every working folder is a group (with a header) — even with a single tab.
   for (const { cwd, list } of orderedUnits()) {
+    // Дети прячутся из общего списка — они живут ПОД карточкой прораба (точки всегда, чипы в
+    // раскрытом виде), а не рядом с ним в ленте. «Пока жив прораб»: если тот закрылся не через
+    // штатное закрытие бригады, ребёнок возвращается в общий список — потерянным его лучше не
+    // делать вовсе (спека, «Границы»: реестр только рассказывает, не бронирует).
+    const visible = list.filter((s) => !(s.parentId && sessions.has(s.parentId)));
+    if (!visible.length) continue; // все — чужие дети, этой группе сейчас нечего показывать
     const folderName = cwd ? basename(cwd) : 'claude';
     const collapsed = collapsedFolders.has(cwd);
     const grp = document.createElement('div');
@@ -3911,10 +3944,10 @@ function relayoutTabs() {
     setFolderLabel(nameEl, folderName);
     const count = document.createElement('span');
     count.className = 'group-count';
-    count.textContent = list.length;
+    count.textContent = visible.length;
     const dots = document.createElement('span');
     dots.className = 'group-dots'; // shown only when collapsed
-    for (const s of list) {
+    for (const s of visible) {
       const d = document.createElement('span');
       d.className = 'sum-dot status-' + (s.status || 'ready');
       d.title = s.tab.querySelector('.label').textContent;
@@ -3935,9 +3968,16 @@ function relayoutTabs() {
     inner.className = 'group-tabs';
     inner.addEventListener('dragover', (e) => onWithinDragOver(e, cwd));
     inner.addEventListener('drop', (e) => onWithinDrop(e, cwd));
-    for (const s of list) {
+    for (const s of visible) {
       s.tab.dataset.cwd = cwd;
       inner.appendChild(s.tab);
+      // Раскрытая бригада — сиблинг сразу после карточки прораба, НЕ обёртка вокруг нёе: она
+      // должна остаться прямым потомком .group-tabs, иначе перетаскивание карточек
+      // (onWithinDragOver/-Drop бьёт по прямым детям контейнера) сломается на первом же
+      // прорабе. Раскладка «слева-вниз / сверху-вправо» достаётся бесплатно от
+      // flex-direction самого .group-tabs (column в рельсе, row сверху) — сиблинг просто
+      // течёт в ту же сторону, что и остальные карточки.
+      if (s.crew && crewExpanded.has(s.id)) inner.appendChild(crewChipsRow(s));
     }
     grp.append(head, inner);
     tabsEl.appendChild(grp);
@@ -3945,7 +3985,28 @@ function relayoutTabs() {
   // "+" flows right after the last group, scrolling with the list. If it runs off
   // the edge with many tabs — fine, that beats a pinned button clipping the row.
   tabsEl.appendChild(newTabBtn);
+  // Состав бригад и статусы детей могли поменяться (перекладка группы, реконсиляция родства)
+  // — подвал прораба всегда пересобирается заново, дешевле, чем гадать, что именно изменилось.
+  for (const s of sessions.values()) if (s.crew) renderCrewDots(s);
   renderPult(); // the chip count lives on the freshly rebuilt Пульт tab
+}
+
+// Раскрытая бригада — ряд чипов (номер задачи или порядковая цифра, цвет = статус) сразу
+// после карточки прораба. Чип — не карточка: наведение показывает дайджест, клик открывает
+// вкладку, и всё (спека, «Раскрытие»).
+function crewChipsRow(s) {
+  const row = document.createElement('div');
+  row.className = 'crew-chips';
+  crewChildren(s.id).forEach((k, i) => {
+    const name = k.tab.querySelector('.label').textContent;
+    const chip = document.createElement('div');
+    chip.className = 'crew-chip status-' + (k.status || 'ready') + (k.id === activeId ? ' active' : '');
+    chip.textContent = crewChipLabel(name, i + 1);
+    chip.title = k.digestText || name;
+    chip.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
+    row.appendChild(chip);
+  });
+  return row;
 }
 
 // --- drag & drop: live reflow (dragged item leaves a faint slot; others move) -
@@ -4033,8 +4094,13 @@ function onWithinDrop(e, cwd) {
   if (!drag || drag.kind !== 'card' || drag.cwd !== cwd) return;
   e.preventDefault();
   e.stopPropagation();
-  // DOM is already in the target order — sync it into the data model.
-  withinOrder.set(cwd, [...e.currentTarget.querySelectorAll('.tab')].map((el) => el.dataset.sid));
+  // DOM is already in the target order — sync it into the data model. Дети бригады не
+  // держат здесь своего .tab (см. relayoutTabs) — без этого их id молча выпал бы из
+  // withinOrder на первом же перетаскивании в этой группе.
+  const visibleOrder = [...e.currentTarget.querySelectorAll('.tab')].map((el) => el.dataset.sid);
+  const hiddenKids = (withinOrder.get(cwd) || [])
+    .filter((id) => !visibleOrder.includes(id) && sessions.has(id) && sessions.get(id).parentId);
+  withinOrder.set(cwd, [...visibleOrder, ...hiddenKids]);
   dropped = true;
   persistTabs();
 }
@@ -5095,6 +5161,109 @@ async function toggleTabAuto(id) {
 
 window.swarm.night.onTab(({ id, auto }) => applyTabAuto(id, auto));
 
+// --- бригада: карточка прораба, точки детей, чипы -----------------------------
+// Спека: docs/superpowers/specs/2026-09-22-crew-design.md, разделы «Карточка прораба» и
+// «Раскрытие». Родство и роль (parentId/crew) main уже решил и прислал на сессию — здесь
+// только рисование: дети прячутся из общего списка и живут под карточкой прораба — точками
+// в подвале всегда, чипами в раскрытом виде.
+
+// Раскрытые бригады — по id прораба. Тот же приём, что swarm.collapsed у папок, но с обратным
+// умолчанием: развёрнуто — только когда явно кликнули, не всегда (спека: «не схлопывается
+// сама», но и не открыта по умолчанию).
+const crewExpanded = new Set();
+try {
+  JSON.parse(localStorage.getItem('swarm.crewExpanded') || '[]').forEach((id) => crewExpanded.add(id));
+} catch (_) { /* пусто — ничья бригада не раскрыта */ }
+
+function toggleCrewExpanded(id) {
+  if (crewExpanded.has(id)) crewExpanded.delete(id);
+  else crewExpanded.add(id);
+  localStorage.setItem('swarm.crewExpanded', JSON.stringify([...crewExpanded]));
+  relayoutTabs();
+}
+
+// Дети этого прораба среди живых вкладок. Первым — тот, кто ждёт (спека, «Индикатор
+// детей»): остальной порядок не оговорён, оставляем порядок создания.
+function crewChildren(id) {
+  const kids = [...sessions.values()].filter((k) => k.parentId === id);
+  kids.sort((a, b) => (a.status === 'waiting' ? 0 : 1) - (b.status === 'waiting' ? 0 : 1));
+  return kids;
+}
+
+// Подвал прораба: до шести точек (цвет = статус) + «+N» хвостом, справа число ждущих — но
+// только когда есть кому ждать. Точки — те же .sum-dot, что у свёрнутой папки (styles.css),
+// клик по точке открывает вкладку ребёнка и не разворачивает/схлопывает бригаду.
+function renderCrewDots(s) {
+  if (!s || !s.crew) return;
+  const dotsEl = s.tab.querySelector('.crew-dots');
+  if (!dotsEl) return;
+  const kids = crewChildren(s.id);
+  const waiting = kids.filter((k) => k.status === 'waiting').length;
+  const list = dotsEl.querySelector('.crew-dot-list');
+  list.innerHTML = '';
+  for (const k of kids.slice(0, 6)) {
+    const d = document.createElement('span');
+    d.className = 'sum-dot status-' + (k.status || 'ready');
+    d.title = k.tab.querySelector('.label').textContent;
+    d.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
+    list.appendChild(d);
+  }
+  if (kids.length > 6) {
+    const more = document.createElement('span');
+    more.className = 'crew-overflow';
+    more.textContent = '+' + (kids.length - 6);
+    list.appendChild(more);
+  }
+  const num = dotsEl.querySelector('.crew-waiting-num');
+  num.hidden = waiting === 0;
+  if (waiting) num.textContent = String(waiting);
+}
+
+// Имя чипа — номер задачи из ярлыка вкладки, если он на него похож («#629», «DE-2315»), иначе
+// порядковая цифра (спека: «нет номера — порядковая цифра»). Эвристика, не разбор — ярлык
+// вкладка получает из протокола найма (следующий шаг), где номер и предполагается называть.
+function crewChipLabel(name, ordinal) {
+  const n = String(name || '').trim();
+  const m = n.match(/^(#\d+|[A-Za-zА-Яа-яЁё]{2,}-\d+)/);
+  return m ? m[1] : String(ordinal);
+}
+
+// .is-crew включает знак у имени и подменяет подвал точками (styles.css решает про цвет
+// статуса и видимость через сам класс) — здесь только он и содержимое точек.
+function paintCrew(s) {
+  if (!s || !s.tab) return;
+  s.tab.classList.toggle('is-crew', !!s.crew);
+  renderCrewDots(s);
+}
+
+// Клик по подвалу прораба — НЕ по конкретной точке (та сама открывает вкладку и глушит
+// всплытие) — разворачивает/схлопывает бригаду.
+document.addEventListener('click', (e) => {
+  const dotsEl = e.target.closest('.tab.is-crew .crew-dots');
+  if (!dotsEl) return;
+  const tab = dotsEl.closest('.tab');
+  if (tab && tab.dataset.sid) toggleCrewExpanded(tab.dataset.sid);
+});
+
+// Родство и роль меняются и БЕЗ участия этого окна (main решает их сам, например внутри
+// протокола найма) — узнаём пушем, той же дорогой, что мандат (onTab выше). Восстановление
+// после рестарта тоже проходит здесь: reconcile в restoreOrStart уже поправил .parentId
+// локально, этот пуш для неё лишь избыточное (безвредное) подтверждение того же значения.
+window.swarm.night.onParent(({ id, parentId }) => {
+  const s = sessions.get(String(id));
+  if (!s) return;
+  s.parentId = parentId || null;
+  relayoutTabs();
+  persistTabs();
+});
+window.swarm.night.onCrew(({ id, crew }) => {
+  const s = sessions.get(String(id));
+  if (!s) return;
+  s.crew = !!crew;
+  paintCrew(s);
+  persistTabs();
+});
+
 function confirmModal(message, okLabel = 'Выполнить') {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -6118,6 +6287,7 @@ async function restoreOrStart() {
       claudeSessionId: (dupId ? null : t.claudeSessionId) || undefined,
       tabKey: t.tabKey || undefined,   // same tab → same Telegram topic as before
       auto: !!t.auto,                  // отданная вкладка остаётся отданной
+      crew: !!t.crew,                  // роль прораба — тоже, и не зависит от родства ниже
       // parentId сюда не передаём: он был id вчерашней сессии, который main.js уже выдал
       // кому-то другому сегодня. Родство пересобираем ПОСЛЕ, вторым проходом — см. ниже.
       // Восстановление — не рождение: вкладка возвращается ровно такой, какой была. Без этой

@@ -5225,16 +5225,26 @@ function setTabParent(id, parentId, from) {
   if (!d) return false;
   const pid = String(parentId == null ? '' : parentId);
   if (!pid) {
-    if (d.parentId) { d.parentId = null; tgWriteModes(); }
+    if (d.parentId) {
+      d.parentId = null;
+      tgWriteModes();
+      safeSend('tab:parent', { id: key, parentId: null });
+    }
     return true;
   }
   if (pid === key) return false;
   const parent = det.get(pid);
   if (!parent || parent.parentId) return false; // нет родителя или сам чей-то ребёнок
   d.parentId = pid;
+  const wasCrew = parent.crew;
   parent.crew = true; // роль не снимается — см. комментарий у d.crew в makeDetector
   tgLog(`родство (${from || '—'}): вкладка ${key} — в бригаде ${pid}`);
   tgWriteModes();
+  // Пуш нужен ровно тем путям, где окно САМО не знает о смене (main решил родство изнутри
+  // протокола найма) — реконсиляция после рестарта уже правит себе sessions.get(...).parentId
+  // локально, и это тут просто безвредное повторение того же значения.
+  safeSend('tab:parent', { id: key, parentId: pid });
+  if (!wasCrew) safeSend('tab:crew', { id: pid, crew: true });
   return true;
 }
 
@@ -6776,6 +6786,11 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // она одна разрушала бы сумму, по которой это положение и считается (см. nightReconcile):
     // открыл вкладку в три часа — и общий режим погас, а с ним и всё, что он держит.
     d0.auto = !!opts.auto || nightLegacy || (!opts.restored && awayAll());
+    // Роль прораба переживает перезапуск сама по себе (renderer её персистит и присылает
+    // назад, как мандат) — НЕЗАВИСИМО от того, пережил ли рестарт хоть один ребёнок. Без
+    // этого прораб с нулём детей на момент перезапуска терял бы роль, хотя спека прямо
+    // запрещает её снимать.
+    d0.crew = !!opts.crew;
     det.set(id, d0);
     // Родство при рождении — например, протокол найма (прораб просит открыть вкладку) передаёт
     // parentId сразу. При восстановлении после перезапуска id ещё не существовали, поэтому эту

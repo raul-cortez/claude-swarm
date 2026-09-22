@@ -245,6 +245,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 }
 .tab .dot { width: var(--tab-dot-size); height: var(--tab-dot-size); border-radius: 50%; background: var(--ready); flex: none; margin-top: 3px; }
 .tab .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tab .name { display: flex; align-items: center; gap: 3px; min-width: 0; }
+/* Знак бригады — только у прораба (.is-crew), перед именем. Спрятан по умолчанию, а не
+   удалён из разметки: так его можно просто переключить классом, не трогая DOM (см.
+   paintCrew в renderer.js). */
+.tab .crew-icon { display: none; flex: none; color: var(--accent); }
+.tab.is-crew .crew-icon { display: inline-flex; }
+.tab .crew-icon svg { width: 11px; height: 11px; }
 /* Имя всегда в одну строку с многоточием — во всех плотностях, в обеих
    раскладках. Полное имя остаётся в title карточки (см. renderer.js). */
 .tab .label { color: var(--text); font-size: var(--tab-label-size); font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -254,7 +261,10 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* Bottom row of the card: status text on the left, sub-agent badge pushed to the
    right on the SAME line — the badge used to sit on its own row and inflate the
    card height. */
-.tab .foot { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* min-height по строке .sub, а не по факту содержимого: пустой подвал прораба без единого
+   ребёнка (.crew-dots без точек) иначе схлопывался бы — карточка поехала бы в росте, а
+   спека прямо запрещает менять высоту в зависимости от того, чем занят подвал. */
+.tab .foot { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: calc(var(--tab-sub-size) * 1.3); }
 .tab .sub { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: var(--tab-sub-size); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* per-card context meter (parsed from the session's Claude statusline).
@@ -293,6 +303,30 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .cpu-badge svg { width: 9px; height: 9px; flex: none; stroke-width: 2.75; }
 .tab .cpu-badge.cpu-mid { color: var(--run); }
 .tab .cpu-badge.cpu-hi  { color: var(--danger); }
+
+/* --- подвал прораба: точки детей вместо его собственного статуса ----------- */
+/* Спека: «подвал принадлежит тому, что в этой вкладке работает» — у прораба это дети, не он
+   сам. Поэтому обычные жильцы подвала (подпись статуса, сабагенты, кэш, CPU) гасим, а точки
+   показываем — КРОМЕ одного случая: сам прораб ждёт ответа ОТ ЧЕЛОВЕКА (.status-waiting).
+   Тогда всё наоборот — обычная жёлто-бирюзовая карточка, «ждёт ответа» вытесняет точки,
+   потому что это единственный статус, который человеку про прораба и нужен.
+
+   Второе исключение — .is-auto: мандат «остаётся как есть и ничем не заменяется» (спека), а
+   единственное место, где он говорит словами («работает без вас» / «работа сдана»), — эта же
+   подпись. Комбинация редкая (прораба обычно не отдают), но раз мандат сильнее, подпись при
+   нём побеждает точки, как и при «ждёт ответа». */
+.tab .crew-dots { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; cursor: pointer; }
+.tab.is-crew .crew-dots { display: flex; }
+.tab.is-crew.status-waiting .crew-dots,
+.tab.is-crew.is-auto .crew-dots { display: none; }
+.tab.is-crew .sub { display: none; }
+.tab.is-crew.status-waiting .sub,
+.tab.is-crew.is-auto .sub { display: block; }
+.tab.is-crew .agents, .tab.is-crew .cache-badge, .tab.is-crew .cpu-badge { display: none !important; }
+.crew-dot-list { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; overflow: hidden; }
+.crew-overflow { flex: none; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.crew-waiting-num { flex: none; margin-left: auto; color: var(--waiting); font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.crew-waiting-num[hidden] { display: none; }
 
 /* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
    кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,
@@ -362,6 +396,92 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab:not(.active) { opacity: 0.68; }                 /* inactive tabs sit back */
 .tab.active { box-shadow: 0 0 0 1px var(--tab-c), 0 0 10px -3px var(--tab-c); }
 .tab:hover  { filter: brightness(1.12); opacity: 1; } /* hovering un-dims */
+
+/* --- прораб: без статусного цвета, кроме «ждёт ответа» --------------------- */
+/* Спека: «его "работает/готов" ничего не значит, потому что бизнес-логику делают дети».
+   Готов/работает — панельный фон и тонкая акцентная (пунктирная) рамка, знак бригады у
+   имени говорит «этот не работает, этот распоряжается». Ждёт ответа ОТ ЧЕЛОВЕКА — обычная
+   жёлто-бирюзовая карточка, никакого исключения: это статус, который человеку и нужен. */
+/* :not(.is-auto) — мандат «работает без меня» самостоятельная сущность и «ничем не
+   заменяется» (спека): прораб, которого отдали, красится ночным, а не своим дашедом. */
+.tab.is-crew:not(.status-waiting):not(.is-auto) {
+  --tab-c: var(--accent);
+  border-style: dashed;
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+.tab.is-crew:not(.status-waiting):not(.is-auto) .dot { background: transparent; }
+
+/* --- раскрытая бригада: чипы сиблингом после карточки прораба -------------- */
+/* Сиблинг, а не обёртка вокруг .tab — см. комментарий у relayoutTabs() в renderer.js про то,
+   почему: обёртка сломала бы перетаскивание карточек. Раскладка («слева — вниз, сверху —
+   вправо») достаётся от flex-direction самого .group-tabs, здесь только сама лента чипов.
+
+   «Пунктир обнимает прораба вместе с детьми» без общей обёртки — швом: :has() у карточки
+   прораба узнаёт, что сразу за ней стоит лента чипов, снимает свою грань с этой стороны, а
+   лента её достраивает с обратной, отрицательным отступом схлопывая gap .group-tabs между
+   ними. Читается как одна рамка, хотя коробки на самом деле две. */
+.crew-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+/* border-*-color: transparent, а не border-*: none — «съеденный» шов не должен съедать и
+   1px высоты самой карточки заодно (border-box считает толщину рамки в размер бокса ровно
+   пока у неё есть style; убери style, и карточка прораба стала бы на пиксель ниже обычной
+   ровно в раскрытом виде — стенд поймал это как 45 вместо 46). */
+.layout-rail .tab.is-crew:has(+ .crew-chips) {
+  border-bottom-color: transparent;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.layout-rail .tab.is-crew:has(+ .crew-chips) + .crew-chips {
+  margin-top: -6px; /* съедает gap .group-tabs — шов исчезает */
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.layout-top .tab.is-crew:has(+ .crew-chips) {
+  border-right-color: transparent;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.layout-top .tab.is-crew:has(+ .crew-chips) + .crew-chips {
+  margin-left: -6px; /* тот же шов, но по горизонтали — раскладка сверху растёт вправо */
+  border-left-color: transparent;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  align-self: stretch;
+}
+.crew-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  /* Сплошная, не пунктирная: пунктир уже занят рамкой .crew-chips вокруг всех чипов разом —
+     повторить его на каждом чипе значило бы два разных пунктира вложенными друг в друга. */
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.crew-chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ready); }
+.crew-chip.status-ready::before   { background: var(--ready); }
+.crew-chip.status-running::before { background: var(--run); }
+.crew-chip.status-waiting::before { background: var(--waiting); }
+.crew-chip.status-dead::before    { background: var(--danger); }
+.crew-chip:hover  { color: var(--text); border-color: var(--accent); }
+.crew-chip.active { color: var(--text); border-color: var(--tab-c, var(--accent)); background: var(--panel); }
 
 /* --- настраиваемый вид карточек (см. renderer/tabstyle.js) ---------------- */
 /* Класс плотности вешается на <body> (applyTabStyle) и на #set-tab-preview

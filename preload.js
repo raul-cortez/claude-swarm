@@ -219,6 +219,10 @@ contextBridge.exposeInMainWorld('swarm', {
     setAll:   (auto) => ipcRenderer.invoke('night:setAll', { auto }),
     onTab:    (cb) => ipcRenderer.on('tab:auto', (_e, s) => cb(s)),
     onState:  (cb) => ipcRenderer.on('night:state', (_e, s) => cb(s)),
+    // Родство и роль прораба меняются и БЕЗ участия окна (main решает их сам внутри протокола
+    // найма) — окно узнаёт пушем, той же дорогой, что мандат (onTab выше).
+    onParent: (cb) => ipcRenderer.on('tab:parent', (_e, s) => cb(s)),
+    onCrew:   (cb) => ipcRenderer.on('tab:crew', (_e, s) => cb(s)),
   },
 
   // Подписки: живой расход по аккаунтам — из главного (он читает снимки, которые пишет наша
