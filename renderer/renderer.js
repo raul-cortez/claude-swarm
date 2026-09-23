@@ -1443,12 +1443,11 @@ async function createSession(opts = {}) {
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
         <span class="cache-badge" hidden></span>
         <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки — доля всей машины">${ICONS.cpu}<span class="cpu-num"></span></span>
-        <!-- Подвал прораба: точки детей вместо его собственного статуса/сабагентов — см.
+        <!-- Подвал прораба: пилюли детей вместо его собственного статуса/сабагентов — см.
              спеку, «подвал принадлежит тому, что в этой вкладке работает». Наполняется
              renderCrewDots(), сама вкладка ничего не решает. -->
-        <span class="crew-dots" title="Бригада — клик разворачивает, клик по точке открывает вкладку">
+        <span class="crew-dots">
           <span class="crew-dot-list"></span>
-          <span class="crew-waiting-num" hidden></span>
         </span>
       </span>
     </span>
@@ -3831,6 +3830,8 @@ function activate(id, opts) {
   renderGate();
   renderDigestStrip();
   renderCrewStrip();
+  // Пилюля открытого исполнителя подсвечена (.active) — перерисовать подвалы прорабов.
+  for (const p of sessions.values()) if (p.crew) renderCrewDots(p);
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
@@ -4186,13 +4187,9 @@ function relayoutTabs() {
     for (const s of visible) {
       s.tab.dataset.cwd = cwd;
       inner.appendChild(s.tab);
-      // Раскрытая бригада — сиблинг сразу после карточки прораба, НЕ обёртка вокруг нёе: она
-      // должна остаться прямым потомком .group-tabs, иначе перетаскивание карточек
-      // (onWithinDragOver/-Drop бьёт по прямым детям контейнера) сломается на первом же
-      // прорабе. Раскладка «слева-вниз / сверху-вправо» достаётся бесплатно от
-      // flex-direction самого .group-tabs (column в рельсе, row сверху) — сиблинг просто
-      // течёт в ту же сторону, что и остальные карточки.
-      if (s.crew && crewExpanded.has(s.id)) inner.appendChild(crewChipsRow(s));
+      // Раскрытая бригада (ряд .crew-chips сиблингом после карточки) ставится не здесь, а в
+      // renderCrewDots() ниже: в ряд идут только те, кому не хватило места в подвале, а это
+      // известно лишь после замера карточки, уже стоящей в DOM.
     }
     grp.append(head, inner);
     tabsEl.appendChild(grp);
@@ -4206,35 +4203,30 @@ function relayoutTabs() {
   renderPult(); // the chip count lives on the freshly rebuilt Пульт tab
 }
 
-// Раскрытая бригада — ряд чипов (номер задачи или порядковая цифра, цвет = статус) сразу
-// после карточки прораба. Чип — не карточка: наведение показывает дайджест, клик открывает
-// вкладку, и всё (спека, «Раскрытие»).
-function crewChipsRow(s) {
-  const row = document.createElement('div');
-  row.className = 'crew-chips';
-  crewChildren(s.id).forEach((k, i) => {
-    const name = k.tab.querySelector('.label').textContent;
-    const chip = document.createElement('div');
-    chip.className = 'crew-chip status-' + (k.status || 'ready') + (k.id === activeId ? ' active' : '');
-    chip.textContent = crewChipLabel(name, i + 1);
-    chip.title = k.digestText || name;
-    // Перетащить чип обратно в общий список — усыновление наоборот (спека, «Усыновление…
-    // обратно вытащить можно тем же движением»). Свой kind 'chip', а не 'card': чип не карточка
-    // и не должен попадать в реордер внутри группы (onWithinDragOver проверяет kind==='card').
-    chip.draggable = true;
-    chip.addEventListener('dragstart', (e) => { e.stopPropagation(); startDrag(e, { kind: 'chip', id: k.id, cwd: s.cwd }); });
-    chip.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
-    // Меню чипа — «Открыть вкладку», и всё (спека, «Меню и кнопки на карточке»): клик уже
-    // делает то же самое, но правый клик — ожидаемый жест, и без пункта в нём чип выглядел бы
-    // немым по сравнению с обычной карточкой.
-    chip.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      window.swarm.night.chipMenu(k.id);
-    });
-    row.appendChild(chip);
+// Пилюля исполнителя — одна и та же в подвале прораба и в раскрытом ряду: номер задачи или
+// порядковая цифра, цвет точки = статус. Пилюля — не карточка: наведение показывает дайджест,
+// клик открывает вкладку, и всё (спека, «Раскрытие»).
+function crewChip(k, label, cwd) {
+  const name = k.tab.querySelector('.label').textContent;
+  const chip = document.createElement('span');
+  chip.className = 'crew-chip status-' + (k.status || 'ready') + (k.id === activeId ? ' active' : '');
+  chip.textContent = label;
+  chip.title = k.digestText || name;
+  // Перетащить пилюлю обратно в общий список — усыновление наоборот (спека, «Усыновление…
+  // обратно вытащить можно тем же движением»). Свой kind 'chip', а не 'card': пилюля не карточка
+  // и не должна попадать в реордер внутри группы (onWithinDragOver проверяет kind==='card').
+  chip.draggable = true;
+  chip.addEventListener('dragstart', (e) => { e.stopPropagation(); startDrag(e, { kind: 'chip', id: k.id, cwd }); });
+  chip.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
+  // Меню пилюли — «Открыть вкладку», и всё (спека, «Меню и кнопки на карточке»): клик уже
+  // делает то же самое, но правый клик — ожидаемый жест, и без пункта в нём пилюля выглядела бы
+  // немой по сравнению с обычной карточкой.
+  chip.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.swarm.night.chipMenu(k.id);
   });
-  return row;
+  return chip;
 }
 
 // --- drag & drop: live reflow (dragged item leaves a faint slot; others move) -
@@ -5418,34 +5410,64 @@ function crewChildren(id) {
   return kids;
 }
 
-// Подвал прораба: до шести точек (цвет = статус) + «+N» хвостом, справа число ждущих — но
-// только когда есть кому ждать. Точки — те же .sum-dot, что у свёрнутой папки (styles.css),
-// клик по точке открывает вкладку ребёнка и не разворачивает/схлопывает бригаду.
+// Подвал прораба: пилюли детей (цвет точки = статус), сколько влезает в ширину карточки, а
+// остаток — пилюлей «+N». Только она и раскрывает ряд .crew-chips под карточкой, и в ряду —
+// ровно те, кто не влез: раскрытие показывает спрятанное, а не дублирует видимое. Если влезли
+// все, раскрывать нечего — ряда нет, даже если бригаду раньше раскрывали.
 function renderCrewDots(s) {
   if (!s || !s.crew) return;
-  const dotsEl = s.tab.querySelector('.crew-dots');
-  if (!dotsEl) return;
-  const kids = crewChildren(s.id);
-  const waiting = kids.filter((k) => k.status === 'waiting').length;
-  const list = dotsEl.querySelector('.crew-dot-list');
+  const list = s.tab.querySelector('.crew-dot-list');
+  if (!list) return;
+  // Порядковая цифра — по порядку найма, а не по месту в подвале: иначе исполнитель менял бы
+  // номер всякий раз, когда кто-то впереди начинает или перестаёт ждать.
+  const kids = [...sessions.values()].filter((k) => k.parentId === s.id);
+  const label = new Map(kids.map((k, i) => [k.id, crewChipLabel(k.tab.querySelector('.label').textContent, i + 1)]));
+  const shown = crewChildren(s.id);
   list.innerHTML = '';
-  for (const k of kids.slice(0, 6)) {
-    const d = document.createElement('span');
-    d.className = 'sum-dot status-' + (k.status || 'ready');
-    d.title = k.tab.querySelector('.label').textContent;
-    d.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
-    list.appendChild(d);
-  }
-  if (kids.length > 6) {
+  const pills = shown.map((k) => list.appendChild(crewChip(k, label.get(k.id), s.cwd)));
+  const hidden = [];
+  // clientWidth 0 — подвал сейчас не виден (карточка ещё не в DOM, прораб ждёт ответа или
+  // отдан): мерить нечем, оставляем всех — пересчитает следующий relayout/ResizeObserver.
+  if (list.clientWidth > 0 && list.scrollWidth > list.clientWidth) {
     const more = document.createElement('span');
-    more.className = 'crew-overflow';
-    more.textContent = '+' + (kids.length - 6);
+    more.className = 'crew-chip crew-more';
     list.appendChild(more);
+    while (pills.length && list.scrollWidth > list.clientWidth) {
+      pills.pop().remove();
+      hidden.unshift(shown[pills.length]);
+      more.textContent = '+' + hidden.length;
+    }
+    const open = crewExpanded.has(s.id);
+    more.classList.toggle('open', open);
+    more.title = open ? 'Свернуть бригаду' : 'Ещё ' + hidden.length + ' — показать';
+    more.addEventListener('click', (e) => { e.stopPropagation(); toggleCrewExpanded(s.id); });
   }
-  const num = dotsEl.querySelector('.crew-waiting-num');
-  num.hidden = waiting === 0;
-  if (waiting) num.textContent = String(waiting);
+  // Раскрытый ряд — сиблинг сразу после карточки прораба, НЕ обёртка вокруг неё: он должен
+  // остаться прямым потомком .group-tabs, иначе перетаскивание карточек
+  // (onWithinDragOver/-Drop бьёт по прямым детям контейнера) сломается на первом же прорабе.
+  // Раскладка «слева-вниз / сверху-вправо» достаётся бесплатно от flex-direction самого
+  // .group-tabs — сиблинг просто течёт в ту же сторону, что и остальные карточки.
+  let row = s.tab.nextElementSibling;
+  if (row && !row.classList.contains('crew-chips')) row = null;
+  if (!(crewExpanded.has(s.id) && hidden.length && s.tab.parentNode)) { if (row) row.remove(); return; }
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'crew-chips';
+    s.tab.after(row);
+  }
+  row.innerHTML = '';
+  for (const k of hidden) row.appendChild(crewChip(k, label.get(k.id), s.cwd));
 }
+
+// Сколько пилюль влезает, зависит от ширины карточки, а она меняется без перекладки списка
+// (тянут рельсу, меняют окно) — пересчитываем подвал прораба по факту изменения ширины.
+const crewFootObserver = new ResizeObserver((entries) => {
+  for (const en of entries) {
+    const tab = en.target.closest('.tab');
+    const s = tab && sessions.get(tab.dataset.sid);
+    if (s && s.crew) renderCrewDots(s);
+  }
+});
 
 // Имя чипа — номер задачи из ярлыка вкладки, если он на него похож («#629», «DE-2315»), иначе
 // порядковая цифра (спека: «нет номера — порядковая цифра»). Эвристика, не разбор — ярлык
@@ -5461,19 +5483,12 @@ function crewChipLabel(name, ordinal) {
 function paintCrew(s) {
   if (!s || !s.tab) return;
   s.tab.classList.toggle('is-crew', !!s.crew);
+  const foot = s.tab.querySelector('.foot');
+  if (s.crew) crewFootObserver.observe(foot); else crewFootObserver.unobserve(foot);
   renderCrewDots(s);
   refreshTabTools(s); // «Сделать прорабом» гаснет из капсулы вместе с ролью
   if (s.id === activeId) renderCrewStrip();
 }
-
-// Клик по подвалу прораба — НЕ по конкретной точке (та сама открывает вкладку и глушит
-// всплытие) — разворачивает/схлопывает бригаду.
-document.addEventListener('click', (e) => {
-  const dotsEl = e.target.closest('.tab.is-crew .crew-dots');
-  if (!dotsEl) return;
-  const tab = dotsEl.closest('.tab');
-  if (tab && tab.dataset.sid) toggleCrewExpanded(tab.dataset.sid);
-});
 
 // Родство и роль меняются и БЕЗ участия этого окна (main решает их сам, например внутри
 // протокола найма) — узнаём пушем, той же дорогой, что мандат (onTab выше). Восстановление

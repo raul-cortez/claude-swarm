@@ -315,7 +315,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    единственное место, где он говорит словами («работает без вас» / «работа сдана»), — эта же
    подпись. Комбинация редкая (прораба обычно не отдают), но раз мандат сильнее, подпись при
    нём побеждает точки, как и при «ждёт ответа». */
-.tab .crew-dots { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; cursor: pointer; }
+.tab .crew-dots { display: none; align-items: center; min-width: 0; flex: 1 1 auto; }
 .tab.is-crew .crew-dots { display: flex; }
 .tab.is-crew.status-waiting .crew-dots,
 .tab.is-crew.is-auto .crew-dots { display: none; }
@@ -323,10 +323,19 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab.is-crew.status-waiting .sub,
 .tab.is-crew.is-auto .sub { display: block; }
 .tab.is-crew .agents, .tab.is-crew .cache-badge, .tab.is-crew .cpu-badge { display: none !important; }
-.crew-dot-list { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; overflow: hidden; }
-.crew-overflow { flex: none; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
-.crew-waiting-num { flex: none; margin-left: auto; color: var(--waiting); font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.crew-waiting-num[hidden] { display: none; }
+.crew-dot-list { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+/* Пилюли в подвале — те же .crew-chip, что в раскрытом ряду, но ростом ровно в строку .sub
+   (min-height .foot): подвал прораба не имеет права менять высоту карточки. */
+.tab .foot .crew-chip {
+  padding: 0 5px;
+  font-size: calc(var(--tab-sub-size) - 1px);
+  line-height: calc(var(--tab-sub-size) * 1.3 - 2px);
+}
+.tab .foot .crew-chip::before { width: 5px; height: 5px; }
+/* «+N» — не исполнитель, точки статуса у неё нет; раскрытая — в акцентной рамке, как кнопка
+   в нажатом положении. */
+.crew-chip.crew-more::before { display: none; }
+.crew-chip.crew-more.open { color: var(--text); border-color: var(--accent); }
 
 /* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
    кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,
@@ -400,14 +409,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 
 /* --- прораб: без статусного цвета, кроме «ждёт ответа» --------------------- */
 /* Спека: «его "работает/готов" ничего не значит, потому что бизнес-логику делают дети».
-   Готов/работает — панельный фон и тонкая акцентная (пунктирная) рамка, знак бригады у
+   Готов/работает — панельный фон и тонкая акцентная рамка, знак бригады у
    имени говорит «этот не работает, этот распоряжается». Ждёт ответа ОТ ЧЕЛОВЕКА — обычная
    жёлто-бирюзовая карточка, никакого исключения: это статус, который человеку и нужен. */
 /* :not(.is-auto) — мандат «работает без меня» самостоятельная сущность и «ничем не
    заменяется» (спека): прораб, которого отдали, красится ночным, а не своим дашедом. */
 .tab.is-crew:not(.status-waiting):not(.is-auto) {
   --tab-c: var(--accent);
-  border-style: dashed;
   border-color: var(--accent);
   background: var(--panel-2);
 }
@@ -418,7 +426,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    почему: обёртка сломала бы перетаскивание карточек. Раскладка («слева — вниз, сверху —
    вправо») достаётся от flex-direction самого .group-tabs, здесь только сама лента чипов.
 
-   «Пунктир обнимает прораба вместе с детьми» без общей обёртки — швом: :has() у карточки
+   «Рамка обнимает прораба вместе с детьми» без общей обёртки — швом: :has() у карточки
    прораба узнаёт, что сразу за ней стоит лента чипов, снимает свою грань с этой стороны, а
    лента её достраивает с обратной, отрицательным отступом схлопывая gap .group-tabs между
    ними. Читается как одна рамка, хотя коробки на самом деле две. */
@@ -429,7 +437,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   gap: 4px;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px dashed var(--accent);
+  border: 1px solid var(--accent);
   border-radius: 8px;
   background: var(--panel-2);
 }
@@ -467,8 +475,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   gap: 3px;
   padding: 2px 6px;
   border-radius: 999px;
-  /* Сплошная, не пунктирная: пунктир уже занят рамкой .crew-chips вокруг всех чипов разом —
-     повторить его на каждом чипе значило бы два разных пунктира вложенными друг в друга. */
+  /* Нейтральная, не акцентная: акцентом уже обведена карточка прораба вместе с рядом. */
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
