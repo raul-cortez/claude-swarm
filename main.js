@@ -5353,6 +5353,17 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   // Поднять упавшего агента. Пункт стоит ВСЕГДА, а не появляется на упавшей вкладке: меню
   // ищут глазами, и пункт, которого в спокойное время не видно, невозможно запомнить. Когда
   // поднимать нечего — он просто серый, и подпись говорит почему.
+  // Сделать прорабом. Обратного пункта нет и не будет: роль не снимается (спека, «Понятие»).
+  // Пункт стоит всегда, по той же причине, что «Поднять упавший разговор» ниже: у прораба и у
+  // исполнителя он серый и подписью говорит почему.
+  items.push({
+    label: d.crew ? 'Прораб бригады'
+      : d.parentId ? 'Сделать прорабом (исполнитель прорабом не становится)'
+        : !hireFileFor(d) ? 'Сделать прорабом (нужен агент Claude)'
+          : 'Сделать прорабом…',
+    enabled: !d.crew && !d.parentId && !!hireFileFor(d),
+    click: () => { makeProrab(key, 'меню карточки').catch(reportMainError); },
+  });
   const canResume = canResumeTab(d);
   items.push({ type: 'separator' });
   items.push({
@@ -5943,6 +5954,39 @@ setInterval(() => {
   }
   try { hireFireTick(now); } catch (e) { reportMainError(e); }
 }, HIRE_TICK_MS);
+
+// Сделать вкладку прорабом — дверь человека в бригаду (меню карточки; позже — кнопка в капсуле,
+// см. спеку «Меню и кнопки на карточке»). Роль не снимается, поэтому спрашиваем один раз: мисклик
+// навсегда меняет карточку. Исполнитель прорабом не становится — один уровень (спека «Границы»).
+// Сразу печатаем вкладке механику: строка на старте сессии (crewNote в хуке) уже отработала, и
+// живой агент без этого о своей роли не узнал бы до перезапуска.
+async function makeProrab(id, from) {
+  const key = String(id == null ? '' : id);
+  const d = det.get(key);
+  if (!d || d.dead || d.crew || d.parentId) return false;
+  const file = hireFileFor(d);
+  if (!file) return false;
+  if (win) {
+    const r = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Сделать прорабом', 'Отмена'],
+      defaultId: 0,
+      cancelId: 1,
+      message: `Сделать «${d.name || 'эту вкладку'}» прорабом?`,
+      detail: 'Она сможет сама открывать вкладки-исполнители в этой папке и раздавать им задачи,'
+        + ' а их вопросы будут приходить ей. Вернуть вкладку в обычную нельзя.',
+    });
+    if (r.response !== 0) return false;
+  }
+  const cur = det.get(key);
+  if (!cur || cur.dead || cur.crew || cur.parentId) return false;   // пока спрашивали, всё могло измениться
+  cur.crew = true;
+  tgLog(`прораб (${from || '—'}): вкладка ${key}`);
+  tgWriteModes();
+  safeSend('tab:crew', { id: key, crew: true });
+  typeIntoTab(key, hire.prorabIntro(file, CREW_MAX));
+  return true;
+}
 
 ipcMain.on('settings:crew', (_e, opts = {}) => {
   CREW_MAX = hire.clampCeiling(opts && opts.max);

@@ -92,6 +92,20 @@ test('заявок в одном файле больше потолка — бе
   assert.strictEqual(out.length, HIRE.MAX_PER_FILE);
 });
 
+// --- prorabIntro ----------------------------------------------------------------------
+test('строка новому прорабу: путь заявки, формат, потолок, и «ничего не нанимай сам»', () => {
+  const t = HIRE.prorabIntro('/p/.swarm-hire-c0ffee.json', 4);
+  assert.match(t, /\/p\/\.swarm-hire-c0ffee\.json/);
+  assert.match(t, /\{"hire": \[\{"name"/);
+  assert.match(t, /Потолок бригады: 4/);
+  assert.match(t, /разрешения.*человеку/);
+  assert.match(t, /ничего не нанимай/);
+});
+
+test('строка новому прорабу: потолок зажимается, как настройка', () => {
+  assert.match(HIRE.prorabIntro('/f', null), new RegExp(`Потолок бригады: ${HIRE.DEFAULT_MAX}`));
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('ok — ' + name); }
