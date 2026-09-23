@@ -4766,6 +4766,9 @@ function maybeNotify(id, prev, next) {
   // opts back in to pinging the active/focused tab too.
   if (!notifyActive && id === activeId && document.hasFocus()) return;
   const s = sessions.get(id);
+  // Исполнитель бригады: его «готов» и вопросы получает прораб, человеку они только шум.
+  // Зовём лишь за разрешением — его прораб не раздаёт (спека, «Кто что видит»).
+  if (s && s.parentId && !(next === 'waiting' && s.waitKind === 'permission')) return;
 
   let body = null;
   if (next === 'waiting') {
