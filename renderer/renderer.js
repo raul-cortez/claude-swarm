@@ -5459,8 +5459,9 @@ function renderCrewDots(s) {
   for (const k of hidden) row.appendChild(crewChip(k, label.get(k.id), s.cwd));
 }
 
-// Сколько пилюль влезает, зависит от ширины карточки, а она меняется без перекладки списка
-// (тянут рельсу, меняют окно) — пересчитываем подвал прораба по факту изменения ширины.
+// Сколько пилюль влезает, зависит от ширины подвала, а она меняется без перекладки списка
+// (тянут рельсу, меняют окно, снимают мандат — и спрятанный подвал показывается снова) —
+// пересчитываем подвал прораба по факту изменения ширины.
 const crewFootObserver = new ResizeObserver((entries) => {
   for (const en of entries) {
     const tab = en.target.closest('.tab');
@@ -5483,8 +5484,8 @@ function crewChipLabel(name, ordinal) {
 function paintCrew(s) {
   if (!s || !s.tab) return;
   s.tab.classList.toggle('is-crew', !!s.crew);
-  const foot = s.tab.querySelector('.foot');
-  if (s.crew) crewFootObserver.observe(foot); else crewFootObserver.unobserve(foot);
+  const list = s.tab.querySelector('.crew-dot-list');
+  if (s.crew) crewFootObserver.observe(list); else crewFootObserver.unobserve(list);
   renderCrewDots(s);
   refreshTabTools(s); // «Сделать прорабом» гаснет из капсулы вместе с ролью
   if (s.id === activeId) renderCrewStrip();
