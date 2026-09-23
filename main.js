@@ -6034,6 +6034,32 @@ function crewLiveChildren(prorabId) {
   return n;
 }
 
+// Служебные файлы сворма (дайджест, ответ о перезапуске, эстафета, заявка найма) лежат в папке
+// вкладки — то есть в чужом репозитории. Не спрятанные от git, они висят в `git status` и в
+// панели изменений самого Claude Code: так прораб показывал справа свою заявку `.swarm-hire-…`,
+// которой не было в `.gitignore` проекта. Прячем в `.git/info/exclude` — локальный, не
+// коммитится и `.gitignore` человека не трогает. Раз на папку за запуск, молча: не git — нечего
+// прятать, не вышло — файлы просто видны, как раньше.
+const SWARM_GIT_EXCLUDE = ['.swarm-digest-*.json', '.swarm-restart*.json', '.swarm-handoff-*.md', '.swarm-hire-*.json'];
+const gitExcludeDone = new Set();
+function gitExcludeSwarmFiles(cwd) {
+  if (!cwd || gitExcludeDone.has(cwd)) return;
+  gitExcludeDone.add(cwd);
+  execFile('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd }, (err, out) => {
+    if (err) return;
+    const file = path.resolve(cwd, String(out).trim());
+    fs.readFile(file, 'utf8', (_e, cur) => {
+      const have = new Set(String(cur || '').split(/\r?\n/).map((l) => l.trim()));
+      const add = SWARM_GIT_EXCLUDE.filter((p) => !have.has(p));
+      if (!add.length) return;
+      const head = cur && !cur.endsWith('\n') ? '\n' : '';
+      fs.mkdir(path.dirname(file), { recursive: true }, () => {
+        fs.appendFile(file, head + '# служебные файлы Swarm\n' + add.join('\n') + '\n', () => {});
+      });
+    });
+  });
+}
+
 // Читает заявку прораба (если файл поменялся с прошлого раза), проверяет потолок и открывает
 // принятых через тот же путь, что и «/new» из телеги (main не умеет делать xterm и DOM сам).
 function hireTick(id, d) {
@@ -7181,6 +7207,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // parentId незачем — он уже есть в opts, см. ниже).
     if (opts.hireTask) { d0.hireTask = String(opts.hireTask); d0.hireAt = Date.now(); }
     det.set(id, d0);
+    gitExcludeSwarmFiles(cwd);
     // Родство при рождении — например, протокол найма (прораб просит открыть вкладку) передаёт
     // parentId сразу. При восстановлении после перезапуска id ещё не существовали, поэтому эту
     // же дверь дёргает и renderer.restoreOrStart, вторым проходом (см. setTabParent).
