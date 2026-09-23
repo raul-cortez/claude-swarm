@@ -365,13 +365,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab:hover .tools { opacity: 1; }
 .tab .tools > span { display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .tab .tools svg { width: 12px; height: 12px; flex: none; }
-.tab .moon, .tab .close, .tab .prorab, .tab .resume { width: 16px; height: 16px; border-radius: 50%; }
+.tab .moon, .tab .close, .tab .prorab, .tab .resume, .tab .rename { width: 16px; height: 16px; border-radius: 50%; }
 /* Разделитель — не украшение: он говорит, что кнопки РАЗНЫЕ. Одна отдаёт вкладку агенту,
    другая убивает процесс, и промахнуться между ними нельзя. */
 .tab .t-sep { width: 1px; height: 10px; background: var(--border); }
 .tab .moon:hover  { color: var(--night);  background: var(--panel); }
 .tab .close:hover { color: var(--danger); background: var(--panel); }
-.tab .prorab:hover, .tab .resume:hover { color: var(--accent); background: var(--panel); }
+.tab .prorab:hover, .tab .resume:hover, .tab .rename:hover { color: var(--accent); background: var(--panel); }
 
 /* While a title is being renamed, allow caret + text selection (the tab itself
    sets user-select:none, which otherwise freezes the contenteditable). */

@@ -5430,6 +5430,9 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   const d = det.get(key);
   if (!d || !win) return false;
   const items = [{
+    label: 'Переименовать',
+    click: () => safeSend('tab:renameRequest', { id: key }),
+  }, {
     label: 'Ночной режим',
     type: 'checkbox',
     checked: !!d.auto,
@@ -5466,13 +5469,9 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   // обратную сторону: раз крестик на карточке можно спрятать настройкой, в меню без этого
   // пункта вкладку было бы нечем закрыть. Закрывает окно, а не main: main не умеет спрашивать
   // renderer’овское подтверждение и рвать xterm/pty — тот же путь, что и крестик.
-  items.push({
-    label: 'Закрыть вкладку',
-    click: () => safeSend('tab:closeRequest', { id: key }),
-  });
-  // «Закрыть бригаду» — последний пункт меню прораба (спека, «Закрытие бригады»). У обычной
-  // вкладки и исполнителя его нет: закрытие бригады — то единственное действие с бригадой,
-  // которое принадлежит человеку.
+  // «Закрыть бригаду» — только у прораба (спека, «Закрытие бригады»). У обычной вкладки и
+  // исполнителя его нет: закрытие бригады — то единственное действие с бригадой, которое
+  // принадлежит человеку. Стоит перед «Закрыть вкладку»: та — всегда последний пункт меню.
   if (d.crew) {
     const n = crewLiveChildren(key) + 1;
     items.push({
@@ -5480,6 +5479,10 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
       click: () => { closeCrewDialog(key, 'меню карточки').catch(reportMainError); },
     });
   }
+  items.push({
+    label: 'Закрыть вкладку',
+    click: () => safeSend('tab:closeRequest', { id: key }),
+  });
   Menu.buildFromTemplate(items).popup({ window: win });
   return true;
 });

@@ -219,7 +219,7 @@ test('normalizeTabStyle allows an empty tools list — потолок «ни о�
 });
 
 test('orderedTools рисует в фиксированном порядке, а не в порядке выбора', () => {
-  assert.deepStrictEqual(T.orderedTools({ tools: ['resume', 'close', 'moon'] }), ['close', 'moon', 'resume']);
+  assert.deepStrictEqual(T.orderedTools({ tools: ['resume', 'close', 'moon'] }), ['moon', 'resume', 'close']);
 });
 
 test('TOOL_DEFS описывает ровно ключи TOOL_KEYS', () => {

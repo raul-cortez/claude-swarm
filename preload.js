@@ -301,6 +301,13 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('tab:closeRequest', handler);
   },
 
+  // «Переименовать» из меню карточки — поле ввода живёт в окне, main только просит его открыть.
+  onRenameRequest: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('tab:renameRequest', handler);
+    return () => ipcRenderer.removeListener('tab:renameRequest', handler);
+  },
+
   // «Закрыть всё» из диалога закрытия бригады — подтверждение уже дано в самом диалоге,
   // поэтому здесь без второго "точно закрыть?" на каждую вкладку.
   onCrewCloseTabs: (cb) => {

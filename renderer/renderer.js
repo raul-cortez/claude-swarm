@@ -338,6 +338,8 @@ const ICONS = {
   crew: SVG('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>'),
   // Lucide "rotate-ccw" — кнопка капсулы «Поднять упавший разговор».
   resume: SVG('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
+  // Lucide "pencil" — кнопка капсулы «Переименовать».
+  rename: SVG('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'),
 };
 
 // Кнопки карточки — настраиваемый список (Settings → Вкладки → «Что показывать на
@@ -351,6 +353,7 @@ const TOOL_BUTTON = {
   // решает ctx, а не сама капсула.
   prorab: () => `<span class="prorab" title="Сделать прорабом…">${ICONS.crew}</span>`,
   resume: () => `<span class="resume" title="Поднять упавший разговор">${ICONS.resume}</span>`,
+  rename: () => `<span class="rename" title="Переименовать">${ICONS.rename}</span>`,
 };
 
 // Применим ли этот пункт к ЭТОЙ вкладке прямо сейчас — независимо от того, включён ли он в
@@ -1465,6 +1468,7 @@ async function createSession(opts = {}) {
     if (e.target.closest('.moon')) { e.stopPropagation(); toggleTabAuto(id); return; }
     if (e.target.closest('.prorab')) { e.stopPropagation(); window.swarm.night.makeProrab(id); return; }
     if (e.target.closest('.resume')) { e.stopPropagation(); window.swarm.resumeNow(id); return; }
+    if (e.target.closest('.rename')) { e.stopPropagation(); startRename(tab.querySelector('.label')); return; }
     activate(id);
   });
   // Меню карточки — родное меню системы (его собирает main). Правый клик по карточке жест
@@ -2105,13 +2109,6 @@ function showSettingsModal(tab) {
               капсула только ярлыки для самого частого.</span>
           </div>
           <div class="set-row" id="set-tab-tools"></div>
-          <div class="set-row">
-            <label class="set-check is-disabled">
-              <input type="checkbox" disabled />
-              <span class="set-check-tx">Переименование</span>
-            </label>
-            <span class="set-hint-inline">уже на двойном клике по имени</span>
-          </div>
         </section>
         <section class="set-group">
           <div class="set-group-h">
@@ -3883,6 +3880,10 @@ async function requestCloseSession(id) {
 
 // «Закрыть вкладку» из меню карточки — тот же путь, что крестик, с тем же подтверждением.
 window.swarm.onCloseRequest(({ id }) => requestCloseSession(String(id)));
+window.swarm.onRenameRequest(({ id }) => {
+  const s = sessions.get(String(id));
+  if (s) startRename(s.tab.querySelector('.label'));
+});
 
 // «Закрыть всё» из диалога закрытия бригады — подтверждение уже было в самом диалоге (main),
 // здесь без второго «точно?» на каждую вкладку по очереди.
@@ -4335,19 +4336,12 @@ function toggleFolder(cwd) {
 
 // Double-click a card title to rename it (e.g. what that agent is working on).
 // Enter/Escape or blur commits; empty reverts to the default "claude <n>".
+// Тот же ввод начинают кнопка капсулы и пункт меню карточки — см. startRename().
 function attachRename(labelEl) {
   labelEl.title = 'Двойной клик — переименовать';
   labelEl.addEventListener('dblclick', (e) => {
     e.stopPropagation();
-    renaming = true;
-    labelEl.contentEditable = 'plaintext-only';
-    labelEl.spellcheck = false;
-    labelEl.focus();
-    const range = document.createRange();
-    range.selectNodeContents(labelEl);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
+    startRename(labelEl);
   });
   labelEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); labelEl.blur(); }
@@ -4363,6 +4357,20 @@ function attachRename(labelEl) {
     const t = labelEl.closest('.tab');
     if (t && t.dataset.sid) window.swarm.setTabName(t.dataset.sid, labelEl.textContent);
   });
+}
+
+function startRename(labelEl) {
+  // Карточки нет в ленте (исполнитель внутри бригады, свёрнутая папка) — править нечего.
+  if (!labelEl || !labelEl.isConnected) return;
+  renaming = true;
+  labelEl.contentEditable = 'plaintext-only';
+  labelEl.spellcheck = false;
+  labelEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(labelEl);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
 }
 
 // --- dockable terminal panel ---------------------------------------------------
