@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld('swarm', {
   // Close a session.
   killSession: (id) => ipcRenderer.send('session:kill', { id }),
 
+  // Кнопка капсулы «Поднять упавший разговор» — тот же путь, что пункт меню карточки.
+  resumeNow: (id) => ipcRenderer.invoke('tab:resumeNow', { id }),
+
   // В этой вкладке запустили ДРУГОГО агента руками — строка запуска, которой её открыл
   // сворм, больше не про неё (см. session:forgetLaunch).
   forgetLaunch: (id) => ipcRenderer.send('session:forgetLaunch', { id }),
@@ -220,6 +223,9 @@ contextBridge.exposeInMainWorld('swarm', {
     // Родство: id вкладки живёт один запуск, поэтому сохранённое родство (по tabKey)
     // пересобирается ЗДЕСЬ, после restoreOrStart, а не передаётся при создании.
     setParent: (id, parentId) => ipcRenderer.invoke('tab:setParent', { id, parentId }),
+    // Кнопка капсулы «Сделать прорабом» — тот же путь, что пункт меню (диалог подтверждения
+    // спрашивает main, окно только просит его открыть).
+    makeProrab: (id) => ipcRenderer.invoke('tab:makeProrab', { id }),
     // Все вкладки разом — луна в нижней панели.
     setAll:   (auto) => ipcRenderer.invoke('night:setAll', { auto }),
     onTab:    (cb) => ipcRenderer.on('tab:auto', (_e, s) => cb(s)),
@@ -228,6 +234,9 @@ contextBridge.exposeInMainWorld('swarm', {
     // найма) — окно узнаёт пушем, той же дорогой, что мандат (onTab выше).
     onParent: (cb) => ipcRenderer.on('tab:parent', (_e, s) => cb(s)),
     onCrew:   (cb) => ipcRenderer.on('tab:crew', (_e, s) => cb(s)),
+    // Меню чипа раскрытой бригады — тот же родной способ, что и меню карточки.
+    chipMenu:  (id) => ipcRenderer.invoke('chip:menu', { id }),
+    onActivate: (cb) => ipcRenderer.on('tab:activate', (_e, s) => cb(s)),
   },
 
   // Подписки: живой расход по аккаунтам — из главного (он читает снимки, которые пишет наша
@@ -282,6 +291,22 @@ contextBridge.exposeInMainWorld('swarm', {
     const handler = () => cb();
     ipcRenderer.on('open-help', handler);
     return () => ipcRenderer.removeListener('open-help', handler);
+  },
+
+  // «Закрыть вкладку» из меню карточки (main) — закрыть умеет только окно (подтверждение,
+  // dispose xterm), поэтому main просит, а не закрывает сам.
+  onCloseRequest: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('tab:closeRequest', handler);
+    return () => ipcRenderer.removeListener('tab:closeRequest', handler);
+  },
+
+  // «Закрыть всё» из диалога закрытия бригады — подтверждение уже дано в самом диалоге,
+  // поэтому здесь без второго "точно закрыть?" на каждую вкладку.
+  onCrewCloseTabs: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('crew:closeTabs', handler);
+    return () => ipcRenderer.removeListener('crew:closeTabs', handler);
   },
 
   // Copy a string to the system clipboard via Electron (correct UTF-8 encoding).

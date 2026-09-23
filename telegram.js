@@ -597,13 +597,21 @@ function callbackData(tab, fingerprint, n) {
 // остаётся payload. Что делать при расхождении, решает вызывающий: быстрой кнопке достаточно
 // темы, а сообщение с запросом разрешения несёт ТЕКСТ и отпечаток конкретной вкладки, поэтому
 // расхождение там значит «это сообщение не про неё» — и нажатие отклоняется.
+// sameCrew(payload, routed) — необязательный предикат: одна тема на бригаду (спека
+// «Телефон») значит, что тема адресует ПРОРАБА, а конкретную кнопку разрешения нажали под
+// вопросом РЕБЁНКА — это не «кнопка из прошлого запуска», а расхождение внутри одной и той же
+// бригады, и доверять стоит payload'у (он несёт отпечаток именно этого запроса). Без предиката
+// (старые вызовы, тесты) поведение прежнее — только точное совпадение.
 function callbackTab(opts) {
   const o = opts || {};
   const payload = o.payloadTab == null ? null : String(o.payloadTab);
   const routed = o.routed == null ? null : String(o.routed);
+  const sameCrew = typeof o.sameCrew === 'function' ? o.sameCrew : null;
   if (o.threadId == null) return { tab: payload, source: payload == null ? null : 'payload', mismatch: false };
   if (routed == null) return { tab: null, source: null, mismatch: false };
-  return { tab: routed, source: 'topic', mismatch: payload != null && payload !== routed };
+  if (payload == null || payload === routed) return { tab: routed, source: 'topic', mismatch: false };
+  if (sameCrew && sameCrew(payload, routed)) return { tab: payload, source: 'topic', mismatch: false };
+  return { tab: routed, source: 'topic', mismatch: true };
 }
 
 function parseCallbackData(raw) {

@@ -1031,6 +1031,18 @@ test('нет абсолютного пути заявки — печатаетс
   assert.match(t, new RegExp(`Потолок бригады: ${H.CREW_MAX_DEFAULT}`));
 });
 
+test('прорабу — как ответить исполнителю: тем же файлом, полем answer', () => {
+  const t = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x/swarm-tabs.json', '/p/.swarm-hire-c0ffee.json', 6);
+  assert.match(t, /"answer": \[\{"name"/);
+});
+
+test('своё поле «Правила прораба» — дописывается в конец, пусто — молчание', () => {
+  const withRule = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x', '', 6, 'задачи бери из GitHub');
+  assert.match(withRule, /Правила человека для тебя как прораба: задачи бери из GitHub/);
+  const noRule = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x', '', 6, '');
+  assert.ok(!/Правила человека/.test(noRule));
+});
+
 test('end to end: прораб получает абсолютный путь заявки и потолок из swarm-tgmode.json', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-hook-hire-')));
   const staged = path.join(dir, 'swarm-signal.mjs');

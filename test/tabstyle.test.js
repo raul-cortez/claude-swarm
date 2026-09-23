@@ -193,6 +193,39 @@ test('вид карточки: боевое правило не достаёт �
   }
 });
 
+// --- капсула кнопок на карточке (спека «Меню и кнопки на карточке») ---------
+test('default tools — луна и крестик, как было кнопками всегда', () => {
+  assert.deepStrictEqual(T.DEFAULT_TABSTYLE.tools, ['moon', 'close']);
+});
+
+test('normalizeTabStyle keeps a valid tools list', () => {
+  const s = T.normalizeTabStyle({ tools: ['close', 'prorab'] });
+  assert.deepStrictEqual(s.tools, ['close', 'prorab']);
+});
+
+test('normalizeTabStyle drops unknown keys, dedupes, and caps at three', () => {
+  const s = T.normalizeTabStyle({ tools: ['close', 'bogus', 'close', 'moon', 'prorab', 'resume'] });
+  assert.deepStrictEqual(s.tools, ['close', 'moon', 'prorab']);
+});
+
+test('normalizeTabStyle falls back to default tools on garbage', () => {
+  for (const bad of [null, undefined, 'nope', 42, {}]) {
+    assert.deepStrictEqual(T.normalizeTabStyle({ tools: bad }).tools, ['moon', 'close'], String(bad));
+  }
+});
+
+test('normalizeTabStyle allows an empty tools list — потолок «ни одной»', () => {
+  assert.deepStrictEqual(T.normalizeTabStyle({ tools: [] }).tools, []);
+});
+
+test('orderedTools рисует в фиксированном порядке, а не в порядке выбора', () => {
+  assert.deepStrictEqual(T.orderedTools({ tools: ['resume', 'close', 'moon'] }), ['close', 'moon', 'resume']);
+});
+
+test('TOOL_DEFS описывает ровно ключи TOOL_KEYS', () => {
+  assert.deepStrictEqual(T.TOOL_DEFS.map((t) => t.key).sort(), [...T.TOOL_KEYS].sort());
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('  ok  ' + name); }

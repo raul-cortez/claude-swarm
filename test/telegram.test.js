@@ -422,6 +422,24 @@ test('вне тем сверять не с чем — остаётся payload',
   assert.deepStrictEqual(at, { tab: '1', source: 'payload', mismatch: false });
 });
 
+// Одна тема на бригаду (спека «Телефон»): тема ведёт на прораба, а кнопка разрешения — на
+// ребёнка, который спрашивал. Это не расхождение прошлого запуска, а бригада.
+test('своя бригада: тема — прораб, кнопка — ребёнок, доверяем кнопке', () => {
+  const at = T.callbackTab({ threadId: 12, routed: 'prorab', payloadTab: 'kid', sameCrew: () => true });
+  assert.deepStrictEqual(at, { tab: 'kid', source: 'topic', mismatch: false });
+});
+
+test('sameCrew не спасает чужих: расхождение остаётся расхождением', () => {
+  const at = T.callbackTab({ threadId: 12, routed: 'prorab', payloadTab: 'stranger', sameCrew: () => false });
+  assert.strictEqual(at.mismatch, true);
+  assert.strictEqual(at.tab, 'prorab');
+});
+
+test('без sameCrew поведение прежнее — точное совпадение', () => {
+  const at = T.callbackTab({ threadId: 12, routed: '4', payloadTab: '1' });
+  assert.strictEqual(at.mismatch, true);
+});
+
 test('actionKeyboard даёт кнопки с подписями и рабочими данными', () => {
   const kb = T.actionKeyboard('3');
   const flat = kb.inline_keyboard.flat();

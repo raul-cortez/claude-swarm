@@ -45,12 +45,29 @@
   // работает сабагент» тоже ушёл — это не вид карточки, а честность статуса.
   const SHOW_KEYS = ['ctx', 'sub'];
 
+  // Капсула кнопок на карточке — настраиваемый список (спека «Меню и кнопки на карточке»).
+  // Порядок здесь — порядок отрисовки: не то, в каком человек их включал, а фиксированный,
+  // чтобы капсула не прыгала местами кнопок между перезапусками. «Переименование» сюда не
+  // входит — оно живёт двойным кликом по имени и в список кнопок не переезжает (спека: «мёртвый
+  // пункт лучше показать [в настройках], чем заставить искать» — показан, но не переключаем).
+  const TOOL_KEYS = ['close', 'moon', 'prorab', 'resume'];
+  const TOOL_DEFS = [
+    { key: 'close', name: 'Закрыть' },
+    { key: 'moon', name: 'Работать без меня' },
+    { key: 'prorab', name: 'Сделать прорабом' },
+    { key: 'resume', name: 'Поднять упавший разговор' },
+  ];
+  const TOOLS_MAX = 3;
+
   // Colors mirror the hardcoded :root palette (styles.css:10-22) — pinned by a
   // regression test, so a change there must be mirrored here.
   const DEFAULT_TABSTYLE = {
     density: 'normal',
     status: 'both',
     show: { ctx: true, sub: true },
+    // Умолчание — ровно то, что было кнопками всегда (луна + крестик), чтобы включение
+    // настройки никому не переставило капсулу без спроса.
+    tools: ['moon', 'close'],
     colors: {
       run: '#e0a53f',
       ready: '#4ade80',
@@ -87,10 +104,22 @@
       const v = rColors[c.key];
       colors[c.key] = (typeof v === 'string' && HEX.test(v)) ? v.toLowerCase() : d.colors[c.key];
     });
+    // Потолок три, минимум ноль (спека): мусор и дубликаты выкидываем, порядок выбора не
+    // важен — рисуется всегда в порядке TOOL_KEYS, а не в том, в каком человек тыкал галочки.
+    let tools = d.tools;
+    if (Array.isArray(r.tools)) {
+      const seen = new Set();
+      tools = r.tools.filter(function (k) {
+        if (typeof k !== 'string' || !TOOL_KEYS.includes(k) || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      }).slice(0, TOOLS_MAX);
+    }
     return {
       density: DENSITIES.some(function (x) { return x.id === r.density; }) ? r.density : d.density,
       status: status,
       show: show,
+      tools: tools,
       colors: colors,
     };
   }
@@ -118,5 +147,14 @@
     return out;
   }
 
-  return { DENSITIES, COLORS, STATUS_STYLES, DEFAULT_TABSTYLE, normalizeTabStyle, toCssVars, bodyClasses };
+  // Список кнопок в РИСОВАЛЬНОМ порядке (TOOL_KEYS), а не в порядке выбора настройками.
+  function orderedTools(style) {
+    const s = normalizeTabStyle(style);
+    return TOOL_KEYS.filter(function (k) { return s.tools.includes(k); });
+  }
+
+  return {
+    DENSITIES, COLORS, STATUS_STYLES, TOOL_KEYS, TOOL_DEFS, TOOLS_MAX, DEFAULT_TABSTYLE,
+    normalizeTabStyle, toCssVars, bodyClasses, orderedTools,
+  };
 });

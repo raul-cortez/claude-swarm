@@ -92,6 +92,39 @@ test('заявок в одном файле больше потолка — бе
   assert.strictEqual(out.length, HIRE.MAX_PER_FILE);
 });
 
+// --- parseAnswers (вопросы детей — прорабу, ответ тем же файлом) -----------------------
+test('ответ разбирается: имя и текст', () => {
+  const out = HIRE.parseAnswers(JSON.stringify({ answer: [{ name: '#629', text: 'делай так' }] }));
+  assert.deepStrictEqual(out, [{ name: '#629', text: 'делай так' }]);
+});
+
+test('несколько ответов разом', () => {
+  const out = HIRE.parseAnswers(JSON.stringify({ answer: [{ name: '#1', text: 'a' }, { name: '#2', text: 'b' }] }));
+  assert.strictEqual(out.length, 2);
+});
+
+test('ответ без имени или без текста — запись пропускается', () => {
+  const out = HIRE.parseAnswers(JSON.stringify({
+    answer: [{ name: '#1' }, { text: 'без имени' }, { name: '#2', text: 'годная' }],
+  }));
+  assert.deepStrictEqual(out.map((e) => e.name), ['#2']);
+});
+
+test('parseAnswers: не JSON, не объект, не массив — пустой список', () => {
+  assert.deepStrictEqual(HIRE.parseAnswers('не json'), []);
+  assert.deepStrictEqual(HIRE.parseAnswers('{}'), []);
+  assert.deepStrictEqual(HIRE.parseAnswers('{"answer": "не массив"}'), []);
+});
+
+test('parseAnswers и parseRequest читают один и тот же файл независимо', () => {
+  const raw = JSON.stringify({
+    hire: [{ name: '#1', prompt: 'новая задача' }],
+    answer: [{ name: '#629', text: 'ответ старому' }],
+  });
+  assert.strictEqual(HIRE.parseRequest(raw).length, 1);
+  assert.strictEqual(HIRE.parseAnswers(raw).length, 1);
+});
+
 // --- prorabIntro ----------------------------------------------------------------------
 test('строка новому прорабу: путь заявки, формат, потолок, и «ничего не нанимай сам»', () => {
   const t = HIRE.prorabIntro('/p/.swarm-hire-c0ffee.json', 4);

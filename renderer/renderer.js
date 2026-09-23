@@ -336,12 +336,53 @@ const ICONS = {
   // Lucide "share-2" — три связанных узла: знак бригады у карточки прораба (спека:
   // docs/superpowers/specs/2026-09-22-crew-design.md, «Карточка прораба»).
   crew: SVG('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>'),
+  // Lucide "rotate-ccw" — кнопка капсулы «Поднять упавший разговор».
+  resume: SVG('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
 };
 
-// Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу. Разметка общая с
-// превью настроек: карточка в настройках должна быть той же карточкой, а не похожей на неё.
-function tabTools() {
-  return `<span class="tools"><span class="moon" title="Ночной режим: пусть работает без вас" aria-pressed="false">${ICONS.moon}</span><span class="t-sep"></span><span class="close" title="Закрыть вкладку">${ICONS.close}</span></span>`;
+// Кнопки карточки — настраиваемый список (Settings → Вкладки → «Что показывать на
+// карточке», спека «Меню и кнопки на карточке»). Разметка общая с превью настроек: карточка в
+// настройках должна быть той же карточкой, а не похожей на неё, поэтому превью зовёт ту же
+// функцию с пустым ctx (общий вид, без бригадных исключений).
+const TOOL_BUTTON = {
+  close:  () => `<span class="close" title="Закрыть вкладку">${ICONS.close}</span>`,
+  moon:   () => `<span class="moon" title="Ночной режим: пусть работает без вас" aria-pressed="false">${ICONS.moon}</span>`,
+  // У прораба и у исполнителя не показывается — возврата нет (спека), поэтому применимость
+  // решает ctx, а не сама капсула.
+  prorab: () => `<span class="prorab" title="Сделать прорабом…">${ICONS.crew}</span>`,
+  resume: () => `<span class="resume" title="Поднять упавший разговор">${ICONS.resume}</span>`,
+};
+
+// Применим ли этот пункт к ЭТОЙ вкладке прямо сейчас — независимо от того, включён ли он в
+// настройках. «Сделать прорабом» гаснет для прораба/исполнителя, «Поднять упавший разговор» —
+// для живой вкладки: показывать мёртвую кнопку в капсуле (в отличие от меню) было бы шумом,
+// капсула и так тесная.
+function toolApplicable(key, ctx) {
+  if (key === 'prorab') return !ctx || !(ctx.crew || ctx.parentId);
+  if (key === 'resume') return !!(ctx && ctx.fallen && ctx.canResume);
+  return true;
+}
+
+// style по умолчанию — боевой (tabstyle); настройки передают черновик, чтобы превью отвечало
+// на галочки ДО «Сохранить», не трогая карточки в бою (тот же развод черновика и боя, что у
+// плотности/цвета — см. тест «превью не должно жить по бою»).
+function toolsInner(ctx, style) {
+  const keys = TABSTYLE.orderedTools(style || tabstyle).filter((k) => toolApplicable(k, ctx));
+  return keys.map((k) => TOOL_BUTTON[k]()).join('<span class="t-sep"></span>');
+}
+
+function tabTools(ctx) {
+  return `<span class="tools">${toolsInner(ctx)}</span>`;
+}
+
+// Перерисовать капсулу живой вкладки после смены роли/падения — новый набор кнопок ей
+// приходится решать заново (прораб появился, разговор упал/поднялся). Слушатели кликов висят
+// на самой карточке (delegated через closest), так что innerHTML можно менять без переподписки.
+function refreshTabTools(s) {
+  if (!s || !s.tab) return;
+  const el = s.tab.querySelector('.tools');
+  if (!el) return;
+  el.innerHTML = toolsInner({ crew: s.crew, parentId: s.parentId, fallen: !!s.fallen, canResume: !!s.canResume });
 }
 
 // Put an icon + a folder name into an element (name via text node, never markup).
@@ -505,7 +546,7 @@ window.swarm.onStatus(({ id, status, detail, ctxPct, question, sub, waitingKind,
   // отметка о падении больше не про неё. Снимаем ЗДЕСЬ, а не по нажатию кнопки: поднять
   // разговор можно и просто набрав `claude` в той же оболочке, и отметка бы висела поверх
   // живого агента.
-  if (status === 'running') s.fallen = '';
+  if (status === 'running') { s.fallen = ''; refreshTabTools(s); }
   // Пришло это от хука/стенограммы (факт) или со скрёба экрана (догадка) — от этого
   // зависит, буферизуем ли «работает». См. applyStatus.
   s.sure = !!sure;
@@ -830,6 +871,11 @@ let digestMaxLen = DIGEST_API.clampMaxLen(localStorage.getItem('swarm.digestMaxL
 // Потолок бригады (Settings → Запуск) — сколько исполнителей прораб может нанять разом. Не
 // тумблер: роль прораба не назначается настройкой (см. спеку «Понятие»), это чистое число.
 let crewMax = HIRE_API.clampCeiling(localStorage.getItem('swarm.crewMax'));
+// Модель исполнителей по умолчанию и судьба освободившейся вкладки — тем же путём, что потолок:
+// живут в localStorage окна, main получает их IPC'ом (settings:crew), а не своим файлом
+// (в отличие от «Правил прораба», которые часть TG и приезжают из night:state).
+let crewModel = RESTART_API.MODELS.includes(localStorage.getItem('swarm.crewModel')) ? localStorage.getItem('swarm.crewModel') : '';
+let crewFreed = localStorage.getItem('swarm.crewFreed') === 'close' ? 'close' : 'stay';
 // Split a "cmd --flags" line into { cmd, flags }: first token = launcher, rest = flags.
 function parseAgentLine(line) {
   const t = (line || '').trim();
@@ -1156,6 +1202,8 @@ window.swarm.onAgentGone(({ id, how, label, reset, canResume }) => {
   if (reset) s.term.write(reset);
   if (how !== 'crash') return;
   s.fallen = label || 'агент упал';
+  s.canResume = !!canResume;
+  refreshTabTools(s);
   // «Работа сдана» с прошлого хода — теперь ложь: вкладка не сдала работу, она умерла. Иначе
   // paintAuto перекрасил бы подпись обратно на неё при следующем же обновлении статуса.
   s.done = false;
@@ -1413,9 +1461,11 @@ async function createSession(opts = {}) {
   tab.addEventListener('click', (e) => {
     // closest, а не сам target: внутри кнопок лежат svg, и клик приходит в них.
     if (e.target.closest('.close')) { requestCloseSession(id); return; }
-    // Полумесяц — единственная кнопка на карточке, кроме крестика: клик по ней НЕ открывает
-    // вкладку. Иначе жест «отдать вкладку» тянул бы за собой уход из той, в которой сидишь.
+    // Ни одна кнопка капсулы не открывает вкладку под собой — жест «сделать с карточкой
+    // что-то» не должен тянуть за собой уход в неё.
     if (e.target.closest('.moon')) { e.stopPropagation(); toggleTabAuto(id); return; }
+    if (e.target.closest('.prorab')) { e.stopPropagation(); window.swarm.night.makeProrab(id); return; }
+    if (e.target.closest('.resume')) { e.stopPropagation(); window.swarm.resumeNow(id); return; }
     activate(id);
   });
   // Меню карточки — родное меню системы (его собирает main). Правый клик по карточке жест
@@ -1747,12 +1797,49 @@ function showSettingsModal(tab) {
                 <span class="set-hint" hidden>Сколько исполнителей вкладка-прораб может держать разом. Прораб
                   просит открыть вкладку файлом заявки в своей рабочей папке — сворм читает его сам, открывает
                   вкладку и печатает в неё задачу; на упор в потолок прорабу тоже отвечает сворм, одной строкой.
-                  Не тумблер: прорабом вкладка становится, наняв первого исполнителя, а не этой настройкой.</span>
+                  Не тумблер: прорабом вкладку делает пункт «Сделать прорабом…» в меню карточки, а не эта
+                  настройка.</span>
               </div>
               <div class="set-range">
                 <input type="range" class="set-range-input" id="set-crew-max" />
                 <span class="set-range-num" id="set-crew-max-num"></span>
               </div>
+            </div>
+            <div class="set-field is-row">
+              <div class="set-head">
+                <span class="set-label">Модель исполнителей</span>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>Прораб дорогой (ведёт бригаду), бригада дешёвая. Заявка на найм
+                  без своей модели берёт эту; «как у прораба» — команду его же папки как есть, без флага.</span>
+              </div>
+              <select class="set-input set-select" id="set-crew-model"></select>
+            </div>
+            <div class="set-field is-row">
+              <div class="set-head">
+                <span class="set-label">Освободившаяся вкладка</span>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>Исполнитель сдал работу и стоит готовым, ничего не делая. «Решает
+                  прораб» — сворм её не трогает; «закрывается сама» — сворм закроет её сам через пару минут
+                  простоя и скажет прорабу одной строкой, чтобы бригада не копила забытых исполнителей.</span>
+              </div>
+              <select class="set-input set-select" id="set-crew-freed">
+                <option value="stay">Решает прораб</option>
+                <option value="close">Закрывается сама</option>
+              </select>
+            </div>
+            <div class="set-note">Вопросы исполнителей всегда идут прорабу, разрешения на запись
+              и команды — всегда человеку. Это не переключатели: разрешения — про безопасность, а
+              не про задачу, и прораб их не раздаёт (спека «Кто что видит»).</div>
+            <div class="set-field">
+              <div class="set-head">
+                <span class="set-label">Правила прораба</span>
+                <button type="button" class="set-q" aria-label="подсказка">?</button>
+                <span class="set-hint" hidden>Свой текст поверх заготовки — только прорабу, исполнители его не
+                  видят и читают правила проекта как обычно, из CLAUDE.md. Едет в контекст каждой сессии
+                  прораба и стоит токенов при каждом перезапуске — коротко, не регламент на страницу. Пусто —
+                  работает одна заготовка.</span>
+              </div>
+              <textarea class="set-input set-prose" id="set-crew-rule" rows="3" spellcheck="false"></textarea>
             </div>
           </section>
         </div>
@@ -2008,6 +2095,23 @@ function showSettingsModal(tab) {
             </label>
             <button type="button" class="set-q" aria-label="подсказка">?</button>
             <span class="set-hint" hidden>Словами под заголовком: готов / работает / завис?</span>
+          </div>
+        </section>
+        <section class="set-group">
+          <div class="set-group-h">
+            <span>Кнопки на карточке</span>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Капсула в углу карточки — не более трёх, иначе четвёртая
+              полезет на имя. Всё, что убрано отсюда, остаётся в меню карточки (правый клик) —
+              капсула только ярлыки для самого частого.</span>
+          </div>
+          <div class="set-row" id="set-tab-tools"></div>
+          <div class="set-row">
+            <label class="set-check is-disabled">
+              <input type="checkbox" disabled />
+              <span class="set-check-tx">Переименование</span>
+            </label>
+            <span class="set-hint-inline">уже на двойном клике по имени</span>
           </div>
         </section>
         <section class="set-group">
@@ -2491,6 +2595,20 @@ function showSettingsModal(tab) {
   crewMaxI.value = String(crewMax);
   crewMaxI.addEventListener('input', () => { crewMaxNumEl.textContent = crewMaxI.value; });
   crewMaxNumEl.textContent = crewMaxI.value;
+  const crewModelI = overlay.querySelector('#set-crew-model');
+  const crewModelOpt = document.createElement('option');
+  crewModelOpt.value = '';
+  crewModelOpt.textContent = 'как у прораба';
+  crewModelI.appendChild(crewModelOpt);
+  RESTART_API.MODELS.forEach((m) => {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = m;
+    crewModelI.appendChild(o);
+  });
+  crewModelI.value = crewModel;
+  const crewFreedI = overlay.querySelector('#set-crew-freed');
+  crewFreedI.value = crewFreed;
   // --- Telegram panel -------------------------------------------------------
   // Everything here applies IMMEDIATELY (like the updates panel), not on «Сохранить»:
   // connecting a bot and binding a chat are actions, not preferences. The token field is
@@ -2766,6 +2884,12 @@ function showSettingsModal(tab) {
   // renderNightPill вне этой панели) сюда не подписан, так что черновик никто не перезатрёт.
   const nightDirty = { rule: false, ask: false };
 
+  // «Правила прораба» — то же черновик-до-save, но проще: нет заготовки хука, которую можно
+  // «вернуть» (спека, «Правила прораба» — своё поле поверх готовой механики, не замена ей).
+  const crewRuleI = overlay.querySelector('#set-crew-rule');
+  let crewRuleDirty = false;
+  crewRuleI.addEventListener('input', () => { crewRuleDirty = true; });
+
   function nightIsCustom(key) {
     return flatText(nightFields[key].value) !== flatText(nightDefaults[key]);
   }
@@ -2798,6 +2922,7 @@ function showSettingsModal(tab) {
     // Поле под курсором не трогаем: человек в нём печатает.
     if (document.activeElement !== nightRuleI && !nightDirty.rule) nightRuleI.value = st.rule || nightDefaults.rule;
     if (document.activeElement !== nightAskI && !nightDirty.ask) nightAskI.value = st.ask || nightDefaults.ask;
+    if (document.activeElement !== crewRuleI && !crewRuleDirty) crewRuleI.value = st.crewRule || '';
     refreshNightUi(st);
   }
 
@@ -2810,6 +2935,7 @@ function showSettingsModal(tab) {
       const same = typed === flatText(nightDefaults[key]);
       window.swarm.night.setTexts({ [key]: same ? '' : typed }).catch(() => {});
     }
+    if (crewRuleDirty) window.swarm.night.setTexts({ crewRule: flatText(crewRuleI.value) }).catch(() => {});
   }
 
   window.swarm.night.state().then(renderNightTexts).catch(() => {});
@@ -3200,6 +3326,39 @@ function showSettingsModal(tab) {
   };
   const colorRow = overlay.querySelector('#set-tab-colors');
   const tabPreviewEl = overlay.querySelector('#set-tab-preview');
+  const toolsRow = overlay.querySelector('#set-tab-tools');
+  const toolInputs = {};
+  TABSTYLE.TOOL_DEFS.forEach((t) => {
+    const label = document.createElement('label');
+    label.className = 'set-check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    const tx = document.createElement('span');
+    tx.className = 'set-check-tx';
+    tx.textContent = t.name;
+    label.append(input, tx);
+    toolsRow.appendChild(label);
+    toolInputs[t.key] = input;
+  });
+  // Потолок три (спека): не модалка «убери что-нибудь», а сами галочки гаснут при третьей —
+  // отменить нечего, четвёртая просто недоступна, пока не снимешь одну из трёх.
+  function syncToolInputs() {
+    const atMax = tabDraft.tools.length >= TABSTYLE.TOOLS_MAX;
+    TABSTYLE.TOOL_DEFS.forEach((t) => {
+      const checked = tabDraft.tools.includes(t.key);
+      toolInputs[t.key].checked = checked;
+      toolInputs[t.key].disabled = !checked && atMax;
+    });
+  }
+  TABSTYLE.TOOL_DEFS.forEach((t) => {
+    toolInputs[t.key].addEventListener('change', () => {
+      tabDraft.tools = toolInputs[t.key].checked
+        ? [...tabDraft.tools, t.key]
+        : tabDraft.tools.filter((k) => k !== t.key);
+      syncToolInputs();
+      renderTabPreview();
+    });
+  });
 
   TABSTYLE.DENSITIES.forEach((d) => {
     const o = document.createElement('option');
@@ -3245,6 +3404,7 @@ function showSettingsModal(tab) {
   };
 
   Object.keys(showInputs).forEach((k) => { showInputs[k].checked = tabDraft.show[k]; });
+  syncToolInputs();
 
   // Три карточки, потому что меньше не показывает главного: открытая и работающая
   // (кольцо теперь цвета её статуса, а не бирюзовое), спокойная готовая и зовущая
@@ -3303,6 +3463,8 @@ function showSettingsModal(tab) {
     // применялась сразу, это было одно и то же, а теперь превью — единственное место,
     // где выбранную раскладку видно до нажатия «Сохранить».
     tabPreviewEl.className = 'tab-preview ' + layoutDraft + ' ' + TABSTYLE.bodyClasses(tabDraft).join(' ');
+    // Капсула — по черновику, а не по бою: та же причина, что у плотности/цвета выше.
+    tabPreviewEl.querySelectorAll('.tools').forEach((el) => { el.innerHTML = toolsInner(null, tabDraft); });
   }
 
   function renderColorPickers() {
@@ -3557,10 +3719,16 @@ function showSettingsModal(tab) {
       }
     }
     const nextCrewMax = HIRE_API.clampCeiling(crewMaxI.value);
-    if (nextCrewMax !== crewMax) {
+    const nextCrewModel = RESTART_API.MODELS.includes(crewModelI.value) ? crewModelI.value : '';
+    const nextCrewFreed = crewFreedI.value === 'close' ? 'close' : 'stay';
+    if (nextCrewMax !== crewMax || nextCrewModel !== crewModel || nextCrewFreed !== crewFreed) {
       crewMax = nextCrewMax;
+      crewModel = nextCrewModel;
+      crewFreed = nextCrewFreed;
       localStorage.setItem('swarm.crewMax', String(crewMax));
-      window.swarm.setCrew({ max: crewMax });
+      localStorage.setItem('swarm.crewModel', crewModel);
+      localStorage.setItem('swarm.crewFreed', crewFreed);
+      window.swarm.setCrew({ max: crewMax, model: crewModel, freed: crewFreed });
     }
     pultEnabled = pultI.checked;
     localStorage.setItem('swarm.pult', pultEnabled ? '1' : '0');
@@ -3598,6 +3766,7 @@ function showSettingsModal(tab) {
     tabstyle = TABSTYLE.normalizeTabStyle(tabDraft);
     saveTabStyle();
     applyTabStyle();
+    for (const s of sessions.values()) refreshTabTools(s); // капсула могла поменять состав
     // Раскладка последней: она перекладывает хром и подгоняет терминал под новый
     // размер сцены, а делать это стоит уже с применённым видом карточек.
     if (layoutDraft !== currentLayout()) applyLayout(layoutDraft);
@@ -3661,6 +3830,7 @@ function activate(id, opts) {
   activeId = id;
   renderGate();
   renderDigestStrip();
+  renderCrewStrip();
   // Refit now that the holder is visible (fit on a hidden element is a no-op).
   requestAnimationFrame(() => { s.fit.fit(); if (!renaming) s.term.focus(); });
   refreshGit();
@@ -3709,6 +3879,15 @@ async function requestCloseSession(id) {
   const name = s.tab.querySelector('.label').textContent;
   if (await confirmModal(`Закрыть «${name}»? Сессия агента завершится.`, 'Закрыть')) closeSession(id);
 }
+
+// «Закрыть вкладку» из меню карточки — тот же путь, что крестик, с тем же подтверждением.
+window.swarm.onCloseRequest(({ id }) => requestCloseSession(String(id)));
+
+// «Закрыть всё» из диалога закрытия бригады — подтверждение уже было в самом диалоге (main),
+// здесь без второго «точно?» на каждую вкладку по очереди.
+window.swarm.onCrewCloseTabs(({ ids }) => {
+  for (const id of ids || []) if (sessions.has(String(id))) closeSession(String(id));
+});
 
 // Save open tabs so they restore next launch. For Claude we also keep the conversation
 // id (+ cmd/flags) to --resume that exact dialogue — not "last in cwd". sessionKey is
@@ -4039,7 +4218,20 @@ function crewChipsRow(s) {
     chip.className = 'crew-chip status-' + (k.status || 'ready') + (k.id === activeId ? ' active' : '');
     chip.textContent = crewChipLabel(name, i + 1);
     chip.title = k.digestText || name;
+    // Перетащить чип обратно в общий список — усыновление наоборот (спека, «Усыновление…
+    // обратно вытащить можно тем же движением»). Свой kind 'chip', а не 'card': чип не карточка
+    // и не должен попадать в реордер внутри группы (onWithinDragOver проверяет kind==='card').
+    chip.draggable = true;
+    chip.addEventListener('dragstart', (e) => { e.stopPropagation(); startDrag(e, { kind: 'chip', id: k.id, cwd: s.cwd }); });
     chip.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
+    // Меню чипа — «Открыть вкладку», и всё (спека, «Меню и кнопки на карточке»): клик уже
+    // делает то же самое, но правый клик — ожидаемый жест, и без пункта в нём чип выглядел бы
+    // немым по сравнению с обычной карточкой.
+    chip.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.swarm.night.chipMenu(k.id);
+    });
     row.appendChild(chip);
   });
   return row;
@@ -5270,6 +5462,8 @@ function paintCrew(s) {
   if (!s || !s.tab) return;
   s.tab.classList.toggle('is-crew', !!s.crew);
   renderCrewDots(s);
+  refreshTabTools(s); // «Сделать прорабом» гаснет из капсулы вместе с ролью
+  if (s.id === activeId) renderCrewStrip();
 }
 
 // Клик по подвалу прораба — НЕ по конкретной точке (та сама открывает вкладку и глушит
@@ -5289,6 +5483,8 @@ window.swarm.night.onParent(({ id, parentId }) => {
   const s = sessions.get(String(id));
   if (!s) return;
   s.parentId = parentId || null;
+  refreshTabTools(s);
+  if (s.id === activeId) renderCrewStrip();
   relayoutTabs();
   persistTabs();
 });
@@ -5299,6 +5495,9 @@ window.swarm.night.onCrew(({ id, crew }) => {
   paintCrew(s);
   persistTabs();
 });
+// Меню чипа собирает main (родное меню системы, как у карточки) — «Открыть вкладку» долетает
+// сюда пушем, потому что открыть вкладку умеет только окно (activate живёт здесь).
+window.swarm.night.onActivate(({ id }) => activate(String(id)));
 
 function confirmModal(message, okLabel = 'Выполнить') {
   return new Promise((resolve) => {
@@ -5439,6 +5638,62 @@ window.addEventListener('resize', refitVisibleTerms);
 // Without this the terminal overflows its container and clips the last line.
 const stageObserver = new ResizeObserver(refitVisibleTerms);
 stageObserver.observe(stageAgentsEl);
+
+// Усыновление перетаскиванием: обычная карточка (или чип чужой бригады) на карточку прораба
+// или в её раскрытый ряд чипов — жест из спеки «Понятие»/«Раскрытие», `tab:setParent` (шаг 1)
+// уже есть, здесь только мышь поверх него. Слушаем на ФАЗЕ ПОГРУЖЕНИЯ (capture) и на самом
+// прорабе НЕ используем: цель ищем по e.target, а перехватывать нужно РАНЬШЕ, чем
+// onWithinDragOver заберёт событие как реордер внутри той же группы (обычный случай — прораб и
+// исполнитель, открытый руками, часто лежат в одной папке).
+function crewDropTarget(e) {
+  const chipsRow = e.target.closest('.crew-chips');
+  const onChips = chipsRow && chipsRow.previousElementSibling;
+  const el = e.target.closest('.tab.is-crew') || (onChips && onChips.classList.contains('is-crew') ? onChips : null);
+  return el && el.dataset.sid ? el.dataset.sid : null;
+}
+// Что именно тащат — одна вкладка, независимо от формы жеста ('card' в группе, 'chip' из чужой
+// бригады, одиночный 'unit'-лоунер). Группу из нескольких вкладок ('unit' с более чем одной
+// внутри) не усыновляем — усыновление одной вкладки, а не папки.
+function crewDragSourceId() {
+  if (!drag) return null;
+  if (drag.kind === 'card' || drag.kind === 'chip') return drag.id || null;
+  if (drag.kind === 'unit') {
+    const ids = (withinOrder.get(drag.cwd) || []).filter((id) => sessions.has(id) && !sessions.get(id).parentId);
+    return ids.length === 1 ? ids[0] : null;
+  }
+  return null;
+}
+tabsEl.addEventListener('dragover', (e) => {
+  const prorabId = crewDropTarget(e);
+  const srcId = crewDragSourceId();
+  if (!prorabId || !srcId || srcId === prorabId) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+}, true);
+tabsEl.addEventListener('drop', (e) => {
+  const prorabId = crewDropTarget(e);
+  const srcId = crewDragSourceId();
+  if (!prorabId || !srcId || srcId === prorabId) return;
+  e.preventDefault();
+  e.stopPropagation();
+  dropped = true;
+  window.swarm.night.setParent(srcId, prorabId);
+}, true);
+
+// Вытащить обратно (усыновление наоборот) — отпустили чип НЕ над прорабом: capture-обработчик
+// выше для этого не сработал (нет валидной цели), событие доходит сюда обычной чередой.
+tabsEl.addEventListener('dragover', (e) => {
+  if (!drag || drag.kind !== 'chip') return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+});
+tabsEl.addEventListener('drop', (e) => {
+  if (!drag || drag.kind !== 'chip') return;
+  e.preventDefault();
+  dropped = true;
+  window.swarm.night.setParent(drag.id, null);
+});
 
 // Top-level reorder: dragging a loner card or a group head reorders the units
 // (folders + loners). A unit never drops inside a folder (that handler ignores it).
@@ -6360,7 +6615,7 @@ window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
-window.swarm.setCrew({ max: crewMax }); // потолок бригады
+window.swarm.setCrew({ max: crewMax, model: crewModel, freed: crewFreed }); // настройки бригады
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно
 // то, что ест whisper.cpp. Обратно уходит Float32, WAV собирает main.
@@ -6466,6 +6721,25 @@ function setDigestText(id, text, cache) {
   if (id === activeId) renderDigestStrip();
 }
 window.swarm.onDigest(({ id, text, cache }) => setDigestText(id, text, cache));
+
+// Знак бригады изнутри разговора — плавающая плашка поверх угла терминала, вне потока (см.
+// styles.css, «знак бригады изнутри»): в отличие от digest/gate её видимость ничего не сдвигает
+// и не требует пересчёта отступов. Прораб и ребёнок называют друг друга по имени — та же
+// причина, по которой их видно на карточке (спека, «Карточка прораба»).
+const crewStripEl = document.getElementById('crew-strip');
+function renderCrewStrip() {
+  if (!crewStripEl) return;
+  const s = sessions.get(activeId);
+  const parent = s && s.parentId ? sessions.get(s.parentId) : null;
+  const label = s && s.crew ? 'Прораб бригады'
+    : parent ? `Бригада: ${parent.tab.querySelector('.label').textContent}`
+      : s && s.parentId ? 'Бригада' : '';
+  crewStripEl.hidden = !label;
+  if (label) {
+    crewStripEl.querySelector('.crew-strip-ic').innerHTML = ICONS.crew;
+    crewStripEl.querySelector('.crew-strip-tx').textContent = label;
+  }
+}
 
 function renderDigestStrip() {
   if (!digestEl) return;

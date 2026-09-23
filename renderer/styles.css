@@ -358,12 +358,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab:hover .tools { opacity: 1; }
 .tab .tools > span { display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .tab .tools svg { width: 12px; height: 12px; flex: none; }
-.tab .moon, .tab .close { width: 16px; height: 16px; border-radius: 50%; }
+.tab .moon, .tab .close, .tab .prorab, .tab .resume { width: 16px; height: 16px; border-radius: 50%; }
 /* Разделитель — не украшение: он говорит, что кнопки РАЗНЫЕ. Одна отдаёт вкладку агенту,
    другая убивает процесс, и промахнуться между ними нельзя. */
 .tab .t-sep { width: 1px; height: 10px; background: var(--border); }
 .tab .moon:hover  { color: var(--night);  background: var(--panel); }
 .tab .close:hover { color: var(--danger); background: var(--panel); }
+.tab .prorab:hover, .tab .resume:hover { color: var(--accent); background: var(--panel); }
 
 /* While a title is being renamed, allow caret + text selection (the tab itself
    sets user-select:none, which otherwise freezes the contenteditable). */
@@ -1031,6 +1032,13 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
   margin-left: 3px; padding-left: 15px; border-left: 1px solid var(--border);
 }
 .set-sub.disabled { opacity: 0.4; pointer-events: none; }
+/* Капсула карточки: до трёх кнопок — четвёртая галочка гаснет сама, а не ругается модалкой
+   (спека «Меню и кнопки на карточке», потолок три). «Переименование» показано серым НАВСЕГДА —
+   не переключатель, а объяснение, почему его нет в списке. */
+.set-check.is-disabled { opacity: 0.45; cursor: default; }
+.set-check.is-disabled input { cursor: default; }
+.set-hint-inline { color: var(--muted); font-size: 12px; align-self: center; }
+#set-tab-tools { flex-wrap: wrap; row-gap: 8px; column-gap: 16px; }
 /* Литерал в прозе — плашка, как <code>: «ждёт ответа», --permission-mode, /tabs.
    Одним шрифтом с текстом они читались как часть фразы, а это имя, которое надо
    набрать или узнать на экране. */
@@ -2201,6 +2209,31 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 .link-tip.show { opacity: 1; }
+
+/* --- знак бригады изнутри разговора: плавающая плашка, вне потока -----------
+   Та же идея, что у капсулы кнопок карточки (styles.css, «Капсула лежит ПОВЕРХ КРОМКИ»):
+   появляется и исчезает, не сдвигая терминал и не требуя пересчёта отступов гейта/дайджеста
+   (в отличие от них — те раздвигают .term-holder и мерены стендом, см. комментарий там). */
+#crew-strip {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px -3px #000;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+#crew-strip[hidden] { display: none; }
+.crew-strip-ic { display: flex; color: var(--accent); }
+.crew-strip-ic svg { width: 13px; height: 13px; flex: none; }
+body.pult-on #crew-strip { top: 34px; }
 
 /* --- дайджест вкладки: полоска над терминалом ------------------------------
    Пара строк, которые агент сам пишет о том, чем занят (см. digestNote в

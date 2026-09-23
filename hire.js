@@ -79,6 +79,26 @@
     return out;
   }
 
+  // Разбор ответа прорабу от вопроса исполнителя (спека, «Кто что видит»: вопросы детей — прорабу,
+  // не человеку). Тот же файл, что и найм — прораб уже знает его путь, заводить второй незачем.
+  // {"answer": [{"name": "#629", "text": "…"}]}: имя — тот же ярлык, каким исполнителя нанимали,
+  // текст — то, что нужно допечатать в его вкладку.
+  function parseAnswers(raw) {
+    let obj;
+    try { obj = JSON.parse(raw); } catch (_) { return []; }
+    const list = obj && Array.isArray(obj.answer) ? obj.answer : [];
+    const out = [];
+    for (const item of list) {
+      if (out.length >= MAX_PER_FILE) break;
+      if (!item || typeof item !== 'object') continue;
+      const name = trimStr(item.name, NAME_MAX);
+      const text = trimStr(item.text, PROMPT_MAX);
+      if (!name || !text) continue;
+      out.push({ name, text });
+    }
+    return out;
+  }
+
   // Строка, которую сворм печатает во вкладку в тот миг, когда человек сделал её прорабом (меню
   // карточки). Живая сессия иначе узнала бы о своей роли только на следующем старте — строку на
   // старте пишет хук (crewNote в hooks/swarm-signal.mjs), а он уже отработал. Только механика,
@@ -92,12 +112,15 @@
         + ' сделать", "model": "sonnet"}]}. Массив — можно нескольких разом, model необязателен.',
       `Задачу в новую вкладку печатаю я сам и отвечу тебе строкой, кого открыл. Потолок бригады: ${clampCeiling(max)}.`,
       'Вопросы исполнителей по задаче — тебе; разрешения на запись и команды — всегда человеку.',
+      `Вопрос исполнителя я допечатаю прямо тебе в разговор. Ответить ему напрямую нечем — ты сидишь`
+        + ` в своей вкладке, а не в его, — положи ответ в тот же файл ${hireFile} одним JSON:`
+        + ' {"answer": [{"name": "#629", "text": "…"}]}, и я допечатаю его вкладке сам.',
       'Сейчас ничего не нанимай — дождись, какую работу даст человек.',
     ].join('\n');
   }
 
   return {
     fileName, clampCeiling, MIN_MAX, MAX_MAX, DEFAULT_MAX, NAME_MAX, PROMPT_MAX, MAX_PER_FILE,
-    parseRequest, prorabIntro,
+    parseRequest, parseAnswers, prorabIntro,
   };
 });

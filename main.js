@@ -970,6 +970,9 @@ setInterval(() => {
         // «работает». Без второго условия его началом считался бы момент, когда человек
         // отправил задачу час назад, и мост принял бы за свежий текст итог прошлого хода.
         if (next.status === 'running' && (prev !== 'running' || (wasBg && !next.bg))) d.turnStartedAt = now;
+        // Освободившаяся вкладка (спека, «Настройки бригады»): новый ход — значит уже не
+        // свободна, отсчёт простоя начинается заново.
+        if (next.status === 'running' && d.parentId) d.crewIdleSince = 0;
         // Turn finished on a task that came from the phone → report back there.
         //
         // `d.tgAck` — ДОЛГ: в чате висит «получил, думаю…», то есть человек с телефона ждёт
@@ -994,6 +997,8 @@ setInterval(() => {
         // итог и замолчал. А вход в фон концом хода считается ровно один раз — на переходе,
         // иначе каждое шевеление внутри фонового ожидания слало бы в чат один и тот же текст.
         const turnEnded = prev === 'running' && (next.status === 'ready' || (d.bg && !wasBg));
+        // Ход кончился, вкладка свободна — с этого мига считаем простой (см. crewFreeTick).
+        if (turnEnded && d.parentId && next.status === 'ready' && !next.bg) d.crewIdleSince = now;
         const relay = turnEnded && TG.chatId != null && (owed || (tgMirrors() && !d.rsQuiet));
         if (turnEnded) d.rsQuiet = false;
         // В журнал — КАЖДАЯ смена статуса вкладки, за которой следит телеграм, и решение
@@ -1933,7 +1938,7 @@ function tgPath() { return path.join(app.getPath('userData'), 'telegram.json'); 
 // версии, — и заменяется обычным.
 function tgLegacyPath() { return path.join(app.getPath('userData'), 'telegram.dat'); }
 
-function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', detailPick: false, keepAwake: true, night: false, nightRule: '', nightAsk: '', whisperBin: '', whisperModel: '' }; }
+function tgBlank() { return { token: '', chatId: null, isForum: false, topics: {}, prompt: '', detail: 'short', detailPick: false, keepAwake: true, night: false, nightRule: '', nightAsk: '', crewRule: '', whisperBin: '', whisperModel: '' }; }
 
 // The last result of tgCheckChat(), so the settings panel can show «бот администратор,
 // темы доступны» without re-asking Telegram on every render.
@@ -1968,6 +1973,9 @@ function tgLoad() {
     // третье положение, и файл этот хук уже читает (см. tgWriteModes).
     nightRule: String(d.nightRule || ''),
     nightAsk: String(d.nightAsk || ''),
+    // Своё поле прораба, тем же приёмом (спека, «Правила прораба»): заготовку крепить не надо,
+    // пусто здесь честнее кнопки «сбросить» — так же, как у ночного правила выше.
+    crewRule: String(d.crewRule || ''),
     // `mirrorAll` из файлов прежних версий сюда не переносится и нигде не читается: галку
     // «писать всегда» заменило одно положение «где я» (см. TG_PRESENCE). Поле в старом
     // файле останется лежать до первого сохранения и исчезнет само.
@@ -2632,26 +2640,48 @@ function tgTabName(id) {
 // The topic for this tab, created on first need. The mapping is keyed by the tab's
 // persistent key (not the per-run session id), so after a relaunch the same tab keeps
 // writing into the same topic instead of littering the group with new ones.
+// Хозяин темы: у бригады одна тема на всех (спека, «Телефон») — заводит и держит её прораб, а
+// дети в неё только пишут (сами сообщения по-прежнему подписаны их именем, см. tgNotifyWaiting
+// и соседей — tgTabName(id) там остаётся ИХ ярлыком, здесь только адрес темы и её шапка).
+// Мёртвый прораб — не хозяин: тема тогда как у одиночки, на самой вкладке, иначе у бригады с
+// упавшим прорабом навсегда не было бы темы вовсе.
+function tgTopicOwner(id, d) {
+  const parent = d && d.parentId ? det.get(d.parentId) : null;
+  return (parent && !parent.dead) ? { id: d.parentId, d: parent } : { id, d };
+}
+
+// Одна ли бригада у двух id — прораб и его ребёнок делят тему, значит расхождение «тема
+// зовёт X, кнопка про Y» между ними не расхождение прошлого запуска (telegram.callbackTab,
+// параметр sameCrew), а нормальная жизнь общей темы.
+function tgCrewOwnerOf(id) {
+  const d = det.get(id);
+  return (d && d.parentId) ? d.parentId : id;
+}
+function tgSameCrew(a, b) {
+  return a != null && b != null && tgCrewOwnerOf(a) === tgCrewOwnerOf(b);
+}
+
 async function tgTopicFor(id) {
   const d = det.get(id);
   if (!d || !TG.isForum || TG.chatId == null) return null;
-  const key = d.tabKey || '';
+  const owner = tgTopicOwner(id, d);
+  const key = owner.d.tabKey || '';
   if (!key) return null;
   const known = TG.topics[key];
   if (known) {
-    tgTopicSession.set(known, id);
+    tgTopicSession.set(known, owner.id);
     // First use in this run: the topic may have been closed when the tab last went away.
-    if (!d.tgTopicLive) {
-      d.tgTopicLive = true;
-      d.tgTopicName = d.name;
+    if (!owner.d.tgTopicLive) {
+      owner.d.tgTopicLive = true;
+      owner.d.tgTopicName = owner.d.name;
       tgTopicCall('reopenForumTopic', known).catch(reportMainError);
-      tgRenameTopic(id);          // the tab may have been renamed while we were away
+      tgRenameTopic(owner.id);    // the tab may have been renamed while we were away
     }
     return known;
   }
   const res = await tgFetchJson(telegram.apiUrl(TG.token, 'createForumTopic'), {
     chat_id: TG.chatId,
-    name: tgTabName(id).slice(0, 128),
+    name: tgTabName(owner.id).slice(0, 128),
   });
   if (!res.ok || !res.body || res.body.ok !== true) {
     // No rights to manage topics, or not a forum after all: fall back to the main chat
@@ -2664,21 +2694,23 @@ async function tgTopicFor(id) {
   if (!threadId) return null;
   TG.topics[key] = threadId;
   try { tgSave(); } catch (e) { reportMainError(e); }
-  tgTopicSession.set(threadId, id);
-  d.tgTopicLive = true;
-  d.tgTopicName = tgTabName(id);
+  tgTopicSession.set(threadId, owner.id);
+  owner.d.tgTopicLive = true;
+  owner.d.tgTopicName = tgTabName(owner.id);
   // Say what this topic is for, and leave a message worth replying to. An empty topic
   // gives you nothing to aim at; this line is the anchor for «пиши сюда».
-  const where = d.cwd ? '\n' + d.cwd : '';
+  const where = owner.d.cwd ? '\n' + owner.d.cwd : '';
+  const crewLine = owner.id === id ? '' : '\n\nОдна тема на всю бригаду — вопросы и разрешения'
+    + ' исполнителей приходят сюда же, подписанные их именем.';
   // Под шапкой темы — кнопки частых действий. Смысл: с телефона не надо набирать команды,
   // а шапка всегда наверху темы, то есть это постоянная панель управления вкладкой.
   tgRemember(await tgSend({
     threadId,
-    text: `Вкладка «${tgTabName(id)}».${where}\n\nПишите сюда — попадёт в этого агента.`,
+    text: `Вкладка «${tgTabName(owner.id)}».${where}${crewLine}\n\nПишите сюда — попадёт в этого агента.`,
     silent: true,
-    replyMarkup: telegram.actionKeyboard(String(id)),
-  }), id);
-  tgLog(`  создана тема ${threadId} для вкладки ${id}`);
+    replyMarkup: telegram.actionKeyboard(String(owner.id)),
+  }), owner.id);
+  tgLog(`  создана тема ${threadId} для вкладки ${owner.id}`);
   return threadId;
 }
 
@@ -2967,7 +2999,7 @@ function tgWriteModes() {
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
     restart: { on: RESTART_ENABLED },
     digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
-    crew: { max: CREW_MAX },
+    crew: { max: CREW_MAX, rule: TG.crewRule || '' },
     files,
   });
   if (body !== tgModesWritten) {
@@ -3637,7 +3669,7 @@ async function tgOnAction(qa, u, ack, routed) {
     if (!changed) await tgFlushHeld();
     return;
   }
-  const at = telegram.callbackTab({ threadId: u.threadId, routed, payloadTab: qa.tab });
+  const at = telegram.callbackTab({ threadId: u.threadId, routed, payloadTab: qa.tab, sameCrew: tgSameCrew });
   const tab = at.tab;
   if (tab == null) {
     await ack('Эта тема ни с одной вкладкой не связана — кнопки в ней уже ничего не адресуют.'
@@ -3780,7 +3812,7 @@ async function tgOnCallback(u) {
   // запроса и отпечаток конкретной вкладки, значит при расхождении оно просто не про ту вкладку,
   // и печатать в неё номер варианта нельзя. «Тема нам неизвестна» — тоже отказ, иначе решал бы
   // один payload из прошлого запуска.
-  const at = telegram.callbackTab({ threadId: u.threadId, routed, payloadTab: cb.tab });
+  const at = telegram.callbackTab({ threadId: u.threadId, routed, payloadTab: cb.tab, sameCrew: tgSameCrew });
   if (at.tab == null || at.mismatch) {
     tgLog(`  нажатие мимо: кнопка адресует вкладку ${cb.tab}, а тема ${u.threadId} —`
       + ` ${routed == null ? 'ничью' : 'вкладку ' + routed}`);
@@ -4907,6 +4939,11 @@ function nightKey(d) {
 function nightOnWaiting(id, d) {
   if (!d || d.dead || !autoOn(d)) return;
   if (nightBusyWithRestart(d)) return;
+  // Ребёнок бригады: вопрос — прорабу, а не общий толчок правилом ночи (спека, «Кто что
+  // видит»). Разрешения сюда не доходят — 'permission' у night.nudgeDecision уже 'stand' без
+  // толчка и до этой функции добирается тем же путём, что и у одиночки; здесь только реальные
+  // вопросы (kind 'question' или пустой — зов без уточнения).
+  if (d.parentId && d.waitingKind !== 'permission') { crewAskProrab(id, d); return; }
   const st = nightSt(d);
   if (st.nudgeTimer) return;
   const key = nightKey(d);
@@ -4945,10 +4982,47 @@ function nightOnWaiting(id, d) {
 }
 
 function nightCancelWaiting(d) {
+  if (d) d.crewAskKey = '';       // ушла из «ждёт» — следующий вопрос снова достоин строки прорабу
   const st = d && d.ni;
   if (!st) return;
   if (st.nudgeTimer) { clearTimeout(st.nudgeTimer); st.nudgeTimer = null; }
   st.stoodKey = '';
+}
+
+// Вопросы исполнителей — прорабу, не человеку (спека, «Кто что видит»). Разрешения — исключение
+// и сюда не попадают: nudgeDecision уже отправляет 'permission' веткой 'stand' без толчка, и до
+// этой функции такое ожидание не доходит (см. вызов в nightOnWaiting). Ребёнок продолжает стоять
+// (мандат его не отпускает без ответа), но толкать его общим правилом ночи бессмысленно — ответ
+// знает не текст правила, а прораб.
+function crewAskProrab(id, d) {
+  const parent = det.get(d.parentId);
+  const key = nightKey(d);
+  if (d.crewAskKey === key) return;      // про этот же вопрос прорабу уже сказали
+  d.crewAskKey = key;
+  if (!parent || parent.dead) return;    // прораб мёртв — писать некому; диалог закрытия бригады про это скажет
+  // Прораб живёт в СВОЁМ pty и дотянуться до чужого не может — только через тот же файл, которым
+  // нанимает (hire.js, «Протокол найма»): main читает его тактом и печатает ответ сам, той же
+  // дорогой, что и задачу при найме.
+  const file = hireFileFor(parent);
+  const label = d.name || id;
+  typeIntoTab(d.parentId, `[сворм] Вопрос от исполнителя «${label}»: ${d.question || '(вопрос без текста)'}\n`
+    + (file
+      ? `Ответь: положи в ${file} одним JSON {"answer": [{"name": "${label}", "text": "…"}]} — допечатаю ей сам.`
+      : 'Ответить нечем: не нашёл файл найма у этой вкладки.')
+    + ' Человека звать не нужно, разрешения он даёт сам.');
+  tgLog(`бригада (вопрос): вкладка ${id} спросила прораба ${d.parentId}`);
+}
+
+// Живой ребёнок бригады с таким именем — прораб называет исполнителя ярлыком вкладки (спека,
+// «Раскрытие»: «прораб должен уметь назвать ребёнка при найме»), тем же словом сворм ищет его
+// среди своих. Сравнение без регистра: агенту проще не думать о точном регистре чужого ярлыка.
+function findCrewChildByName(prorabId, name) {
+  const n = String(name == null ? '' : name).trim().toLowerCase();
+  if (!n) return '';
+  for (const [cid, c] of det) {
+    if (c.parentId === prorabId && !c.dead && String(c.name || '').trim().toLowerCase() === n) return cid;
+  }
+  return '';
 }
 
 // Упёрлись в стену лимита. Время сброса берём из снимка расхода — там оно абсолютное и
@@ -5173,6 +5247,7 @@ function nightState() {
     // Саму строку отдаём отдельно — настройкам её показывать, а не прятать.
     rule: TG.nightRule || '',
     ask: TG.nightAsk || '',
+    crewRule: TG.crewRule || '',
     ruleDefault: night.ruleBody(),
     askDefault: night.askBody(),
     protocol: night.protocol(nightMarker()),
@@ -5194,6 +5269,10 @@ function setTabAuto(id, on, from) {
   const d = det.get(key);
   if (!d) return false;
   const next = !!on;
+  // Мандат ребёнка безусловный (спека «Настройки бригады»): человек не открывал эту вкладку и
+  // не увидит её в списке, а значит снять с неё «работает без меня» некому — если исполнитель
+  // мешает, это разговор с прорабом, не тумблер здесь.
+  if (!next && d.parentId) return true;
   if (d.auto === next) return next;
   const wasAll = awayAll();
   // Забрали вкладку — значит человек здесь, и наследство «всё было отдано» больше не в силе
@@ -5238,7 +5317,11 @@ function setTabParent(id, parentId, from) {
   if (pid === key) return false;
   const parent = det.get(pid);
   if (!parent || parent.parentId) return false; // нет родителя или сам чей-то ребёнок
+  if (d.crew) return false;                     // прораб прорабом не усыновляется — один уровень
   d.parentId = pid;
+  // Мандат ребёнка безусловный и не зависит от того, нанят он (hireTask) или усыновлён
+  // перетаскиванием — обе двери сюда, и обе обязаны выдать одно и то же.
+  if (!d.auto) { d.auto = true; nightReset(d); safeSend('tab:auto', { id: key, auto: true }); }
   const wasCrew = parent.crew;
   parent.crew = true; // роль не снимается — см. комментарий у d.crew в makeDetector
   tgLog(`родство (${from || '—'}): вкладка ${key} — в бригаде ${pid}`);
@@ -5261,7 +5344,9 @@ function setAllAuto(on, from) {
   nightSync = true;
   try {
     for (const [id, d] of det) {
-      if (d.dead || d.auto === next) continue;
+      // Дети бригады — мимо: их мандат безусловный и общей луны не касается (спека «Настройки
+      // бригады»), а «коснулось N» не должно считать вкладки, которые остались как были.
+      if (d.dead || d.parentId || d.auto === next) continue;
       setTabAuto(id, next, from);
       touched++;
     }
@@ -5376,7 +5461,49 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   // Оговорки «сейчас в силе общий режим» здесь больше нет, и её отсутствие — это и есть
   // починка: галочка вкладки — единственное состояние, а «ночь включена» считается по
   // галочкам. Никакого второго слоя, который «в силе», под ней не лежит.
+  items.push({ type: 'separator' });
+  // «Закрыть вкладку» — правило капсулы («что вынесено кнопкой, обязано остаться в меню») в
+  // обратную сторону: раз крестик на карточке можно спрятать настройкой, в меню без этого
+  // пункта вкладку было бы нечем закрыть. Закрывает окно, а не main: main не умеет спрашивать
+  // renderer’овское подтверждение и рвать xterm/pty — тот же путь, что и крестик.
+  items.push({
+    label: 'Закрыть вкладку',
+    click: () => safeSend('tab:closeRequest', { id: key }),
+  });
+  // «Закрыть бригаду» — последний пункт меню прораба (спека, «Закрытие бригады»). У обычной
+  // вкладки и исполнителя его нет: закрытие бригады — то единственное действие с бригадой,
+  // которое принадлежит человеку.
+  if (d.crew) {
+    const n = crewLiveChildren(key) + 1;
+    items.push({
+      label: `Закрыть бригаду — ${n} вкладок…`,
+      click: () => { closeCrewDialog(key, 'меню карточки').catch(reportMainError); },
+    });
+  }
   Menu.buildFromTemplate(items).popup({ window: win });
+  return true;
+});
+
+// Кнопка капсулы «Сделать прорабом» — тот же путь, что пункт меню карточки (см. makeProrab):
+// диалог подтверждения решает main, окно только просит его открыть.
+ipcMain.handle('tab:makeProrab', (_e, { id } = {}) => makeProrab(String(id == null ? '' : id), 'капсула'));
+
+// Кнопка капсулы «Поднять упавший разговор» — тот же путь, что пункт меню карточки.
+ipcMain.handle('tab:resumeNow', (_e, { id } = {}) => {
+  const key = String(id == null ? '' : id);
+  const d = det.get(key);
+  return resumeAgentNow(key, d, 'капсула');
+});
+
+// Меню чипа раскрытой бригады — «Открыть вкладку», и всё (спека, «Меню и кнопки на
+// карточке»). Открыть умеет только окно (activate живёт в renderer) — просим его пушем.
+ipcMain.handle('chip:menu', (_e, { id } = {}) => {
+  const key = String(id == null ? '' : id);
+  if (!det.get(key) || !win) return false;
+  Menu.buildFromTemplate([{
+    label: 'Открыть вкладку',
+    click: () => safeSend('tab:activate', { id: key }),
+  }]).popup({ window: win });
   return true;
 });
 
@@ -5387,6 +5514,9 @@ ipcMain.handle('night:setTexts', (_e, raw) => {
   const t = raw || {};
   if (t.rule !== undefined) TG.nightRule = clean(t.rule);
   if (t.ask !== undefined) TG.nightAsk = clean(t.ask);
+  // «Правила прораба» — тот же приём, что ночные заготовки: своё поле поверх заготовки хука,
+  // без второй двери в настройках (спека, «Правила прораба»).
+  if (t.crewRule !== undefined) TG.crewRule = clean(t.crewRule);
   try { tgSave(); } catch (e) { reportMainError(e); }
   tgWriteModes();                 // правило нужно и хуку, он читает файл рядом с собой
   return nightState();
@@ -5854,6 +5984,15 @@ ipcMain.on('settings:digest', (_e, opts = {}) => {
 // открывает вкладку и печатает задачу ПЕРВЫМ ДЕЛОМ — сам, а не просит агента написать её
 // сообщением (лишний ход и новая точка отказа: он может забыть, а человеку это не видно).
 let CREW_MAX = hire.DEFAULT_MAX;
+// Модель исполнителей по умолчанию — прораб дорогой, бригада дешёвая (спека, «Настройки
+// бригады»). Пусто — заявка без своего `model` наследует команду папки как есть, тем же путём,
+// что и раньше (renderer.js:onCreateTab).
+let CREW_MODEL = '';
+// Освободившаяся вкладка: 'stay' (умолчание) — ничего не делаем, прораб решает сам; 'close' —
+// сворм закрывает её сам после паузы, чтобы бригада не копила простаивающих исполнителей, о
+// которых прораб забыл.
+let CREW_FREED = 'stay';
+const CREW_FREE_GRACE_MS = 2 * 60_000;
 const HIRE_TICK_MS = 5_000;
 // Сколько ждать, пока свежая вкладка домигает до «готов», прежде чем напечатать в неё задачу.
 // Не бесконечно: оболочка могла упасть на старте (битые флаги, разлогинен), и вечно ждать хуже,
@@ -5904,6 +6043,17 @@ function hireTick(id, d) {
   d.hireMtime = st.mtimeMs;
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
+  // Ответы на вопросы детей — тот же файл, что и найм (см. crewAskProrab): прораб не может
+  // дотянуться до чужого pty сам, только через этот такт.
+  for (const a of hire.parseAnswers(raw)) {
+    const cid = findCrewChildByName(id, a.name);
+    if (cid) {
+      typeIntoTab(cid, a.text);
+      tgLog(`бригада (ответ): прораб ${id} ответил «${a.name}»`);
+    } else {
+      typeIntoTab(id, `[сворм] Не нашёл в бригаде «${a.name}» — ответ не доставлен.`);
+    }
+  }
   const entries = hire.parseRequest(raw);
   if (!entries.length) return;
   const room = Math.max(0, CREW_MAX - crewLiveChildren(id));
@@ -5911,7 +6061,7 @@ function hireTick(id, d) {
   const skipped = entries.length - accepted.length;
   for (const entry of accepted) {
     safeSend('app:createTab', {
-      cwd: d.cwd, parentId: id, name: entry.name, model: entry.model || '', hireTask: entry.prompt,
+      cwd: d.cwd, parentId: id, name: entry.name, model: entry.model || CREW_MODEL, hireTask: entry.prompt,
     });
     tgLog(`найм (прораб ${id}): открываю «${entry.name}»`);
   }
@@ -5945,6 +6095,23 @@ function hireFireTick(now) {
   }
 }
 
+// Освободившаяся вкладка — настройка «Настройки бригады»: 'close' закрывает исполнителя,
+// простоявшего готовым дольше грации, сам. Закрываем ЧЕРЕЗ окно (crew:closeTabs → closeSession
+// → killSession), не убивая процесс отсюда напрямую — тот же путь, что у «Закрыть бригаду»,
+// и единственный, что снимает карточку/чип из списка, а не только красит её мёртвой.
+function crewFreeTick(now) {
+  if (CREW_FREED !== 'close') return;
+  for (const [id, d] of det) {
+    if (!d || d.dead || !d.parentId || !d.crewIdleSince) continue;
+    if (now - d.crewIdleSince < CREW_FREE_GRACE_MS) continue;
+    d.crewIdleSince = 0;
+    tgLog(`бригада (освобождение): вкладка ${id} простаивала — закрываю (настройка «сама»)`);
+    typeIntoTab(d.parentId, `[сворм] Закрыл свободного исполнителя «${d.name || id}» — в настройках`
+      + ' бригады «Освободившаяся вкладка» стоит «закрывается сама».');
+    safeSend('crew:closeTabs', { ids: [id] });
+  }
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const id of sessions.keys()) {
@@ -5953,6 +6120,7 @@ setInterval(() => {
     try { hireTick(id, d); } catch (e) { reportMainError(e); }
   }
   try { hireFireTick(now); } catch (e) { reportMainError(e); }
+  try { crewFreeTick(now); } catch (e) { reportMainError(e); }
 }, HIRE_TICK_MS);
 
 // Сделать вкладку прорабом — дверь человека в бригаду (меню карточки; позже — кнопка в капсуле,
@@ -5988,8 +6156,55 @@ async function makeProrab(id, from) {
   return true;
 }
 
+// Закрытие бригады — единственное действие с бригадой, которое принадлежит человеку (спека,
+// «Что человеку не принадлежит» / «Закрытие бригады»). Счётчик ничего не решает — решает, кто
+// не дописал, поэтому окно видит список: чем занята каждая вкладка и есть ли незакоммиченное
+// (git.js уже это считает для полоски веток, здесь просто переиспользуем).
+async function closeCrewDialog(id, from) {
+  const key = String(id == null ? '' : id);
+  const d = det.get(key);
+  if (!d || !d.crew || !win) return false;
+  const kids = [...det.entries()].filter(([cid, c]) => c.parentId === key && !c.dead);
+  const lines = await Promise.all(kids.map(async ([cid, c]) => {
+    let dirty = false;
+    try { dirty = !!(await git.gitInfo(c.cwd)).dirty; } catch (e) { reportMainError(e); }
+    const busy = c.status === 'waiting' ? 'не закончена'
+      : c.digestText || (c.status === 'running' ? 'работает' : 'готова, ждёт задачи');
+    return `• ${c.name || cid} — ${busy}${dirty ? ' — есть незакоммиченное' : ''}`;
+  }));
+  const canAsk = !d.dead;
+  const buttons = canAsk ? ['Попросить прораба свернуться', 'Закрыть всё', 'Отмена']
+    : ['Закрыть всё', 'Отмена'];
+  const r = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons,
+    defaultId: buttons.length - 1,
+    cancelId: buttons.length - 1,
+    message: `Закрыть бригаду «${d.name || key}» — ${kids.length + 1} вкладок?`,
+    detail: lines.length ? lines.join('\n') : 'Детей нет — закроется только сам прораб.',
+  });
+  const choice = buttons[r.response];
+  if (choice === 'Попросить прораба свернуться') {
+    // Ничего не закрывает — пишет прорабу: раз человек общается только с ним, это самое
+    // честное действие в этом окне (спека). Кнопка гаснет, если прораб мёртв — просить некого.
+    typeIntoTab(key, '[сворм] Человек просит закрыть бригаду целиком: доведи детей до коммита,'
+      + ' отпусти их (закрой их вкладки) и закройся сам.');
+    tgLog(`бригада (${from || '—'}): вкладка ${key} — попросили прораба свернуться`);
+    return true;
+  }
+  if (choice === 'Закрыть всё') {
+    const ids = [...kids.map(([cid]) => cid), key];
+    tgLog(`бригада (${from || '—'}): вкладка ${key} — закрываю всё (${ids.length})`);
+    safeSend('crew:closeTabs', { ids });
+    return true;
+  }
+  return false;
+}
+
 ipcMain.on('settings:crew', (_e, opts = {}) => {
   CREW_MAX = hire.clampCeiling(opts && opts.max);
+  CREW_MODEL = typeof opts.model === 'string' ? opts.model.trim().toLowerCase() : '';
+  CREW_FREED = opts && opts.freed === 'close' ? 'close' : 'stay';
   // Хук читает потолок из файла режимов, чтобы сказать прорабу актуальное число, а не то, с
   // которым сворм запустился.
   tgWriteModes();

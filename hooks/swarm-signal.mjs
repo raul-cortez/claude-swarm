@@ -477,7 +477,7 @@ const CREW_MAX_DEFAULT = 6;
 // прораба»): кто его вкладки, что вопросы детей идут ему, а не человеку, и как нанять
 // исполнителя. `hireFile` — абсолютный путь заявки ЭТОЙ вкладки, если известен (см. absPath у
 // selfRestartNote/digestNote выше — та же причина и то же поведение с кэшем).
-const crewNote = (view, absPath, hireFile, max) => {
+const crewNote = (view, absPath, hireFile, max, rule) => {
   const names = Object.values(view.crew).map((r) => r.tab || r.project || '?');
   const list = names.length ? names.join(', ') : 'пока никого — бригада пуста';
   const ceiling = Number.isFinite(max) ? max : CREW_MAX_DEFAULT;
@@ -487,18 +487,23 @@ const crewNote = (view, absPath, hireFile, max) => {
     : 'подставь значение $CLAUDE_CODE_SESSION_ID (переменная окружения твоей же сессии,'
       + ' `Write` сам `$VAR` не разворачивает) и положи в рабочую папку файл'
       + ' .swarm-hire-$CLAUDE_CODE_SESSION_ID.json.';
+  const own = String(rule || '').trim();
   return [
     `[сворм] Ты прораб: твоя бригада — ${list}.`,
     `Свободных вкладок сейчас: ${view.free}. Потолок бригады: ${ceiling}.`,
     'Вопросы детей по задаче — тебе, ты сам решаешь, что решить самому, а с чем идти к человеку.',
     'Разрешения на запись и команды — исключение: они всегда к человеку, это не про задачу.',
+    'Ответить исполнителю напрямую нечем — ты сидишь в своей вкладке, а не в его: вопрос я допечатаю',
+    `тебе сам, а твой ответ клади в тот же файл найма одним JSON {"answer": [{"name": "#629",`
+      + ' "text": "…"}]} — допечатаю его вкладке.',
     `Нанять исполнителя можешь сам, не дожидаясь человека: ${where}`,
     'Файл — одним JSON: {"hire": [{"name": "#629", "prompt": "что сделать", "model": "sonnet"}]}.',
     'Массив — можно нанять нескольких разом; model необязателен. Задачу печатаю я сам, как только',
     'вкладка откроется, — тебе писать ей отдельно не нужно; отвечу тебе строкой, кого открыл и как',
     'зовут в списке агентов, либо почему не открыл (упёрлись в потолок).',
     `Полный реестр — ${absPath}: там же видно, кто чем занят и кто ждёт ответа.`,
-  ].join('\n');
+    own ? `Правила человека для тебя как прораба: ${own}` : '',
+  ].filter(Boolean).join('\n');
 };
 
 // Ребёнку — только механика («твой прораб — вкладка такая-то»): он обычная вкладка и правила
@@ -908,7 +913,8 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
     try { raw = JSON.parse(readFileSync(peersFile, 'utf8')); } catch (_) { raw = null; }
     const view = raw ? peersViewFor(raw, sid) : { role: 'solo' };
     const crewMax = ex.crew && Number.isFinite(ex.crew.max) ? ex.crew.max : CREW_MAX_DEFAULT;
-    peersIntro = view.role === 'prorab' ? crewNote(view, peersFile, fileInfo && fileInfo.hire, crewMax)
+    const crewRule = ex.crew && typeof ex.crew.rule === 'string' ? ex.crew.rule : '';
+    peersIntro = view.role === 'prorab' ? crewNote(view, peersFile, fileInfo && fileInfo.hire, crewMax, crewRule)
       : view.role === 'child' ? childNote(view)
         : peersNote(peersFile);
   }
