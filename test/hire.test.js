@@ -125,6 +125,24 @@ test('parseAnswers и parseRequest читают один и тот же файл
   assert.strictEqual(HIRE.parseAnswers(raw).length, 1);
 });
 
+// --- parseRelease (прораб закрывает исполнителей тем же файлом) ----------------------------
+test('parseRelease: строки и объекты с name, без дублей и пустых', () => {
+  const raw = JSON.stringify({ release: ['#629', { name: '#630' }, '#629', '', 5, null] });
+  assert.deepStrictEqual(HIRE.parseRelease(raw), ['#629', '#630']);
+});
+
+test('parseRelease: не JSON или нет поля — пустой список; соседние поля не мешают', () => {
+  assert.deepStrictEqual(HIRE.parseRelease('не json'), []);
+  assert.deepStrictEqual(HIRE.parseRelease('{"release": "#1"}'), []);
+  const raw = JSON.stringify({ hire: [{ name: '#1', prompt: 'x' }], release: ['#2'] });
+  assert.deepStrictEqual(HIRE.parseRelease(raw), ['#2']);
+  assert.strictEqual(HIRE.parseRequest(raw).length, 1);
+});
+
+test('строка новому прорабу говорит, как закрыть исполнителя', () => {
+  assert.match(HIRE.prorabIntro('/f', 3), /\{"release": \["#629"\]\}/);
+});
+
 // --- prorabIntro ----------------------------------------------------------------------
 test('строка новому прорабу: путь заявки, формат, потолок, и «ничего не нанимай сам»', () => {
   const t = HIRE.prorabIntro('/p/.swarm-hire-c0ffee.json', 4);

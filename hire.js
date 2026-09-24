@@ -99,6 +99,23 @@
     return out;
   }
 
+  // Отпустить исполнителей — закрыть их вкладки: {"release": ["#629", "#630"]}. Сам прораб
+  // закрыть чужую вкладку не может (он сидит в своей), поэтому тем же файлом, что найм и ответы.
+  // Имя — тот же ярлык, каким нанимали; объект {"name": "#629"} тоже понимаем — агенту проще
+  // повторить форму соседних полей, чем помнить, что здесь она другая.
+  function parseRelease(raw) {
+    let obj;
+    try { obj = JSON.parse(raw); } catch (_) { return []; }
+    const list = obj && Array.isArray(obj.release) ? obj.release : [];
+    const out = [];
+    for (const item of list) {
+      if (out.length >= MAX_PER_FILE) break;
+      const name = trimStr(item && typeof item === 'object' ? item.name : item, NAME_MAX);
+      if (name && !out.includes(name)) out.push(name);
+    }
+    return out;
+  }
+
   // Строка, которую сворм печатает во вкладку в тот миг, когда человек сделал её прорабом (меню
   // карточки). Живая сессия иначе узнала бы о своей роли только на следующем старте — строку на
   // старте пишет хук (crewNote в hooks/swarm-signal.mjs), а он уже отработал. Только механика,
@@ -117,12 +134,13 @@
       `Вопрос исполнителя я допечатаю прямо тебе в разговор. Ответить ему напрямую нечем — ты сидишь`
         + ` в своей вкладке, а не в его, — положи ответ в тот же файл ${hireFile} одним JSON:`
         + ' {"answer": [{"name": "#629", "text": "…"}]}, и я допечатаю его вкладке сам.',
+      `Закрыть исполнителя, чья работа сдана, — тот же файл: {"release": ["#629"]}, закрою его вкладку сам.`,
       'Сейчас ничего не нанимай — дождись, какую работу даст человек.',
     ].join('\n');
   }
 
   return {
     fileName, clampCeiling, MIN_MAX, MAX_MAX, DEFAULT_MAX, NAME_MAX, PROMPT_MAX, MAX_PER_FILE,
-    parseRequest, parseAnswers, prorabIntro,
+    parseRequest, parseAnswers, parseRelease, prorabIntro,
   };
 });

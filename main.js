@@ -6090,6 +6090,25 @@ function hireTick(id, d) {
       typeIntoTab(id, `[сворм] Не нашёл в бригаде «${a.name}» — ответ не доставлен.`);
     }
   }
+  // Отпустить исполнителей — ДО найма из того же файла: закрытые освобождают место под потолком
+  // для новых из этой же заявки.
+  const released = [];
+  for (const name of hire.parseRelease(raw)) {
+    const cid = findCrewChildByName(id, name);
+    const c = cid && det.get(cid);
+    if (!c || c.crewClosing) {
+      typeIntoTab(id, `[сворм] Не нашёл в бригаде «${name}» — закрывать некого.`);
+      continue;
+    }
+    c.crewClosing = true;
+    released.push(cid);
+  }
+  if (released.length) {
+    safeSend('crew:closeTabs', { ids: released });
+    const names = released.map((cid) => `«${det.get(cid).name || cid}»`).join(', ');
+    tgLog(`бригада (прораб ${id}): отпускаю ${names}`);
+    typeIntoTab(id, `[сворм] Закрыл ${names}.`);
+  }
   const entries = hire.parseRequest(raw);
   if (!entries.length) return;
   let room = Math.max(0, CREW_MAX - crewLiveChildren(id));
@@ -6244,8 +6263,9 @@ async function closeCrewDialog(id, from) {
   if (choice === 'Попросить прораба свернуться') {
     // Ничего не закрывает — пишет прорабу: раз человек общается только с ним, это самое
     // честное действие в этом окне (спека). Кнопка гаснет, если прораб мёртв — просить некого.
-    typeIntoTab(key, '[сворм] Человек просит закрыть бригаду целиком: доведи детей до коммита,'
-      + ' отпусти их (закрой их вкладки) и закройся сам.');
+    typeIntoTab(key, '[сворм] Человек просит закрыть бригаду целиком: доведи детей до коммита и'
+      + ' отпусти их — {"release": [...]} в файле найма, — а когда закончишь, скажи человеку: тебя'
+      + ' он закроет сам.');
     tgLog(`бригада (${from || '—'}): вкладка ${key} — попросили прораба свернуться`);
     return true;
   }
