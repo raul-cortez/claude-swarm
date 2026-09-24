@@ -6037,7 +6037,7 @@ function typeIntoTab(id, text) {
 // человек намерен видеть его свободным, не разбираясь, что там закрылось само.
 function crewLiveChildren(prorabId) {
   let n = 0;
-  for (const d of det.values()) if (d.parentId === prorabId && !d.dead) n++;
+  for (const d of det.values()) if (d.parentId === prorabId && !d.dead && !d.crewClosing) n++;
   return n;
 }
 
@@ -6092,7 +6092,27 @@ function hireTick(id, d) {
   }
   const entries = hire.parseRequest(raw);
   if (!entries.length) return;
-  const room = Math.max(0, CREW_MAX - crewLiveChildren(id));
+  let room = Math.max(0, CREW_MAX - crewLiveChildren(id));
+  // Упёрлись в потолок — место освобождают закончившие: готовые, без задачи и без фоновой
+  // работы, дольше всех простоявшие — первыми. Закрыть вкладку сам прораб не может (его руки —
+  // только этот файл), и раньше он на «сначала закрой кого-то» просто вставал, хотя половина
+  // бригады давно сдала работу. Заявка сверх потолка и есть его «эта уже не нужна».
+  if (entries.length > room) {
+    const done = [...det.entries()]
+      .filter(([, c]) => c.parentId === id && !c.dead && !c.crewClosing && c.status === 'ready'
+        && !c.bg && !c.hireTask && c.crewIdleSince)
+      .sort((a, b) => a[1].crewIdleSince - b[1].crewIdleSince)
+      .slice(0, entries.length - room);
+    if (done.length) {
+      for (const [, c] of done) c.crewClosing = true;
+      room += done.length;
+      safeSend('crew:closeTabs', { ids: done.map(([cid]) => cid) });
+      const names = done.map(([cid, c]) => `«${c.name || cid}»`).join(', ');
+      tgLog(`найм (прораб ${id}): потолок — закрываю закончивших ${names}`);
+      typeIntoTab(id, `[сворм] Потолок бригады (${CREW_MAX}): закрыл закончивших ${names} —`
+        + ' на их место открываю новых.');
+    }
+  }
   const accepted = entries.slice(0, room);
   const skipped = entries.length - accepted.length;
   for (const entry of accepted) {
@@ -6105,8 +6125,9 @@ function hireTick(id, d) {
   // строкой из session:create, как только у вкладки появится sessionKey (см. там): раньше
   // этого момента сворм сам не знает, каким именем её назовут в списке агентов.
   if (skipped > 0) {
-    typeIntoTab(id, `[сворм] Потолок бригады (${CREW_MAX}) не пускает ещё ${skipped}: сначала`
-      + ' закрой кого-то из бригады или подними потолок в настройках.');
+    typeIntoTab(id, `[сворм] Потолок бригады (${CREW_MAX}) не пускает ещё ${skipped}: все исполнители`
+      + ' заняты — работают или ждут ответа. Как кто-то закончит, пришли заявку снова: закончившего'
+      + ' я закрою сам и открою нового на его место.');
   }
 }
 
