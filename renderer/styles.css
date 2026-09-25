@@ -315,25 +315,30 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    единственное место, где он говорит словами («работает без вас» / «работа сдана»), — эта же
    подпись. Комбинация редкая (прораба обычно не отдают), но раз мандат сильнее, подпись при
    нём побеждает точки, как и при «ждёт ответа». */
-.tab .crew-dots { display: none; align-items: center; min-width: 0; flex: 1 1 auto; }
+.tab .crew-dots { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
 .tab.is-crew .crew-dots { display: flex; }
 .tab.is-crew.is-auto .crew-dots { display: none; }
 .tab.is-crew .sub { display: none; }
 .tab.is-crew.is-auto .sub { display: block; }
 .tab.is-crew .agents, .tab.is-crew .cache-badge, .tab.is-crew .cpu-badge { display: none !important; }
 .crew-dot-list { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
-/* Пилюли в подвале — те же .crew-chip, что в раскрытом ряду, но ростом ровно в строку .sub
-   (min-height .foot): подвал прораба не имеет права менять высоту карточки. */
+/* Пилюли развёрнутого подвала — ростом ровно в строку .sub (min-height .foot), чтобы
+   разворот сверху не менял высоту карточки. */
 .tab .foot .crew-chip {
   padding: 0 5px;
   font-size: calc(var(--tab-sub-size) - 1px);
   line-height: calc(var(--tab-sub-size) * 1.3 - 2px);
 }
 .tab .foot .crew-chip::before { width: 5px; height: 5px; }
-/* «+N» — не исполнитель, точки статуса у неё нет; раскрытая — в акцентной рамке, как кнопка
-   в нажатом положении. */
-.crew-chip.crew-more::before { display: none; }
-.crew-chip.crew-more.open { color: var(--text); border-color: var(--accent); }
+.crew-overflow { flex: none; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+/* Точка открытого исполнителя — с кольцом, как обводка открытой карточки. */
+.crew-dot-list .sum-dot.active { box-shadow: 0 0 0 1.5px var(--panel-2), 0 0 0 2.5px var(--text); }
+/* Стрелка «развернуть/свернуть» — всегда у правого края подвала; развёрнуто смотрит назад. */
+.crew-toggle { flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 4px; color: var(--muted); cursor: pointer; }
+.crew-toggle[hidden] { display: none; }
+.crew-toggle:hover { color: var(--text); background: var(--panel); }
+.crew-toggle svg { width: 11px; height: 11px; flex: none; }
+.tab.crew-open .crew-toggle svg { transform: rotate(180deg); }
 
 /* Кнопки карточки — луна и крестик — одной капсулой в правом верхнем углу, наполовину за
    кромкой. Раньше это были два разных значка в разных местах: крестик угловым бейджем сверху,
@@ -419,53 +424,12 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 }
 .tab.is-crew:not(.status-waiting):not(.is-auto) .dot { background: transparent; }
 
-/* --- раскрытая бригада: чипы сиблингом после карточки прораба -------------- */
-/* Сиблинг, а не обёртка вокруг .tab — см. комментарий у relayoutTabs() в renderer.js про то,
-   почему: обёртка сломала бы перетаскивание карточек. Раскладка («слева — вниз, сверху —
-   вправо») достаётся от flex-direction самого .group-tabs, здесь только сама лента чипов.
-
-   «Рамка обнимает прораба вместе с детьми» без общей обёртки — швом: :has() у карточки
-   прораба узнаёт, что сразу за ней стоит лента чипов, снимает свою грань с этой стороны, а
-   лента её достраивает с обратной, отрицательным отступом схлопывая gap .group-tabs между
-   ними. Читается как одна рамка, хотя коробки на самом деле две. */
-.crew-chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--panel-2);
-}
-/* border-*-color: transparent, а не border-*: none — «съеденный» шов не должен съедать и
-   1px высоты самой карточки заодно (border-box считает толщину рамки в размер бокса ровно
-   пока у неё есть style; убери style, и карточка прораба стала бы на пиксель ниже обычной
-   ровно в раскрытом виде — стенд поймал это как 45 вместо 46). */
-.layout-rail .tab.is-crew:has(+ .crew-chips) {
-  border-bottom-color: transparent;
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.layout-rail .tab.is-crew:has(+ .crew-chips) + .crew-chips {
-  margin-top: -6px; /* съедает gap .group-tabs — шов исчезает */
-  border-top-color: transparent;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-}
-.layout-top .tab.is-crew:has(+ .crew-chips) {
-  border-right-color: transparent;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.layout-top .tab.is-crew:has(+ .crew-chips) + .crew-chips {
-  margin-left: -6px; /* тот же шов, но по горизонтали — раскладка сверху растёт вправо */
-  border-left-color: transparent;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  align-self: stretch;
-}
+/* --- развёрнутая бригада: пилюли на месте точек ---------------------------- */
+/* Отдельной ленты рядом с карточкой нет: стрелка в подвале (.crew-toggle) превращает точки в
+   пилюли в том же ряду, и растёт сама карточка — сверху вбок, по содержимому; слева вбок
+   некуда (карточка и так во всю ширину), поэтому пилюли переносятся строкой ниже внутри неё. */
+.layout-top .tab.is-crew.crew-open { width: max-content; }
+.layout-rail .tab.is-crew.crew-open .crew-dot-list { flex-wrap: wrap; row-gap: 3px; overflow: visible; }
 .crew-chip {
   flex: none;
   display: inline-flex;
@@ -473,7 +437,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   gap: 3px;
   padding: 2px 6px;
   border-radius: 999px;
-  /* Нейтральная, не акцентная: акцентом уже обведена карточка прораба вместе с рядом. */
+  /* Нейтральная, не акцентная: акцентом уже обведена сама карточка прораба. */
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);

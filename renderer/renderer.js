@@ -295,6 +295,8 @@ const ICONS = {
   command: SVG('<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>'),
   folder: SVG('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>'),
   chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
+  // Стрелка «развернуть бригаду» в подвале прораба — вправо, туда, куда карточка растёт.
+  chevronRight: SVG('<path d="m9 18 6-6-6-6"/>'),
   branch: SVG('<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>'),
   gear: SVG('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
   // Lucide "grip-vertical" — the drag handle on a card / folder header.
@@ -1451,6 +1453,7 @@ async function createSession(opts = {}) {
              renderCrewDots(), сама вкладка ничего не решает. -->
         <span class="crew-dots">
           <span class="crew-dot-list"></span>
+          <span class="crew-toggle" hidden>${ICONS.chevronRight}</span>
         </span>
       </span>
     </span>
@@ -1468,6 +1471,7 @@ async function createSession(opts = {}) {
     if (e.target.closest('.moon')) { e.stopPropagation(); toggleTabAuto(id); return; }
     if (e.target.closest('.prorab')) { e.stopPropagation(); window.swarm.night.makeProrab(id); return; }
     if (e.target.closest('.resume')) { e.stopPropagation(); window.swarm.resumeNow(id); return; }
+    if (e.target.closest('.crew-toggle')) { e.stopPropagation(); toggleCrewExpanded(id); return; }
     if (e.target.closest('.rename')) { e.stopPropagation(); startRename(tab.querySelector('.label')); return; }
     activate(id);
   });
@@ -4188,9 +4192,6 @@ function relayoutTabs() {
     for (const s of visible) {
       s.tab.dataset.cwd = cwd;
       inner.appendChild(s.tab);
-      // Раскрытая бригада (ряд .crew-chips сиблингом после карточки) ставится не здесь, а в
-      // renderCrewDots() ниже: в ряд идут только те, кому не хватило места в подвале, а это
-      // известно лишь после замера карточки, уже стоящей в DOM.
     }
     grp.append(head, inner);
     tabsEl.appendChild(grp);
@@ -4204,7 +4205,7 @@ function relayoutTabs() {
   renderPult(); // the chip count lives on the freshly rebuilt Пульт tab
 }
 
-// Пилюля исполнителя — одна и та же в подвале прораба и в раскрытом ряду: номер задачи или
+// Пилюля исполнителя в развёрнутом подвале прораба (см. renderCrewDots): номер задачи или
 // порядковая цифра, цвет точки = статус. Пилюля — не карточка: наведение показывает дайджест,
 // клик открывает вкладку, и всё (спека, «Раскрытие»).
 function crewChip(k, label, cwd) {
@@ -5421,10 +5422,11 @@ function crewChildren(id) {
   return kids;
 }
 
-// Подвал прораба: пилюли детей (цвет точки = статус), сколько влезает в ширину карточки, а
-// остаток — пилюлей «+N». Только она и раскрывает ряд .crew-chips под карточкой, и в ряду —
-// ровно те, кто не влез: раскрытие показывает спрятанное, а не дублирует видимое. Если влезли
-// все, раскрывать нечего — ряда нет, даже если бригаду раньше раскрывали.
+// Подвал прораба. Свёрнуто — точки детей (цвет = статус), сколько влезает в ширину, остаток —
+// «+N» текстом. Стрелка справа разворачивает бригаду НА МЕСТЕ: те же дети в том же ряду
+// становятся пилюлями с номером, а карточка растёт вбок (сверху) или строкой вниз (слева, где
+// вбок некуда) — отдельной секции рядом с карточкой нет. Клик по точке или пилюле открывает
+// вкладку исполнителя.
 function renderCrewDots(s) {
   if (!s || !s.crew) return;
   const list = s.tab.querySelector('.crew-dot-list');
@@ -5434,40 +5436,35 @@ function renderCrewDots(s) {
   const kids = [...sessions.values()].filter((k) => k.parentId === s.id);
   const label = new Map(kids.map((k, i) => [k.id, crewChipLabel(k.tab.querySelector('.label').textContent, i + 1)]));
   const shown = crewChildren(s.id);
+  const open = crewExpanded.has(s.id) && shown.length > 0;
+  s.tab.classList.toggle('crew-open', open);
+  const toggle = s.tab.querySelector('.crew-toggle');
+  toggle.hidden = shown.length === 0;
+  toggle.title = open ? 'Свернуть бригаду' : 'Развернуть бригаду';
   list.innerHTML = '';
-  const pills = shown.map((k) => list.appendChild(crewChip(k, label.get(k.id), s.cwd)));
-  const hidden = [];
-  // clientWidth 0 — подвал сейчас не виден (карточка ещё не в DOM, прораб ждёт ответа или
-  // отдан): мерить нечем, оставляем всех — пересчитает следующий relayout/ResizeObserver.
+  if (open) {
+    for (const k of shown) list.appendChild(crewChip(k, label.get(k.id), s.cwd));
+    return;
+  }
+  const dots = shown.map((k) => {
+    const d = document.createElement('span');
+    d.className = 'sum-dot status-' + (k.status || 'ready') + (k.id === activeId ? ' active' : '');
+    d.title = label.get(k.id) + ' — ' + (k.digestText || k.tab.querySelector('.label').textContent);
+    d.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
+    return list.appendChild(d);
+  });
+  // clientWidth 0 — подвал сейчас не виден (карточка ещё не в DOM, прораб отдан): мерить нечем,
+  // оставляем всех — пересчитает следующий relayout/ResizeObserver.
   if (list.clientWidth > 0 && list.scrollWidth > list.clientWidth) {
     const more = document.createElement('span');
-    more.className = 'crew-chip crew-more';
+    more.className = 'crew-overflow';
     list.appendChild(more);
-    while (pills.length && list.scrollWidth > list.clientWidth) {
-      pills.pop().remove();
-      hidden.unshift(shown[pills.length]);
-      more.textContent = '+' + hidden.length;
+    let hidden = 0;
+    while (dots.length && list.scrollWidth > list.clientWidth) {
+      dots.pop().remove();
+      more.textContent = '+' + (++hidden);
     }
-    const open = crewExpanded.has(s.id);
-    more.classList.toggle('open', open);
-    more.title = open ? 'Свернуть бригаду' : 'Ещё ' + hidden.length + ' — показать';
-    more.addEventListener('click', (e) => { e.stopPropagation(); toggleCrewExpanded(s.id); });
   }
-  // Раскрытый ряд — сиблинг сразу после карточки прораба, НЕ обёртка вокруг неё: он должен
-  // остаться прямым потомком .group-tabs, иначе перетаскивание карточек
-  // (onWithinDragOver/-Drop бьёт по прямым детям контейнера) сломается на первом же прорабе.
-  // Раскладка «слева-вниз / сверху-вправо» достаётся бесплатно от flex-direction самого
-  // .group-tabs — сиблинг просто течёт в ту же сторону, что и остальные карточки.
-  let row = s.tab.nextElementSibling;
-  if (row && !row.classList.contains('crew-chips')) row = null;
-  if (!(crewExpanded.has(s.id) && hidden.length && s.tab.parentNode)) { if (row) row.remove(); return; }
-  if (!row) {
-    row = document.createElement('div');
-    row.className = 'crew-chips';
-    s.tab.after(row);
-  }
-  row.innerHTML = '';
-  for (const k of hidden) row.appendChild(crewChip(k, label.get(k.id), s.cwd));
 }
 
 // Сколько пилюль влезает, зависит от ширины подвала, а она меняется без перекладки списка
@@ -5667,15 +5664,13 @@ const stageObserver = new ResizeObserver(refitVisibleTerms);
 stageObserver.observe(stageAgentsEl);
 
 // Усыновление перетаскиванием: обычная карточка (или чип чужой бригады) на карточку прораба
-// или в её раскрытый ряд чипов — жест из спеки «Понятие»/«Раскрытие», `tab:setParent` (шаг 1)
+// — жест из спеки «Понятие»/«Раскрытие», `tab:setParent` (шаг 1)
 // уже есть, здесь только мышь поверх него. Слушаем на ФАЗЕ ПОГРУЖЕНИЯ (capture) и на самом
 // прорабе НЕ используем: цель ищем по e.target, а перехватывать нужно РАНЬШЕ, чем
 // onWithinDragOver заберёт событие как реордер внутри той же группы (обычный случай — прораб и
 // исполнитель, открытый руками, часто лежат в одной папке).
 function crewDropTarget(e) {
-  const chipsRow = e.target.closest('.crew-chips');
-  const onChips = chipsRow && chipsRow.previousElementSibling;
-  const el = e.target.closest('.tab.is-crew') || (onChips && onChips.classList.contains('is-crew') ? onChips : null);
+  const el = e.target.closest('.tab.is-crew');
   return el && el.dataset.sid ? el.dataset.sid : null;
 }
 // Что именно тащат — одна вкладка, независимо от формы жеста ('card' в группе, 'chip' из чужой
