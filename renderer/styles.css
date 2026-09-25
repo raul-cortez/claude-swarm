@@ -331,8 +331,18 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 }
 .tab .foot .crew-chip::before { width: 5px; height: 5px; }
 .crew-overflow { flex: none; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
-/* Точка открытого исполнителя — с кольцом, как обводка открытой карточки. */
-.crew-dot-list .sum-dot.active { box-shadow: 0 0 0 1.5px var(--panel-2), 0 0 0 2.5px var(--text); }
+/* Точка открытого исполнителя светится цветом своего статуса, остальные на это время
+   притихают. Ряд обрезает всё, что не влезло (overflow: hidden, на этом держится «+N»), и
+   обрезал бы и свечение — кольцо так превращалось в скобки. Поэтому у ряда запас по краям
+   паддингом, съеденный обратно отрицательным отступом: место под свечение есть, а раскладка
+   подвала и высота карточки те же. */
+.tab:not(.crew-open) .crew-dot-list { padding: 5px 6px; margin: -5px -6px; }
+.crew-dot-list .sum-dot { --dot-c: var(--ready); }
+.crew-dot-list .sum-dot.status-running { --dot-c: var(--run); }
+.crew-dot-list .sum-dot.status-waiting { --dot-c: var(--waiting); }
+.crew-dot-list .sum-dot.status-dead    { --dot-c: var(--danger); }
+.crew-dot-list.has-active .sum-dot:not(.active) { opacity: 0.4; }
+.crew-dot-list .sum-dot.active { margin: 0 3px; box-shadow: 0 0 5px 1px var(--dot-c); }
 /* Стрелка «развернуть/свернуть» — всегда у правого края подвала; развёрнуто смотрит назад. */
 .crew-toggle { flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 4px; color: var(--muted); cursor: pointer; }
 .crew-toggle[hidden] { display: none; }

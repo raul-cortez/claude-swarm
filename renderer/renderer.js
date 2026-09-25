@@ -5465,6 +5465,8 @@ function renderCrewDots(s) {
       more.textContent = '+' + (++hidden);
     }
   }
+  // Приглушать соседей — только если светящаяся точка сама осталась на виду, а не ушла в «+N».
+  list.classList.toggle('has-active', !!list.querySelector('.sum-dot.active'));
 }
 
 // Сколько пилюль влезает, зависит от ширины подвала, а она меняется без перекладки списка
