@@ -5453,7 +5453,7 @@ function renderCrewDots(s) {
     d.addEventListener('click', (e) => { e.stopPropagation(); activate(k.id); });
     return list.appendChild(d);
   });
-  // clientWidth 0 — подвал сейчас не виден (карточка ещё не в DOM, прораб отдан): мерить нечем,
+  // clientWidth 0 — подвал сейчас не виден (карточка ещё не в DOM): мерить нечем,
   // оставляем всех — пересчитает следующий relayout/ResizeObserver.
   if (list.clientWidth > 0 && list.scrollWidth > list.clientWidth) {
     const more = document.createElement('span');
