@@ -787,7 +787,44 @@ const API_ERROR_RE = /\bAPI Error:.*\bmid-response\b/i;
 
 function apiErrorHit(snapshot) { return hits(snapshot, API_ERROR_RE); }
 
+// --- строка ввода: осталось ли в ней то, что мы напечатали -------------------------------
+// Сворм печатает во вкладку сам (ответ из телеги, ночной толчок, строка прорабу) и отдельно
+// жмёт Enter. Иногда Enter не срабатывает — Клод ещё разбирал длинную вставку и принял его
+// за перевод строки внутри неё, — и текст висит в поле ввода, пока человек не нажмёт сам.
+// Поле ввода Клода — строка «❯ …» сразу под горизонтальной чертой (над ней бывает ярлык
+// сессии: «──── swarm-fastio-9df90b43 ─»), продолжение — до следующей черты. Строка варианта
+// в диалоге («❯ 1. Yes») под чертой не стоит, и за поле ввода её не принять.
+const INPUT_RULE_RE = /^\s*─{8,}/;
+const INPUT_ROW_RE = /^\s*[❯>]\s?(.*)$/;
+
+function inputDraft(snapshot) {
+  const lines = String(snapshot == null ? '' : snapshot).split('\n');
+  for (let i = lines.length - 1; i > 0; i--) {
+    const m = lines[i].match(INPUT_ROW_RE);
+    if (!m || !INPUT_RULE_RE.test(lines[i - 1])) continue;
+    const out = [m[1]];
+    for (let j = i + 1; j < lines.length && !INPUT_RULE_RE.test(lines[j]); j++) out.push(lines[j]);
+    return out.join(' ').replace(/\s+/g, ' ').trim();
+  }
+  return null;
+}
+
+// Наш ли это текст — чтобы повторным Enter не отправить за человека ЕГО черновик. Сравниваем
+// начало без пробелов (перенос по ширине окна их меняет); длинную вставку Клод сворачивает в
+// «[Pasted text #1 +12 lines]» — это наша, человек за клавиатурой так не пишет.
+function draftIsOurs(draft, text) {
+  const d = String(draft || '');
+  if (!d) return false;
+  if (/^\[Pasted text/i.test(d)) return true;
+  const norm = (s) => String(s || '').replace(/\s+/g, '');
+  const want = norm(text).slice(0, 24);
+  const got = norm(d).slice(0, 24);
+  const n = Math.min(want.length, got.length);
+  return n > 0 && n >= Math.min(8, want.length) && want.slice(0, n) === got.slice(0, n);
+}
+
 module.exports = {
+  inputDraft, draftIsOurs,
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset, apiErrorHit,

@@ -557,7 +557,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, apiErrorHit, asksForInput, waitsForWork } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, apiErrorHit, asksForInput, waitsForWork, inputDraft, draftIsOurs } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent, hasPromptBox, trRunStale, RE_RUNNING } = require('./detector');
@@ -2918,12 +2918,45 @@ function tgRoute(u) {
 // первый кусок как ввод, а не склеить оба в один.
 const TG_ENTER_DELAY_MS = 90;
 
+// Напечатать во вкладку и ОТПРАВИТЬ — один путь для всех, кто пишет агенту от лица сворма
+// (ответ из телеги, ночной толчок, просьба о перезапуске, строки бригады). Раньше каждый
+// заводил Enter таймером от момента, когда текст ВСТАЛ в очередь, а не когда допечатался:
+// длинный текст (задача исполнителю, вопрос прорабу) ещё уезжал порциями, Enter приходил
+// вплотную к его хвосту, и Клод, не дочитав вставку, принимал его за перевод строки в ней —
+// сообщение висело в поле ввода. Теперь Enter ждёт, пока очередь опустеет, и ещё паузу по
+// длине текста; а через полторы секунды сворм смотрит на поле ввода и, если там всё ещё наш
+// текст, жмёт Enter снова (дважды, не больше, и никогда — на черновик человека).
+const SUBMIT_CHECK_MS = 1500;
+const SUBMIT_RETRIES = 2;
+function typeAndSubmit(id, text, body, enter) {
+  ptyType(id, body);
+  const settle = TG_ENTER_DELAY_MS + Math.min(1400, Math.floor(ptyWrite.byteLength(body) / 8));
+  const started = Date.now();
+  const whenDrained = () => {
+    if (!sessions.has(id)) return;
+    if (ptyOut.pending(id) > 0 && Date.now() - started < 10_000) { setTimeout(whenDrained, 25); return; }
+    setTimeout(() => { ptyType(id, enter); checkSubmitted(id, text, enter, SUBMIT_RETRIES); }, settle);
+  };
+  whenDrained();
+}
+function checkSubmitted(id, text, enter, left) {
+  setTimeout(() => {
+    const d = det.get(id);
+    if (!d || d.dead || !sessions.has(id) || !d.term) return;
+    let draft = null;
+    try { draft = inputDraft(snapshot(d)); } catch (_) { return; }
+    if (!draftIsOurs(draft, text)) return;
+    tgLog(`ввод: вкладка ${id} — напечатанное осталось в поле ввода, жму Enter ещё раз`);
+    ptyType(id, enter);
+    if (left > 1) checkSubmitted(id, text, enter, left - 1);
+  }, SUBMIT_CHECK_MS);
+}
+
 function tgAnswer(id, text) {
   const p = sessions.get(id);
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  ptyType(id, body);
   // Запоминаем ДОСЛОВНО напечатанное: по этому тексту стенограмма находит файл вкладки,
   // когда в папке несколько живых разговоров и догадки не срабатывают.
   //
@@ -2933,10 +2966,7 @@ function tgAnswer(id, text) {
   const dd = det.get(id);
   const typed = String(text).replace(/\r\n?/g, '\n');
   if (dd && typed.trim().length >= transcript.INJECTED_MIN) dd.tgLastSent = typed.slice(0, 200);
-  // Вкладка могла умереть за эти миллисекунды — тогда Enter уже некому, и ptyType это сам
-  // увидит. А если текст был длинным и ещё уезжает порциями, Enter встанет за ним в очередь:
-  // отдельным чтением stdin он от этого быть не перестаёт (см. telegram.inputWrites).
-  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
+  typeAndSubmit(id, text, body, enter);
   const d = det.get(id);
   if (d) {
     markAnswered(d, Date.now());
@@ -4948,8 +4978,7 @@ function nightType(id, text) {
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  ptyType(id, body);
-  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
+  typeAndSubmit(id, text, body, enter);
   const d = det.get(id);
   if (d) markAnswered(d, Date.now());
   return true;
@@ -6079,8 +6108,7 @@ function typeIntoTab(id, text) {
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  ptyType(id, body);
-  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
+  typeAndSubmit(id, text, body, enter);
   const d = det.get(id);
   if (d) markAnswered(d, Date.now());
   return true;
@@ -6480,8 +6508,7 @@ function restartType(id, text) {
   if (!p) return false;
   const [body, enter] = telegram.inputWrites(text);
   if (!body) return false;
-  ptyType(id, body);
-  setTimeout(() => ptyType(id, enter), TG_ENTER_DELAY_MS);
+  typeAndSubmit(id, text, body, enter);
   return true;
 }
 

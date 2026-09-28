@@ -1041,6 +1041,39 @@ test('снимок без времени остаётся главным', () =>
   assert.strictEqual(S.ctxPick({ snap: { used: 42, at: 0 }, line: 80, now: 1_700_000_000_000 }), 42);
 });
 
+// --- поле ввода: висит ли там напечатанное сворма ---------------------------------------
+const BOX = (row) => [
+  '⏺ Готово, жду задачу.',
+  '',
+  '────────────────────────────────────────── swarm-fastio-9df90b43 ─',
+  row,
+  '──────────────────────────────────────────────────────────────────',
+  '  Sonnet 5 · личная | fastio 16%',
+].join('\n');
+
+test('inputDraft: текст в поле ввода, пустое поле — пустая строка', () => {
+  assert.strictEqual(S.inputDraft(BOX('❯ [сворм] Вопрос от исполнителя «#679»')), '[сворм] Вопрос от исполнителя «#679»');
+  assert.strictEqual(S.inputDraft(BOX('❯ ')), '');
+});
+
+test('inputDraft: перенесённый по ширине текст склеивается', () => {
+  const snap = BOX('❯ первая половина\n  вторая половина');
+  assert.strictEqual(S.inputDraft(snap), 'первая половина вторая половина');
+});
+
+test('inputDraft: вариант диалога «❯ 1. Yes» не принимается за поле ввода', () => {
+  assert.strictEqual(S.inputDraft('Do you want to proceed?\n❯ 1. Yes\n  2. No'), null);
+});
+
+test('draftIsOurs: наш текст, свёрнутая вставка — да; черновик человека и пусто — нет', () => {
+  const ours = '[сворм] Вопрос от исполнителя «#679»: какую ветку брать?';
+  assert.ok(S.draftIsOurs('[сворм] Вопрос от исполнителя «#679»: какую', ours));
+  assert.ok(S.draftIsOurs('[Pasted text #1 +12 lines]', ours));
+  assert.ok(!S.draftIsOurs('ок, бери (а)', ours));
+  assert.ok(!S.draftIsOurs('', ours));
+  assert.ok(!S.draftIsOurs(null, ours));
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
