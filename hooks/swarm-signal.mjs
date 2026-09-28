@@ -478,7 +478,7 @@ const CREW_MAX_DEFAULT = 6;
 // исполнителя. `hireFile` — абсолютный путь заявки ЭТОЙ вкладки, если известен (см. absPath у
 // selfRestartNote/digestNote выше — та же причина и то же поведение с кэшем).
 const crewNote = (view, absPath, hireFile, max, rule) => {
-  const names = Object.values(view.crew).map((r) => r.tab || r.project || '?');
+  const names = Object.values(view.crew).map((r) => (r.tab || r.project || '?') + (r.sub ? ` (${r.sub})` : ''));
   const list = names.length ? names.join(', ') : 'пока никого — бригада пуста';
   const ceiling = Number.isFinite(max) ? max : CREW_MAX_DEFAULT;
   const where = hireFile
@@ -499,8 +499,10 @@ const crewNote = (view, absPath, hireFile, max, rule) => {
     'Закрыть исполнителя, чья работа сдана, — тот же файл: {"release": ["#629"]}, закрою его вкладку',
     'сам. Закрывай, когда он больше не нужен: закрытый разговор не вернуть, файлы остаются.',
     `Нанять исполнителя можешь сам, не дожидаясь человека: ${where}`,
-    'Файл — одним JSON: {"hire": [{"name": "#629", "prompt": "что сделать", "model": "sonnet"}]}.',
-    'Массив — можно нанять нескольких разом; model необязателен. Задачу печатаю я сам, как только',
+    'Файл — одним JSON: {"hire": [{"name": "#629", "prompt": "что сделать", "model": "sonnet", "sub": "личная"}]}.',
+    'sub — подписка из настроек сворма, на которой открыть исполнителя (без неё — твоя); как их делить,',
+    'говорит человек, расход всех подписок я кладу тебе в начало каждого хода.',
+    'Массив — можно нанять нескольких разом; model и sub необязательны. Задачу печатаю я сам, как только',
     'вкладка откроется, — тебе писать ей отдельно не нужно; отвечу тебе строкой, кого открыл и как',
     'зовут в списке агентов, либо почему не открыл (упёрлись в потолок).',
     'В потолок упираться не страшно — присылай заявку всё равно: исполнителей, которые закончили и',
@@ -878,7 +880,17 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // столько, сколько агент реально тянет с первой записью.
   const needsDigestNudge = starts && !isSubagent(payload) && ex.digest && ex.digest.on
     && !digestWritten(payload, digestFileFor(sid), fileInfo && fileInfo.digest);
+  // Прораб ли это — по реестру, тем же peersViewFor, что и строки на старте. Читаем только в
+  // начале хода и только когда есть что сказать (подписок больше одной).
+  let subsForCrew = '';
+  if (showsUsage && !isSubagent(payload) && Array.isArray(ex.subCards) && ex.subCards.length > 1) {
+    const peersAt = fileURLToPath(new URL('./swarm-tabs.json', import.meta.url));
+    let rows = null;
+    try { rows = JSON.parse(readFileSync(peersAt, 'utf8')); } catch (_) { rows = null; }
+    if (rows && peersViewFor(rows, sid).role === 'prorab') subsForCrew = allSubsNote(ex.subCards, ex.snaps, nowSec);
+  }
   const note = [showsUsage ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
+    subsForCrew,
     wantsSummary ? summaryNote() : '',
     needsDigestNudge ? digestMissingNudge(fileInfo && fileInfo.digest) : '']
     .filter(Boolean).join('\n\n');
@@ -1011,16 +1023,44 @@ function subName(cards, home) {
   return '';
 }
 
-function readUsage(sessionId) {
+function readSnaps() {
   const dir = new URL('./usage/', import.meta.url);
   let names = [];
-  try { names = readdirSync(dir); } catch (_) { return null; }
+  try { names = readdirSync(dir); } catch (_) { return []; }
   const snaps = [];
   for (const n of names) {
     if (!n.endsWith('.json')) continue;
     try { snaps.push(JSON.parse(readFileSync(new URL(n, dir), 'utf8'))); } catch (_) { /* пропускаем */ }
   }
-  return pickUsage(snaps, sessionId);
+  return snaps;
+}
+
+function readUsage(sessionId) {
+  return pickUsage(readSnaps(), sessionId);
+}
+
+// Прорабу — расход ВСЕХ подписок разом, а не только своей: исполнителей он нанимает на любую
+// (поле "sub" в заявке), и правило человека вроде «выжимаем личную, потом едем на рабочую»
+// без чисел по каждой держать нечем. Одна строка на подписку (по конфигу — у одной подписки
+// бывает несколько карточек); подписка без снимка — с пометкой, а не молча пропущена: прораб
+// должен знать, что она есть.
+function allSubsNote(cards, snaps, nowSec) {
+  const seen = new Set();
+  const parts = [];
+  for (const c of Array.isArray(cards) ? cards : []) {
+    const name = String((c && c.name) || '').trim();
+    const home = String((c && c.home) || '').trim();
+    if (!name || seen.has(home || name)) continue;
+    seen.add(home || name);
+    const fresh = home ? (Array.isArray(snaps) ? snaps : [])
+      .filter((s) => s && String(s.home || '') === home && (s.five || s.seven))
+      .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))[0] : null;
+    const win = (label, l) => (l && Number.isFinite(l.spent)) ? `${label} ${l.spent}%` : '';
+    const nums = fresh ? [win('5ч', fresh.five), win('7д', fresh.seven)].filter(Boolean).join(', ') : '';
+    parts.push(`«${name}» — ${nums || 'расход пока не известен'}`);
+  }
+  if (!parts.length) return '';
+  return `Подписки для найма исполнителей ("sub" в заявке): ${parts.join('; ')}.`;
 }
 
 // The files the app writes beside this script (all three live in userData).
@@ -1085,9 +1125,10 @@ async function main() {
       // хода. На каждом PostToolUse обходить папку значило бы читать диск десятки раз за ход.
       const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'
         || (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Task'));
-      const usage = wantsUsage ? readUsage(payload.session_id) : null;
+      const snaps = wantsUsage ? readSnaps() : [];
+      const usage = wantsUsage ? pickUsage(snaps, payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
-        { usage, nightRule: nightCustom, autoSessions, restart: restartModes, digest: digestModes,
+        { usage, snaps, nightRule: nightCustom, autoSessions, restart: restartModes, digest: digestModes,
           crew: crewModes, subCards, files: fileMap });
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
@@ -1120,7 +1161,7 @@ if (isDirectRun(import.meta.url, process.argv[1])) main();
 export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, deniesPicker,
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
-  usageNote, subName, pickUsage, fmtEta, GATE_FIVE, GATE_SEVEN,
+  usageNote, subName, pickUsage, allSubsNote, fmtEta, GATE_FIVE, GATE_SEVEN,
   selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
   DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN,
   peersNote, peersViewFor, crewNote, childNote, hireFileFor, CREW_MAX_DEFAULT };

@@ -75,8 +75,12 @@ test('пустые поля не роняют визитку — вкладка 
   assert.deepStrictEqual(r, {
     cwd: '', sessionKey: '', claudeSessionId: 'c0ffee',
     project: '', tab: '', auto: false, parentId: null, crew: false,
-    status: '', detail: '', digest: '',
+    status: '', detail: '', digest: '', sub: '',
   });
+});
+
+test('подписка вкладки — в визитке: по ней прораб держит правило человека', () => {
+  assert.strictEqual(P.rows([['t1', tab({ subName: 'личная' })]]).t1.sub, 'личная');
 });
 
 test('родство и роль прораба тоже в визитке — по ним читатель решает, кто кого видит', () => {

@@ -1064,6 +1064,30 @@ test('end to end: прораб получает абсолютный путь з
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('allSubsNote: расход каждой подписки по её конфигу, без снимка — с пометкой', () => {
+  const cards = [
+    { name: 'рабочая', home: '/h/work', line: 'claude' },
+    { name: 'рабочая opus', home: '/h/work', line: 'claude --model opus' },
+    { name: 'личная', home: '/h/my', line: 'claude-my' },
+    { name: 'новая', home: '', line: 'claude-x' },
+  ];
+  const snaps = [
+    { home: '/h/work', at: 1, five: { spent: 10 }, seven: { spent: 40 } },
+    { home: '/h/work', at: 2, five: { spent: 15 }, seven: { spent: 47 } },
+    { home: '/h/my', at: 1, five: { spent: 80 } },
+  ];
+  const t = H.allSubsNote(cards, snaps, 0);
+  assert.match(t, /«рабочая» — 5ч 15%, 7д 47%/);
+  assert.ok(!/рабочая opus/.test(t), 'одна подписка — одна строка');
+  assert.match(t, /«личная» — 5ч 80%/);
+  assert.match(t, /«новая» — расход пока не известен/);
+  assert.match(t, /"sub"/);
+});
+
+test('allSubsNote: нет карточек с именами — молчит', () => {
+  assert.strictEqual(H.allSubsNote([{ name: '', home: '/h' }], [], 0), '');
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

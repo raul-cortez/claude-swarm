@@ -435,8 +435,13 @@ function subsPush() { safeSend('subs:accounts', subsAccounts()); }
 // что-то изменилось: файл читается на каждом ходе каждой вкладки.
 let subsWritten = '';
 
+// Те же карточки — для main самого: найм по подписке (hireTick) и подпись подписки у вкладки в
+// реестре (writeTabsMap).
+let subsCardsNow = [];
+
 function subsWriteCards(list) {
   const cards = subs.cards(list).map((c) => ({ line: c.line, name: c.name, home: c.home }));
+  subsCardsNow = cards;
   const body = JSON.stringify({ cards });
   if (body === subsWritten) return;
   try {
@@ -3031,7 +3036,36 @@ function tgWriteModes() {
 // частота, тот же сравниватель. Заводить рядом второй с тем же содержимым значило бы завести
 // и второй способ разойтись с правдой.
 let tabsMapWritten = '';
+// Какой конфиг у какого разговора — из снимков расхода (их пишет строка статуса). Кэш на
+// несколько секунд: реестр пишется на каждой смене статуса, а обходить папку снимков так часто
+// незачем — подписка у вкладки не меняется посреди разговора.
+let sessionHomesCache = { at: 0, map: new Map() };
+function sessionHomes() {
+  const now = Date.now();
+  if (now - sessionHomesCache.at < 10_000) return sessionHomesCache.map;
+  const map = new Map();
+  for (const s of usageSnapshots()) if (s.session && s.home) map.set(String(s.session), String(s.home));
+  sessionHomesCache = { at: now, map };
+  return map;
+}
+
+// Имя подписки вкладки: по конфигу её разговора (точно), а пока снимка нет — по строке запуска.
+// Тот же subs.matchIndex, которым карточка учит свою папку, — два способа сопоставлять разошлись бы.
+function tabSubName(d, homes) {
+  if (!subsCardsNow.length) return '';
+  const home = (d.claudeSessionId && homes.get(String(d.claudeSessionId))) || '';
+  const i = subs.matchIndex(subsCardsNow, { home, lines: [String(d.launchCmd || '')] });
+  return i === -1 ? '' : subsCardsNow[i].name;
+}
+
+function subCardByName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return n ? subsCardsNow.find((c) => c.name && c.name.trim().toLowerCase() === n) || null : null;
+}
+
 function writeTabsMap() {
+  const homes = sessionHomes();
+  for (const d of det.values()) if (!d.dead) d.subName = tabSubName(d, homes);
   const body = JSON.stringify(peers.rows(det));
   if (body === tabsMapWritten) return;          // ничего не изменилось — диск не трогаем
   try {
@@ -5020,6 +5054,24 @@ function crewAskProrab(id, d) {
   tgLog(`бригада (вопрос): вкладка ${id} спросила прораба ${d.parentId}`);
 }
 
+// Исполнитель упёрся в лимит подписки — прорабу строка, один раз на стену (новая стена — новое
+// время сброса). Без неё правило «выжимаем личную, потом едем на рабочую» держать нечем: прораб
+// узнал бы о лимите только по исполнителю, который молча стоит.
+function crewLimitNote(id, d, untilMs) {
+  const key = String(untilMs || 'unknown');
+  if (d.crewLimitKey === key) return;
+  d.crewLimitKey = key;
+  const parent = det.get(d.parentId);
+  if (!parent || parent.dead) return;
+  const subName = d.subName || tabSubName(d, sessionHomes());
+  const left = untilMs ? Math.max(0, Math.round((untilMs - Date.now()) / 60000)) : 0;
+  const when = untilMs ? ` Сброс через ${left >= 60 ? `${Math.floor(left / 60)}ч${left % 60 ? `${left % 60}м` : ''}` : `${left}м`} — тогда разбужу его сам.` : '';
+  typeIntoTab(d.parentId, `[сворм] Исполнитель «${d.name || id}» упёрся в лимит`
+    + `${subName ? ` подписки «${subName}»` : ' подписки'}.${when}`
+    + ' Не ждёт — отпусти его ({"release": [...]}) и найми замену на другой подписке ("sub" в заявке).');
+  tgLog(`бригада (лимит): вкладка ${id} упёрлась в лимит, сказал прорабу ${d.parentId}`);
+}
+
 // Живой ребёнок бригады с таким именем — прораб называет исполнителя ярлыком вкладки (спека,
 // «Раскрытие»: «прораб должен уметь назвать ребёнка при найме»), тем же словом сворм ищет его
 // среди своих. Сравнение без регистра: агенту проще не думать о точном регистре чужого ярлыка.
@@ -5048,6 +5100,7 @@ function nightOnLimit(id, d) {
     ? ((five.spent || 0) >= (seven.spent || 0) ? five : seven)
     : (five || seven);
   const untilMs = worst && Number.isFinite(worst.resetsAt) ? worst.resetsAt * 1000 : 0;
+  if (d.parentId) crewLimitNote(id, d, untilMs);
   // Та же стена, которую мы уже обработали: сообщение о лимите с экрана не исчезает, а такт
   // приходит каждые двадцать секунд. Отметку ставим ЗДЕСЬ, до всякой записи в журнал, — иначе
   // одна стена давала строку в журнал (и строку в утренней сводке) три раза в минуту до утра.
@@ -6135,10 +6188,20 @@ function hireTick(id, d) {
   const accepted = entries.slice(0, room);
   const skipped = entries.length - accepted.length;
   for (const entry of accepted) {
+    // Подписка по имени карточки. Нет такой — не открываем наугад на чужой: прораб держит правило
+    // человека («2 на рабочей, 2 на личной»), и тихая подмена его бы сломала.
+    const card = entry.sub ? subCardByName(entry.sub) : null;
+    if (entry.sub && !card) {
+      const names = subsCardsNow.map((c) => c.name).filter(Boolean);
+      typeIntoTab(id, `[сворм] «${entry.name}» не открыл: подписки «${entry.sub}» нет.`
+        + (names.length ? ` Есть: ${names.map((n) => `«${n}»`).join(', ')}.` : ' Имён у подписок в настройках нет.'));
+      continue;
+    }
     safeSend('app:createTab', {
       cwd: d.cwd, parentId: id, name: entry.name, model: entry.model || CREW_MODEL, hireTask: entry.prompt,
+      line: card ? card.line : '',
     });
-    tgLog(`найм (прораб ${id}): открываю «${entry.name}»`);
+    tgLog(`найм (прораб ${id}): открываю «${entry.name}»${card ? ` на «${card.name}»` : ''}`);
   }
   // Потолок — известен сразу, говорим о нём тут же. «Кого открыл и как зовётся» — отдельной
   // строкой из session:create, как только у вкладки появится sessionKey (см. там): раньше

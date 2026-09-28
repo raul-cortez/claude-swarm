@@ -48,7 +48,12 @@ test('заявка разбирается: имя, задача, модель', 
   const out = HIRE.parseRequest(JSON.stringify({
     hire: [{ name: '#629', prompt: 'почини форму оплаты', model: 'Sonnet' }],
   }));
-  assert.deepStrictEqual(out, [{ name: '#629', prompt: 'почини форму оплаты', model: 'sonnet' }]);
+  assert.deepStrictEqual(out, [{ name: '#629', prompt: 'почини форму оплаты', model: 'sonnet', sub: '' }]);
+});
+
+test('заявка несёт подписку исполнителя', () => {
+  const out = HIRE.parseRequest(JSON.stringify({ hire: [{ name: '#1', prompt: 'a', sub: ' личная ' }] }));
+  assert.strictEqual(out[0].sub, 'личная');
 });
 
 test('несколько заявок разом', () => {

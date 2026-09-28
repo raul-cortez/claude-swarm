@@ -6669,11 +6669,16 @@ window.swarm.onDecodeAudio(async ({ reqId, bytes }) => {
 // «какой командой открыть»: берём агента, которым уже открыта соседняя вкладка этой папки, или
 // умолчание — то же самое наследование, что и у обычной новой вкладки, просто без переспроса.
 window.swarm.onCreateTab((payload = {}) => {
-  const { cwd, parentId, name, model, hireTask } = payload;
+  const { cwd, parentId, name, model, hireTask, line } = payload;
   if (!hireTask) { createSession({ cwd }); return; }
+  // Чем открыть исполнителя: подписка из заявки (main нашёл её карточку) — её строкой; без неё —
+  // тем же, чем открыт сам прораб. НЕ командой соседей по папке (folderChoice): так было раньше,
+  // и в папке, где руками открывали личной, прораб на рабочей нанимал на личной, сам того не зная.
+  const boss = sessions.get(String(parentId));
   const inherited = folderChoice(cwd);
-  const base = (inherited && !inherited.blank && inherited.cmd)
-    ? inherited : { cmd: launch.cmd, flags: launch.flags };
+  const base = line ? parseAgentLine(line)
+    : (boss && !boss.blank && boss.cmd) ? { cmd: boss.cmd, flags: boss.flags || '' }
+      : (inherited && !inherited.blank && inherited.cmd) ? inherited : { cmd: launch.cmd, flags: launch.flags };
   const cmd = model ? RESTART_API.withModel(base.cmd, model) : base.cmd;
   createSession({ cwd, parentId, name, hireTask, cmd, flags: base.flags || '' });
 });
