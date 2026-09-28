@@ -3841,6 +3841,9 @@ function activate(id, opts) {
 function closeSession(id) {
   const s = sessions.get(id);
   if (!s) return;
+  // Исполнители — внутренняя кухня прораба: уходят вместе с ним, а не вываливаются в общий
+  // список отдельными вкладками. Любой путь закрытия (крестик, ⌘W, телега) идёт через сюда.
+  for (const kid of crewKidsOf(id)) closeSession(kid.id);
   // The overlay shows THIS folder's diff. Once the tab is gone, refreshGit
   // repaints the bar for another tab while the overlay would keep showing the
   // old folder's files and querying difftext with a dead cwd.
@@ -3874,12 +3877,20 @@ function closeSession(id) {
   }
 }
 
+function crewKidsOf(id) {
+  return [...sessions.values()].filter((k) => k.parentId === id);
+}
+
 // Ask before closing — the × is easy to hit by accident.
 async function requestCloseSession(id) {
   const s = sessions.get(id);
   if (!s) return;
   const name = s.tab.querySelector('.label').textContent;
-  if (await confirmModal(`Закрыть «${name}»? Сессия агента завершится.`, 'Закрыть')) closeSession(id);
+  const n = crewKidsOf(id).length;
+  const msg = n
+    ? `Закрыть «${name}» вместе с ${n} ${plural(n, 'исполнителем', 'исполнителями', 'исполнителями')}? Их сессии тоже завершатся.`
+    : `Закрыть «${name}»? Сессия агента завершится.`;
+  if (await confirmModal(msg, 'Закрыть')) closeSession(id);
 }
 
 // «Закрыть вкладку» из меню карточки — тот же путь, что крестик, с тем же подтверждением.
@@ -4137,9 +4148,9 @@ function relayoutTabs() {
   // Every working folder is a group (with a header) — even with a single tab.
   for (const { cwd, list } of orderedUnits()) {
     // Дети прячутся из общего списка — они живут ПОД карточкой прораба (точки всегда, чипы в
-    // раскрытом виде), а не рядом с ним в ленте. «Пока жив прораб»: если тот закрылся не через
-    // штатное закрытие бригады, ребёнок возвращается в общий список — потерянным его лучше не
-    // делать вовсе (спека, «Границы»: реестр только рассказывает, не бронирует).
+    // раскрытом виде), а не рядом с ним в ленте. Закрытие прораба забирает детей с собой
+    // (closeSession), так что «пока жив прораб» — лишь страховка: ребёнок без живого родителя
+    // (сбой восстановления) возвращается в общий список, а не пропадает.
     const visible = list.filter((s) => !(s.parentId && sessions.has(s.parentId)));
     if (!visible.length) continue; // все — чужие дети, этой группе сейчас нечего показывать
     const folderName = cwd ? basename(cwd) : 'claude';
