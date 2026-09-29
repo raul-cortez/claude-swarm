@@ -6384,6 +6384,13 @@ usagePills.addEventListener('click', (e) => {
   else closeSubsMenu();
 });
 
+// Главный процесс помнит карточки только в памяти, а шлём мы их лишь на сохранении настроек —
+// после перезапуска (и обновления) найм по подписке отвечал прорабу «подписки нет», хотя файл на
+// диске был верный. Поэтому отдаём их и на старте.
+try {
+  window.swarm.subs.setCards(launchList.map((a) => ({ line: a.line, name: a.name, bar: a.bar, home: a.home })));
+} catch (_) { /* моста нет — перепишем при следующем сохранении */ }
+
 window.swarm.subs.onAccounts((list) => {
   subsAccounts = Array.isArray(list) ? list : [];
   renderUsagePills();
