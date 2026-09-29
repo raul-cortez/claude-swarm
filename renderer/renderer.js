@@ -1288,7 +1288,13 @@ async function createSession(opts = {}) {
   // вся прокрутка внутри Клода. Чтобы это чтение не двигало статус, отлистанному экрану
   // не верит ДЕТЕКТОР: он узнаёт отлистанный вид по плашке возврата и держит последний
   // живой снимок (см. screen.scrolledBack).
+  // Скрытый холдер не меряется (fit на display:none — пустой ход), а исполнитель открывается в
+  // фоне — без временного показа он родился бы 80×24 и перерисовывался бы при первом заходе.
+  // Холдеры позиционированы абсолютно, так что второй видимый на один синхронный кадр ничего не сдвигает.
+  const background = !!opts.hireTask && sessions.has(activeId);
+  holder.classList.add('active');
   fit.fit();
+  if (background) holder.classList.remove('active');
 
   // Give Claude tabs a stable swarm-* display name (shown in the prompt box and the
   // /resume picker). Other agents: no pin yet.
@@ -1520,7 +1526,9 @@ async function createSession(opts = {}) {
   relayoutTabs();
   persistTabs();
   setStatus(id, 'ready', 'готов');
-  activate(id);
+  // Исполнителя открывает прораб, а не человек: уводить человека из той вкладки, где он сейчас,
+  // незачем — ребёнок и так виден точкой под карточкой прораба (её рисует setStatus выше).
+  if (!(background && sessions.has(activeId))) activate(id);
 }
 
 // Last path segment of a folder path, used as the tab label.
