@@ -823,8 +823,17 @@ function draftIsOurs(draft, text) {
   return n > 0 && n >= Math.min(8, want.length) && want.slice(0, n) === got.slice(0, n);
 }
 
+// Что стоит в поле ввода относительно напечатанного свормом — для решения, жать ли Enter:
+// 'ours' — наш текст (жать), 'empty' — поле пустое (ушло), 'other' — там черновик человека (не
+// трогать), 'unknown' — поля на экране не видно (диалог, перерисовка: посмотреть ещё раз).
+function submitState(draft, text) {
+  if (draft == null) return 'unknown';
+  if (!String(draft).trim()) return 'empty';
+  return draftIsOurs(draft, text) ? 'ours' : 'other';
+}
+
 module.exports = {
-  inputDraft, draftIsOurs,
+  inputDraft, draftIsOurs, submitState,
   extractQuestion, lastAgentLine, lastAgentBlock, readMode, modeTitle, modeFlag, MODE_TITLES, MODE_FLAGS,
   inferWaitingKind, asksForInput, waitsForWork, askFingerprint, setAskPhrases, countSubagents,
   parsePrompt, fingerprintOf, scrolledBack, limitHit, limitReset, apiErrorHit,

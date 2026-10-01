@@ -1079,3 +1079,13 @@ for (const [name, fn] of tests) {
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
 }
 console.log(passed + '/' + tests.length + ' screen tests passed');
+
+test('submitState: наш текст — жать, пусто — ушло, черновик человека — не трогать, поля нет — смотреть ещё', () => {
+  const ours = '[сворм] Вопрос от исполнителя «#679»: какую базу брать?';
+  assert.strictEqual(S.submitState('[сворм] Вопрос от исполнителя «#679»', ours), 'ours');
+  assert.strictEqual(S.submitState('[Pasted text #1 +3 lines]', ours), 'ours');
+  assert.strictEqual(S.submitState('', ours), 'empty');
+  assert.strictEqual(S.submitState('   ', ours), 'empty');
+  assert.strictEqual(S.submitState('погоди, я сам напишу', ours), 'other');
+  assert.strictEqual(S.submitState(null, ours), 'unknown');
+});

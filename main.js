@@ -557,7 +557,7 @@ process.on('unhandledRejection', (reason) => reportMainError(reason));
 // tell "waiting for a prompt" apart from "idle/done". We deliberately do NOT
 // surface Claude's token counter or activity words — just the four states.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
-const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, apiErrorHit, asksForInput, waitsForWork, inputDraft, draftIsOurs } = require('./screen');
+const { extractQuestion, lastAgentBlock, readMode, modeTitle, modeFlag, countSubagents, contentEnd, snapshotRows, snapshotWrapped, statuslineOf, ctxFromLine, ctxPick, setAskPhrases, askFingerprint, parsePrompt, scrolledBack, limitHit, limitReset, apiErrorHit, asksForInput, waitsForWork, inputDraft, submitState } = require('./screen');
 // The status state machine + «ждёт» latch + hook arbitration live in a pure,
 // unit-tested module; osc.js sniffs hook markers out of the raw pty stream.
 const { tickStatus, applyHook, applyTranscript, keyboardEvent, hasPromptBox, trRunStale, RE_RUNNING } = require('./detector');
@@ -2919,36 +2919,69 @@ function tgRoute(u) {
 const TG_ENTER_DELAY_MS = 90;
 
 // Напечатать во вкладку и ОТПРАВИТЬ — один путь для всех, кто пишет агенту от лица сворма
-// (ответ из телеги, ночной толчок, просьба о перезапуске, строки бригады). Раньше каждый
-// заводил Enter таймером от момента, когда текст ВСТАЛ в очередь, а не когда допечатался:
-// длинный текст (задача исполнителю, вопрос прорабу) ещё уезжал порциями, Enter приходил
-// вплотную к его хвосту, и Клод, не дочитав вставку, принимал его за перевод строки в ней —
-// сообщение висело в поле ввода. Теперь Enter ждёт, пока очередь опустеет, и ещё паузу по
-// длине текста; а через полторы секунды сворм смотрит на поле ввода и, если там всё ещё наш
-// текст, жмёт Enter снова (дважды, не больше, и никогда — на черновик человека).
+// (ответ из телеги, ночной толчок, просьба о перезапуске, строки бригады).
+//
+// Enter жмём, только когда напечатанное УЖЕ стоит в поле ввода на экране. Отдельная запись в pty
+// не значит отдельное чтение: Клод с длинной сессией подтормаживает, и всё, что пришло, пока он
+// был занят, он читает одним куском — текст вместе с Enter. Такой кусок он принимает за вставку,
+// Enter становится в ней переводом строки, и сообщение висит, пока человек не нажмёт сам
+// (проверено на живом Клоде: «текст\r» одной записью не отправляется). Пауза по таймеру этого
+// не лечит — сколько Клод будет занят, заранее не знает никто; экран знает.
+//
+// После Enter сворм смотрит на поле ввода ещё раз и, если там всё ещё наш текст, жмёт снова
+// (не больше SUBMIT_RETRIES раз и никогда — на черновик человека). Экран, на котором поля не
+// видно вовсе (Клод как раз перерисовывается), — не повод сдаться: смотрим ещё.
 const SUBMIT_CHECK_MS = 1500;
-const SUBMIT_RETRIES = 2;
+const SUBMIT_RETRIES = 3;
+const SUBMIT_SHOW_POLL_MS = 150;
+const SUBMIT_SHOW_MAX_MS = 10_000;
+function inputState(id, text) {
+  const d = det.get(id);
+  if (!d || d.dead || !sessions.has(id) || !d.term) return 'gone';
+  let draft = null;
+  try { draft = inputDraft(snapshot(d)); } catch (_) { return 'unknown'; }
+  return submitState(draft, text);
+}
 function typeAndSubmit(id, text, body, enter) {
+  // Поля ввода на экране нет ещё ДО печати — значит, печатаем в меню (цифра варианта из кнопки
+  // телеги) или в диалог. Ждать там своего текста в поле бессмысленно, а Enter через десять
+  // секунд мог бы попасть уже в СЛЕДУЮЩИЙ запрос разрешения — поэтому прежний порядок: Enter
+  // сразу. Непустое поле до печати — не повод: в свежей вкладке там серая заглушка
+  // («Try "refactor …"»), после хода — подсказка следующего запроса; наш текст их сменит.
+  const intoBox = inputState(id, text) !== 'unknown';
   ptyType(id, body);
-  const settle = TG_ENTER_DELAY_MS + Math.min(1400, Math.floor(ptyWrite.byteLength(body) / 8));
+  const settle = TG_ENTER_DELAY_MS + Math.min(600, Math.floor(ptyWrite.byteLength(body) / 16));
   const started = Date.now();
+  const press = () => { ptyType(id, enter); checkSubmitted(id, text, enter, SUBMIT_RETRIES, 4); };
+  const whenShown = () => {
+    if (!sessions.has(id)) return;
+    const st = inputState(id, text);
+    if (st === 'gone') return;
+    if (st === 'ours') { setTimeout(press, settle); return; }
+    if (Date.now() - started < SUBMIT_SHOW_MAX_MS) { setTimeout(whenShown, SUBMIT_SHOW_POLL_MS); return; }
+    // Своего текста так и не увидели (диалог поверх поля, чужой экран) — жмём, как раньше жали
+    // всегда: хуже, чем было, от этого не станет.
+    tgLog(`ввод: вкладка ${id} — напечатанного в поле ввода не видно, жму Enter наудачу`);
+    press();
+  };
   const whenDrained = () => {
     if (!sessions.has(id)) return;
-    if (ptyOut.pending(id) > 0 && Date.now() - started < 10_000) { setTimeout(whenDrained, 25); return; }
-    setTimeout(() => { ptyType(id, enter); checkSubmitted(id, text, enter, SUBMIT_RETRIES); }, settle);
+    if (ptyOut.pending(id) > 0 && Date.now() - started < SUBMIT_SHOW_MAX_MS) { setTimeout(whenDrained, 25); return; }
+    if (intoBox) whenShown(); else setTimeout(press, settle);
   };
   whenDrained();
 }
-function checkSubmitted(id, text, enter, left) {
+function checkSubmitted(id, text, enter, left, unseen) {
   setTimeout(() => {
-    const d = det.get(id);
-    if (!d || d.dead || !sessions.has(id) || !d.term) return;
-    let draft = null;
-    try { draft = inputDraft(snapshot(d)); } catch (_) { return; }
-    if (!draftIsOurs(draft, text)) return;
+    const st = inputState(id, text);
+    if (st === 'gone' || st === 'empty' || st === 'other') return;
+    if (st === 'unknown') {
+      if (unseen > 1) checkSubmitted(id, text, enter, left, unseen - 1);
+      return;
+    }
     tgLog(`ввод: вкладка ${id} — напечатанное осталось в поле ввода, жму Enter ещё раз`);
     ptyType(id, enter);
-    if (left > 1) checkSubmitted(id, text, enter, left - 1);
+    if (left > 1) checkSubmitted(id, text, enter, left - 1, unseen);
   }, SUBMIT_CHECK_MS);
 }
 
