@@ -18,7 +18,11 @@ const SOURCES = [
   { url: 'https://ipinfo.io/country', parse: parsePlain },
 ];
 
-const CHECK_EVERY_MS = 60_000;
+// Общая проверка — страховка на случай, когда адрес сменился без смены подключений (VPN
+// переключил сервер выхода). Главный повод — смена подключений: их смотрим локально, без сети,
+// и при любой перемене спрашиваем страну сразу (см. netSignature).
+const CHECK_EVERY_MS = 15_000;
+const NET_POLL_MS = 2_000;
 const FETCH_TIMEOUT_MS = 5_000;
 
 // Cloudflare: строки «key=value», страна — в loc.
@@ -33,10 +37,29 @@ function parsePlain(text) {
   return /^[A-Za-z]{2}$/.test(t) ? t.toUpperCase() : '';
 }
 
+// Отпечаток сетевых подключений (os.networkInterfaces()): включённый или отвалившийся VPN
+// добавляет, убирает или меняет адрес у виртуального подключения (utun…), смена Wi‑Fi — у en0.
+// Внутренние (lo0) не в счёт. Порядок подключений и адресов не важен.
+function netSignature(ifaces) {
+  const rows = [];
+  for (const [name, list] of Object.entries(ifaces || {})) {
+    const addrs = (Array.isArray(list) ? list : []).filter((a) => a && !a.internal).map((a) => a.address).sort();
+    if (addrs.length) rows.push(`${name}=${addrs.join(',')}`);
+  }
+  return rows.sort().join(' ');
+}
+
+// Флажок страны: двухбуквенный код → эмодзи из двух «региональных букв».
+function flagOf(country) {
+  const c = String(country || '').toUpperCase();
+  if (!/^[A-Z]{2}$/.test(c)) return '';
+  return String.fromCodePoint(...[...c].map((ch) => 0x1F1E6 + ch.charCodeAt(0) - 65));
+}
+
 // Новое состояние «закрыт ли сворм» по ответу. country пустой — ответа не было: остаёмся, где были.
 function nextBlocked(prev, country) {
   if (!country) return !!prev;
   return BLOCKED.has(String(country).toUpperCase());
 }
 
-module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked };
+module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf };

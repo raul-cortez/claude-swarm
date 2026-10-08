@@ -39,6 +39,28 @@ test('ответа нет — состояние не меняется ни в �
   assert.strictEqual(GEO.nextBlocked(undefined, ''), false);
 });
 
+test('отпечаток сети: порядок не важен, внутренние не в счёт', () => {
+  const a = { lo0: [{ address: '127.0.0.1', internal: true }], en0: [{ address: '192.168.1.5' }, { address: 'fe80::1' }], utun4: [{ address: '198.18.0.1' }] };
+  const b = { utun4: [{ address: '198.18.0.1' }], en0: [{ address: 'fe80::1' }, { address: '192.168.1.5' }] };
+  assert.strictEqual(GEO.netSignature(a), GEO.netSignature(b));
+});
+
+test('отпечаток сети: VPN появился, пропал или сменил адрес — отпечаток другой', () => {
+  const base = { en0: [{ address: '192.168.1.5' }] };
+  const vpn = { en0: [{ address: '192.168.1.5' }], utun4: [{ address: '198.18.0.1' }] };
+  const vpn2 = { en0: [{ address: '192.168.1.5' }], utun4: [{ address: '198.18.0.2' }] };
+  assert.notStrictEqual(GEO.netSignature(base), GEO.netSignature(vpn));
+  assert.notStrictEqual(GEO.netSignature(vpn), GEO.netSignature(vpn2));
+  assert.strictEqual(GEO.netSignature(null), '');
+});
+
+test('флажок: код страны — эмодзи, мусор — пусто', () => {
+  assert.strictEqual(GEO.flagOf('FR'), '🇫🇷');
+  assert.strictEqual(GEO.flagOf('ru'), '🇷🇺');
+  assert.strictEqual(GEO.flagOf(''), '');
+  assert.strictEqual(GEO.flagOf('XYZ'), '');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; console.log('ok —', name); } catch (e) { console.error('FAIL —', name); console.error(e); process.exit(1); }
 }

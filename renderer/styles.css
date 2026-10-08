@@ -1783,6 +1783,8 @@ body.night-all .night-pill {
    до сброса вылезает текстом, когда окно поджало. */
 .usage-pills { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
 .usage-pills[hidden] { display: none; }
+.geo-flag { -webkit-app-region: no-drag; flex: none; font-size: 13px; line-height: 1; margin-right: 4px; cursor: default; }
+.geo-flag[hidden] { display: none; }
 .usage-pill {
   -webkit-app-region: no-drag; flex: none; white-space: nowrap; cursor: pointer;
   display: inline-flex; align-items: center; gap: 5px;

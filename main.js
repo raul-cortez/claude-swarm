@@ -18,7 +18,7 @@
 //   just type `claude` into it. Bonus: auth "just works" because it's the same
 //   environment you log in from.
 
-const { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, nativeImage, shell, safeStorage, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, nativeImage, shell, safeStorage, powerSaveBlocker, powerMonitor } = require('electron');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
@@ -7877,8 +7877,9 @@ function buildMenu() {
 }
 
 // --- Регион ----------------------------------------------------------------------------------
-// Из-под российского адреса сворм не работает (решения — geo.js). Проверка при запуске и раз в
-// минуту. Адрес российский — окно закрывается заглушкой, агенты замораживаются (SIGSTOP всему,
+// Из-под российского адреса сворм не работает (решения — geo.js). Проверка при запуске, сразу
+// при смене сетевых подключений (включили или выключили VPN, сменили Wi‑Fi), после сна и
+// страховочно раз в 15 секунд. Адрес российский — окно закрывается заглушкой, агенты замораживаются (SIGSTOP всему,
 // что крутится в оболочке вкладки: Клоду, его командам, MCP-серверам) и не шлют запросов; адрес
 // сменился — продолжают с того же места (SIGCONT). Пока закрыто, сворм сам во вкладки не ходит:
 // не запускает агентов, не толкает ночью, не нанимает, не перезапускает.
@@ -7887,6 +7888,10 @@ function buildMenu() {
 let geoBlocked = false;
 let geoCountry = '';
 let geoKnown = false;                  // первая проверка закончилась (с ответом или без)
+let geoCheckedAt = 0;                  // когда последний раз спросили (для флажка в панели)
+let geoWhy = '';                       // что вызвало последнюю проверку
+let geoBusy = false;                   // проверка идёт — новая встанет за ней, а не рядом
+let geoAgain = '';                     // повод, пришедший, пока шла проверка
 const geoHeld = [];                    // запуски агентов, ждущие первой проверки или открытия
 const geoFrozen = new Map();           // pid -> { id вкладки, shell: это сама оболочка }
 
@@ -7909,16 +7914,31 @@ async function geoAsk() {
   return '';
 }
 
-async function geoCheck() {
+function geoStateNow() {
+  return { blocked: geoBlocked, country: geoCountry, flag: geo.flagOf(geoCountry), checkedAt: geoCheckedAt, why: geoWhy };
+}
+
+async function geoCheck(why) {
+  if (geoBusy) { geoAgain = why; return; }
+  geoBusy = true;
+  try { await geoCheckOnce(why); } finally { geoBusy = false; }
+  if (geoAgain) { const w = geoAgain; geoAgain = ''; geoCheck(w).catch(reportMainError); }
+}
+
+async function geoCheckOnce(why) {
   const c = await geoAsk();
   const was = geoBlocked;
+  const wasCountry = geoCountry;
   geoBlocked = geo.nextBlocked(geoBlocked, c);
   if (c) geoCountry = c;
   geoKnown = true;
-  if (geoBlocked !== was) {
-    tgLog(`регион: ${geoCountry || '?'} — ${geoBlocked ? 'закрываю сворм, замораживаю агентов' : 'открываю, размораживаю агентов'}`);
+  geoCheckedAt = Date.now();
+  geoWhy = c ? why : `${why}, сервисы не ответили`;
+  if (geoCountry !== wasCountry || geoBlocked !== was) {
+    tgLog(`регион (${geoWhy}): ${wasCountry || '?'} → ${geoCountry || '?'}`
+      + (geoBlocked !== was ? (geoBlocked ? ' — закрываю сворм, замораживаю агентов' : ' — открываю, размораживаю агентов') : ''));
   }
-  safeSend('geo:state', { blocked: geoBlocked });
+  safeSend('geo:state', geoStateNow());
   if (geoBlocked) { geoFreeze(); return; }
   geoThaw();
   for (const fn of geoHeld.splice(0)) { try { fn(); } catch (e) { reportMainError(e); } }
@@ -7979,8 +7999,17 @@ function geoThawTab(id) {
   geoWake([...geoFrozen].filter(([, f]) => f.id === id).map(([pid]) => pid), true);
 }
 
-ipcMain.handle('geo:state', () => ({ blocked: geoBlocked }));
-setInterval(() => { geoCheck().catch(reportMainError); }, geo.CHECK_EVERY_MS);
+ipcMain.handle('geo:state', () => geoStateNow());
+setInterval(() => { geoCheck('по таймеру').catch(reportMainError); }, geo.CHECK_EVERY_MS);
+// Подключения смотрим локально, в сеть это не ходит. Первый снимок только запоминаем — проверку
+// на старте делает whenReady.
+let geoNet = null;
+setInterval(() => {
+  let sig = '';
+  try { sig = geo.netSignature(os.networkInterfaces()); } catch (_) { return; }
+  if (geoNet !== null && sig !== geoNet) geoCheck('смена сети').catch(reportMainError);
+  geoNet = sig;
+}, geo.NET_POLL_MS);
 // Пока закрыто — дозамораживаем: в вкладке могло родиться что-то новое (MCP-сервер, команда).
 setInterval(() => { if (geoBlocked) geoFreeze(); }, 5_000);
 
@@ -7994,7 +8023,9 @@ app.whenReady().then(() => {
   try { tgLoad(); tgConnect().catch(reportMainError); } catch (e) { reportMainError(e); }
   buildMenu();
   createWindow();
-  geoCheck().catch(reportMainError);
+  geoCheck('запуск').catch(reportMainError);
+  // После сна сеть могла стать любой, а таймеры во сне стояли.
+  try { powerMonitor.on('resume', () => { geoCheck('после сна').catch(reportMainError); }); } catch (e) { reportMainError(e); }
 });
 
 // Наши служебные файлы лежат в папках вкладок, то есть в чужих репозиториях. Закрытие вкладки их

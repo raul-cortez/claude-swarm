@@ -6403,7 +6403,24 @@ try {
 // Из-под российского адреса сворм не работает: заглушка поверх всего окна, агенты заморожены
 // главным процессом и продолжат сами, как только адрес сменится. Кнопок нет — делать здесь нечего.
 let geoScreen = null;
+let geoNow = null;
+const geoFlagEl = document.getElementById('geo-flag');
+const geoNames = (() => { try { return new Intl.DisplayNames(['ru'], { type: 'region' }); } catch (_) { return null; } })();
+function geoTitle() {
+  const s = geoNow;
+  if (!s || !s.checkedAt) return 'Страна ещё не проверена';
+  const name = s.country ? ((geoNames && geoNames.of(s.country)) || s.country) : 'не известна';
+  const ago = Math.max(0, Math.round((Date.now() - s.checkedAt) / 1000));
+  return `Адрес: ${name}\nПроверено ${ago} с назад (${s.why || '—'})`;
+}
+if (geoFlagEl) geoFlagEl.addEventListener('mouseenter', () => { geoFlagEl.title = geoTitle(); });
 function renderGeo(s) {
+  geoNow = s || null;
+  if (geoFlagEl) {
+    geoFlagEl.hidden = !(s && s.checkedAt);
+    geoFlagEl.textContent = (s && s.flag) || '🏳';
+    geoFlagEl.title = geoTitle();
+  }
   const blocked = !!(s && s.blocked);
   if (!blocked) { if (geoScreen) { geoScreen.remove(); geoScreen = null; } return; }
   if (geoScreen) return;
