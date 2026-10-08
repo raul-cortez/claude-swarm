@@ -194,6 +194,7 @@ const hire = require('./hire');                      // найм по прось
 const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
+const geo = require('./geo');                       // регион: из-под российского адреса сворм не работает
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
 // Opt-in: precise status via Claude hooks. Off by default; the renderer pushes the
@@ -5287,7 +5288,7 @@ function nightResolvePhase(id, d, now) {
 // живёт в масштабе минут, а снимок экрана ради поиска стены лимита незачем брать триста раз
 // в минуту.
 setInterval(() => {
-  if (!autoAny()) return;
+  if (!autoAny() || geoBlocked) return;   // замороженным вкладкам толчки ни к чему
   const now = Date.now();
   for (const [id, d] of det) {
     if (d.dead || !autoOn(d)) continue;
@@ -6313,6 +6314,7 @@ function crewFreeTick(now) {
 }
 
 setInterval(() => {
+  if (geoBlocked) return;                 // бригада заморожена вместе со всеми — не нанимать
   const now = Date.now();
   for (const id of sessions.keys()) {
     const d = det.get(id);
@@ -6653,6 +6655,7 @@ function restartWorkAgain(id, d) {
 }
 
 function restartTick(id, d, now) {
+  if (geoBlocked) return;                 // свежая сессия пошла бы в сеть из-под российского адреса
   const state = d.rs || restart.initial();
   // Ждём ухода агента, которого сами и закрыли: тогда ответ даёт ОДИН его pid, а всё остальное
   // в этой фазе не читается вовсе (см. goneStep). Разница не косметическая — этот такт идёт
@@ -7441,14 +7444,16 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     d0.launchCmd = cmd || '';
     d0.sessionStartAt = Date.now();
     if (cmd) {
-      setTimeout(() => {
+      // Агент стартует, только когда известно, что адрес не российский (см. geoGate): иначе
+      // восстановленные на старте вкладки успели бы сходить в сеть раньше первой проверки.
+      setTimeout(() => geoGate(() => {
         // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
         if (!ptyType(id, clearPrefix(shell) + cmd + '\r')) return;
         // С этой секунды в шелле крутится НАШ запуск (см. scanTabProcesses): чем он развернулся,
         // вкладке знать незачем — она помнит команду, которую выбрал человек.
         d0.launchAt = Date.now();
         d0.launchPid = null;
-      }, 350);
+      }), 350);
     }
   }
 
@@ -7639,6 +7644,7 @@ ipcMain.on('session:kill', (_event, { id }) => {
   const p = sessions.get(id);
   if (p) {
     try { p.kill(); } catch (_) {}
+    geoThawTab(id);   // замороженный агент иначе пережил бы вкладку остановленным сиротой
     sessions.delete(id);
   }
   det.delete(id);
@@ -7870,6 +7876,114 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// --- Регион ----------------------------------------------------------------------------------
+// Из-под российского адреса сворм не работает (решения — geo.js). Проверка при запуске и раз в
+// минуту. Адрес российский — окно закрывается заглушкой, агенты замораживаются (SIGSTOP всему,
+// что крутится в оболочке вкладки: Клоду, его командам, MCP-серверам) и не шлют запросов; адрес
+// сменился — продолжают с того же места (SIGCONT). Пока закрыто, сворм сам во вкладки не ходит:
+// не запускает агентов, не толкает ночью, не нанимает, не перезапускает.
+//
+// На винде сигналов остановки нет — там заглушка и запрет запуска, без заморозки.
+let geoBlocked = false;
+let geoCountry = '';
+let geoKnown = false;                  // первая проверка закончилась (с ответом или без)
+const geoHeld = [];                    // запуски агентов, ждущие первой проверки или открытия
+const geoFrozen = new Map();           // pid -> { id вкладки, shell: это сама оболочка }
+
+function geoGate(fn) {
+  if (geoKnown && !geoBlocked) { fn(); return; }
+  geoHeld.push(fn);
+}
+
+async function geoAsk() {
+  for (const src of geo.SOURCES) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), geo.FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(src.url, { signal: ctl.signal });
+      if (!res.ok) continue;
+      const c = src.parse(await res.text());
+      if (c) return c;
+    } catch (_) { /* нет сети, VPN переподключается — следующий сервис */ } finally { clearTimeout(timer); }
+  }
+  return '';
+}
+
+async function geoCheck() {
+  const c = await geoAsk();
+  const was = geoBlocked;
+  geoBlocked = geo.nextBlocked(geoBlocked, c);
+  if (c) geoCountry = c;
+  geoKnown = true;
+  if (geoBlocked !== was) {
+    tgLog(`регион: ${geoCountry || '?'} — ${geoBlocked ? 'закрываю сворм, замораживаю агентов' : 'открываю, размораживаю агентов'}`);
+  }
+  safeSend('geo:state', { blocked: geoBlocked });
+  if (geoBlocked) { geoFreeze(); return; }
+  geoThaw();
+  for (const fn of geoHeld.splice(0)) { try { fn(); } catch (e) { reportMainError(e); } }
+}
+
+// Порядок важен, проверено на живой оболочке. Остановить Клода, пока оболочка вкладки бодрствует,
+// нельзя: она увидит остановленную задачу, заберёт терминал себе («suspended»), и после
+// разморозки агент окажется в фоне без ввода и умрёт. Поэтому сначала останавливаем саму
+// оболочку, потом всё, что под ней; будим в обратном порядке — сначала агента, оболочку
+// последней. Она так и не узнаёт, что что-то стояло, а набранное за это время доходит.
+const GEO_SHELL_WAKE_MS = 50;
+function geoFreeze() {
+  if (os.platform() === 'win32') return;
+  execFile('ps', ['-eo', 'pid=,ppid='], { maxBuffer: 4 << 20 }, (err, out) => {
+    if (err || !geoBlocked) return;
+    const kids = new Map();
+    for (const line of String(out).split('\n')) {
+      const m = line.match(/^\s*(\d+)\s+(\d+)\s*$/);
+      if (!m) continue;
+      if (!kids.has(m[2])) kids.set(m[2], []);
+      kids.get(m[2]).push(m[1]);
+    }
+    const stop = (pid, id, shell) => {
+      if (geoFrozen.has(pid)) return;
+      try { process.kill(pid, 'SIGSTOP'); geoFrozen.set(pid, { id, shell }); } catch (_) { /* уже ушёл */ }
+    };
+    for (const [id, child] of sessions) {
+      if (!det.has(id) || !child || child.pid == null) continue;   // панель терминала — не агент
+      stop(Number(child.pid), id, true);
+      const stack = [...(kids.get(String(child.pid)) || [])];
+      while (stack.length) {
+        const pid = stack.pop();
+        stack.push(...(kids.get(pid) || []));
+        stop(Number(pid), id, false);
+      }
+    }
+  });
+}
+
+function geoWake(pids, now) {
+  const shells = [];
+  for (const pid of pids) {
+    const f = geoFrozen.get(pid);
+    geoFrozen.delete(pid);
+    if (f && f.shell) { shells.push(pid); continue; }
+    try { process.kill(pid, 'SIGCONT'); } catch (_) { /* уже ушёл */ }
+  }
+  if (!shells.length) return;
+  const wake = () => { for (const pid of shells) { try { process.kill(pid, 'SIGCONT'); } catch (_) { /* уже ушёл */ } } };
+  if (now) wake(); else setTimeout(wake, GEO_SHELL_WAKE_MS);
+}
+
+function geoThaw(now) { geoWake([...geoFrozen.keys()], now); }
+
+// Закрытая вкладка: её процессы получили SIGHUP, но остановленный его не обработает, пока не
+// проснётся — будим, чтобы он завершился, а не висел сиротой.
+function geoThawTab(id) {
+  geoWake([...geoFrozen].filter(([, f]) => f.id === id).map(([pid]) => pid), true);
+}
+
+ipcMain.handle('geo:state', () => ({ blocked: geoBlocked }));
+setInterval(() => { geoCheck().catch(reportMainError); }, geo.CHECK_EVERY_MS);
+// Пока закрыто — дозамораживаем: в вкладке могло родиться что-то новое (MCP-сервер, команда).
+setInterval(() => { if (geoBlocked) geoFreeze(); }, 5_000);
+
 app.whenReady().then(() => {
   // Offer to move into ~/Applications on macOS so a later asar-swap can write.
   // If it relocates, it exits — don't open a window in that case.
@@ -7880,6 +7994,7 @@ app.whenReady().then(() => {
   try { tgLoad(); tgConnect().catch(reportMainError); } catch (e) { reportMainError(e); }
   buildMenu();
   createWindow();
+  geoCheck().catch(reportMainError);
 });
 
 // Наши служебные файлы лежат в папках вкладок, то есть в чужих репозиториях. Закрытие вкладки их
@@ -7889,6 +8004,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => { quitting = true; });
 
 app.on('will-quit', () => {
+  geoThaw(true);   // остановленные агенты иначе пережили бы приложение; ждать таймера на выходе некогда
   for (const [id, d] of det) restartSweepCwd(id, d);
 });
 

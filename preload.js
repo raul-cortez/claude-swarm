@@ -241,6 +241,11 @@ contextBridge.exposeInMainWorld('swarm', {
 
   // Подписки: живой расход по аккаунтам — из главного (он читает снимки, которые пишет наша
   // строка статуса), карточки — туда (правятся в окне, а хуку нужны имена, см. subsWriteCards).
+  // Регион: из-под российского адреса окно закрыто заглушкой (решает main, см. geo.js).
+  geo: {
+    state:   ()   => ipcRenderer.invoke('geo:state'),
+    onState: (cb) => ipcRenderer.on('geo:state', (_e, s) => cb(s)),
+  },
   subs: {
     accounts: ()      => ipcRenderer.invoke('subs:accounts'),
     setCards: (cards) => ipcRenderer.invoke('subs:setCards', cards),

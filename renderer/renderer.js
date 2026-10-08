@@ -6399,6 +6399,24 @@ try {
   window.swarm.subs.setCards(launchList.map((a) => ({ line: a.line, name: a.name, bar: a.bar, home: a.home })));
 } catch (_) { /* моста нет — перепишем при следующем сохранении */ }
 
+// --- регион ---------------------------------------------------------------------------
+// Из-под российского адреса сворм не работает: заглушка поверх всего окна, агенты заморожены
+// главным процессом и продолжат сами, как только адрес сменится. Кнопок нет — делать здесь нечего.
+let geoScreen = null;
+function renderGeo(s) {
+  const blocked = !!(s && s.blocked);
+  if (!blocked) { if (geoScreen) { geoScreen.remove(); geoScreen = null; } return; }
+  if (geoScreen) return;
+  geoScreen = document.createElement('div');
+  geoScreen.className = 'geo-screen';
+  geoScreen.innerHTML = '<div class="geo-box"><div class="geo-title">Swarm недоступен в вашем регионе</div>'
+    + '<div class="geo-text">Агенты заморожены. Работа не потеряна: когда адрес сменится, они продолжат'
+    + ' с того же места сами.</div></div>';
+  document.body.appendChild(geoScreen);
+}
+window.swarm.geo.onState(renderGeo);
+window.swarm.geo.state().then(renderGeo).catch(() => {});
+
 window.swarm.subs.onAccounts((list) => {
   subsAccounts = Array.isArray(list) ? list : [];
   renderUsagePills();

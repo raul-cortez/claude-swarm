@@ -2318,3 +2318,18 @@ body.pult-on .term-holder.digested.gated { top: calc(34px + var(--digest-h, 58px
    право печатать. */
 body.has-digest #gate-strip { top: var(--digest-h, 58px); }
 body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
+
+/* Регион: заглушка поверх всего окна, выше модалок — под ней ничего нажать нельзя. */
+.geo-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+}
+.geo-box { max-width: 420px; text-align: center; padding: 24px; }
+.geo-title { font-size: 18px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
+.geo-text { font-size: 13px; line-height: 1.5; color: var(--muted); }
