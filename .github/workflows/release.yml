@@ -138,8 +138,8 @@ jobs:
       - name: Терминал собран под Linux
         run: |
           d=node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release
+          # spawn-helper тут не ищем: он нужен только маку, на Linux node-pty без него.
           file "$d/pty.node" | tee /dev/stderr | grep -q 'ELF 64-bit.*x86-64'
-          test -x "$d/spawn-helper"
 
       - name: build-info.json
         run: node scripts/write-build-info.mjs
