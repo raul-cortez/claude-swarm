@@ -8,13 +8,13 @@
        Руками не править: разъехавшись, шапка предложит с первого экрана версию,
        которой уже нет. -->
 <!--DLTOP-->
-  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
+  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
+  <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
   &nbsp;·&nbsp;
   <a href="LINUX.md"><b>⬇&nbsp;&nbsp;Скачать для Linux</b></a>
   <br>
-  <sub>v0.68.0 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
+  <sub>v0.69.0 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
   <!--/DLTOP-->
 </p>
 
@@ -64,11 +64,11 @@
 ### Образ
 
 <!--DL-->
-**Последняя версия: 0.68.0** · [все релизы](https://github.com/raul-cortez/claude-swarm/releases)
+**Последняя версия: 0.69.0** · [все релизы](https://github.com/raul-cortez/claude-swarm/releases)
 
-- **macOS** (Apple Silicon): [`swarm-0.68.0-arm64.dmg`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-arm64.dmg)
-- **Windows**: [`swarm-0.68.0-x64.exe`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-x64.exe) — собирается в CI после тега
-- **Linux**: со следующей версии — см. [LINUX.md](LINUX.md)
+- **macOS** (Apple Silicon): [`swarm-0.69.0-arm64.dmg`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-arm64.dmg)
+- **Windows**: [`swarm-0.69.0-x64.exe`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-x64.exe) — собирается в CI после тега
+- **Linux** (x64): [`swarm-0.69.0-x64.AppImage`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-x64.AppImage) или [`swarm-0.69.0-x64.deb`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.69.0/swarm-0.69.0-x64.deb) для Debian/Ubuntu/Kubuntu — собираются в CI после тега
 <!--/DL-->
 
 > [!WARNING]
