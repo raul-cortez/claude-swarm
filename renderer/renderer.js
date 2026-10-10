@@ -756,13 +756,16 @@ window.swarm.onExit(({ id }) => {
 // rest use Ctrl. The hover tooltip spells this out.
 // Одно место на все подписи, где упоминается система. Приложение собирается и под Windows,
 // поэтому «⌘», «мак» и «~/.zshrc» в тексте — это обещание клавиши и файла, которых там нет.
+// Linux — третий вариант, а не «как Windows»: файлы и оболочка там мачные, клавиши — виндовые.
 const MAC = window.swarm.platform === 'darwin';
+const WIN = window.swarm.platform === 'win32';
 const key = (k) => (MAC ? '⌘' + k : 'Ctrl+' + k);
 const HOST = {
-  fileManager: MAC ? 'Finder' : 'Проводника',
-  profile: MAC ? '<code>~/.zshrc</code>' : 'профиля PowerShell',
+  fileManager: MAC ? 'Finder' : WIN ? 'Проводника' : 'файлового менеджера',
+  profile: MAC ? '<code>~/.zshrc</code>' : WIN ? 'профиля PowerShell' : '<code>~/.bashrc</code> (или <code>~/.zshrc</code>)',
   exports: MAC ? 'пропишите нужные <code>export</code> в <code>~/.zshrc</code>'
-    : 'задайте переменные окружения — <code>setx</code> или профиль PowerShell',
+    : WIN ? 'задайте переменные окружения — <code>setx</code> или профиль PowerShell'
+    : 'пропишите нужные <code>export</code> в <code>~/.bashrc</code> (или <code>~/.zshrc</code>)',
 };
 
 const LINK_MOD = window.swarm.platform === 'darwin' ? 'metaKey' : 'ctrlKey';
@@ -6008,7 +6011,15 @@ async function openUpdateModal() {
         forceInstaller = true;
       }
     } else {
-      const u = fresh.installers[window.swarm.platform === 'win32' ? 'exe' : 'dmg'];
+      // Какой установщик наш, решает main (updater-core.pickInstaller): ключи манифеста —
+      // форматы файлов, и знать их соответствие системам рендереру незачем.
+      const u = fresh.installer;
+      if (!u) {
+        overlay.querySelector('.upd-notes').textContent =
+          'Для вашей системы в этой версии нет установщика — возьмите его на странице релизов.';
+        goBtn.disabled = true;
+        return;
+      }
       const fname = (u || '').split('/').pop() || 'installer';
       const prog = overlay.querySelector('.upd-progress');
       const bar = overlay.querySelector('.upd-bar');

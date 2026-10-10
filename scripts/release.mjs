@@ -20,12 +20,12 @@
 //
 // Релиз создаётся ЧЕРНОВИКОМ, и это несущее решение, а не осторожность. `latest` у
 // гитхаба игнорирует черновики, а обновлялка ходит именно за
-// releases/latest/download/manifest.json. Пока .exe не доложен из CI, релиз не должен
+// releases/latest/download/manifest.json. Пока .exe и .AppImage не доложены из CI, релиз не должен
 // становиться latest: иначе несколько минут манифест обещает установщик, которого ещё
 // нет, и пришедший в это окно виндовый пользователь получает 404. Черновик снимает CI
 // последним шагом — ровно когда обещание становится правдой.
 //
-// Так что этот скрипт owns the Mac half; CI owns the Windows half и публикацию.
+// Так что этот скрипт owns the Mac half; CI owns Windows, Linux и публикацию.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, readdirSync, existsSync, copyFileSync } from 'node:fs';
@@ -123,6 +123,9 @@ step('CHANGELOG.md updated');
 // 5. README download links ---------------------------------------------------
 const dmgFile = `swarm-${version}-arm64.dmg`;
 const exeFile = `swarm-${version}-x64.exe`;
+// Имена линуксовых файлов задаёт linux.artifactName в package.json — держать их в согласии.
+const appImageFile = `swarm-${version}-x64.AppImage`;
+const debFile = `swarm-${version}-x64.deb`;
 const base = `https://github.com/${REPO}/releases/download/v${version}`;
 const dl = [
   '<!--DL-->',
@@ -130,6 +133,7 @@ const dl = [
   '',
   `- **macOS** (Apple Silicon): [\`${dmgFile}\`](${base}/${dmgFile})`,
   `- **Windows**: [\`${exeFile}\`](${base}/${exeFile}) — собирается в CI после тега`,
+  `- **Linux** (x64): [\`${appImageFile}\`](${base}/${appImageFile}) или [\`${debFile}\`](${base}/${debFile}) для Debian/Ubuntu/Kubuntu — собираются в CI после тега`,
   '<!--/DL-->',
 ].join('\n');
 // Кнопки скачивания в самой шапке — второе место с теми же файлами. Держать его руками
@@ -139,6 +143,8 @@ const dlTop = [
   `  <a href="${base}/${dmgFile}"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>`,
   '  &nbsp;·&nbsp;',
   `  <a href="${base}/${exeFile}"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>`,
+  '  &nbsp;·&nbsp;',
+  `  <a href="LINUX.md"><b>⬇&nbsp;&nbsp;Скачать для Linux</b></a>`,
   '  <br>',
   `  <sub>v${version} · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>`,
   '  <!--/DLTOP-->',
@@ -214,6 +220,7 @@ const manifest = {
   installers: {
     dmg: `${base}/${dmgFile}`,
     exe: `${base}/${exeFile}`,
+    appimage: `${base}/${appImageFile}`,
   },
   notes: commits,
   pubDate: today,
@@ -242,7 +249,7 @@ sh('gh', [
   manifestPath,
 ]);
 
-console.log(`\n✔ v${version} собран и выложен черновиком. Дальше CI собирает .exe,`);
+console.log(`\n✔ v${version} собран и выложен черновиком. Дальше CI собирает .exe и Linux,`);
 console.log('  доливает его в релиз и снимает черновик — до этого момента');
 console.log('  обновлялка новую версию не видит, и это нарочно.');
 console.log(`  https://github.com/${REPO}/actions`);

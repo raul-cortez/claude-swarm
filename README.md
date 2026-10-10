@@ -11,6 +11,8 @@
   <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
+  &nbsp;·&nbsp;
+  <a href="LINUX.md"><b>⬇&nbsp;&nbsp;Скачать для Linux</b></a>
   <br>
   <sub>v0.68.0 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
   <!--/DLTOP-->
@@ -51,7 +53,7 @@
 
 > [!NOTE]
 > Своей авторизации у Swarm нет: он вызывает тот же `claude`, что стоит у вас в терминале,
-> и работает на вашей подписке. Нужны macOS на Apple Silicon или Windows и установленный
+> и работает на вашей подписке. Нужны macOS на Apple Silicon, Windows или Linux и установленный
 > Claude Code — проверить можно командой `claude --version`.
 
 ## Установка
@@ -65,6 +67,7 @@
 
 - **macOS** (Apple Silicon): [`swarm-0.68.0-arm64.dmg`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-arm64.dmg)
 - **Windows**: [`swarm-0.68.0-x64.exe`](https://github.com/raul-cortez/claude-swarm/releases/download/v0.68.0/swarm-0.68.0-x64.exe) — собирается в CI после тега
+- **Linux**: со следующей версии — см. [LINUX.md](LINUX.md)
 <!--/DL-->
 
 > [!WARNING]
@@ -87,7 +90,7 @@ npx claude-swarm
 
 Та же сборка, но **без шага с карантином** — приложение сразу откроется.
 
-<sub>Нужна Node 18 и старше. Внутри пакета — короткий [`install.sh`](scripts/install.sh), его видно целиком. Для Windows пакета нет, там `.exe` выше.</sub>
+<sub>Нужна Node 18 и старше. Внутри пакета — короткий [`install.sh`](scripts/install.sh), его видно целиком. На Linux он ставит Swarm в домашнюю папку и в меню приложений, подробности — в [LINUX.md](LINUX.md). Для Windows пакета нет, там `.exe` выше.</sub>
 
 Новые версии Swarm находит сам и ставит по кнопке в настройках. Переустанавливать не нужно.
 
@@ -338,7 +341,7 @@ npx claude-swarm
 
 ## Горячие клавиши
 
-Всё это можно сделать и кнопками, клавиши просто быстрее. На Windows вместо <kbd>⌘</kbd> — <kbd>Ctrl</kbd>.
+Всё это можно сделать и кнопками, клавиши просто быстрее. На Windows и Linux вместо <kbd>⌘</kbd> — <kbd>Ctrl</kbd>.
 
 | | |
 |---|---|
@@ -469,6 +472,7 @@ Swarm узнает об этом сразу и скажет в панели на
   <sub>
     <a href="MANUAL.md">Руководство</a> &nbsp;·&nbsp;
     <a href="WINDOWS.md">Windows</a> &nbsp;·&nbsp;
+    <a href="LINUX.md">Linux</a> &nbsp;·&nbsp;
     <a href="CHANGELOG.md">История версий</a> &nbsp;·&nbsp;
     <a href="DEVELOPMENT.md">Разработка</a> &nbsp;·&nbsp;
     <a href="LICENSE">MIT</a>

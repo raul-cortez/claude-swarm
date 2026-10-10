@@ -1,0 +1,116 @@
+name: Whisper for Linux
+
+# Собирает whisper-cli под linux-x64 и дописывает его в манифест распознавателя — тот, по
+# которому кнопка «Включить голосовые» решает, что качать (см. scripts/publish-whisper.mjs).
+#
+# Почему отдельно от publish-whisper.mjs: тот бежит на маке автора, а линуксовый бинарник
+# честно собирается только на Linux. Скрипт сам запускает этот workflow последним шагом,
+# так что руками его трогать не нужно; ручной запуск без publish просто собирает и
+# проверяет бинарник, ничего не выкладывая.
+#
+# Порядок «файлы → манифест» тот же, что у мака: пока whisper.json не дописан, приложения
+# на Linux видят «распознавателя нет» и ничего не качают, а не половину сборки.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: версия whisper.cpp (как в publish-whisper.mjs)
+        default: '1.9.1'
+        required: true
+      publish:
+        description: выложить в релиз whisper-<версия> и дописать whisper.json
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # 22.04 ради glibc постарше: бинарник запустится и на дистрибутивах моложе раннера.
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Исходники whisper.cpp
+        run: git clone --depth 1 --branch "v$VERSION" https://github.com/ggml-org/whisper.cpp.git "$RUNNER_TEMP/src"
+
+      # Один самодостаточный файл, как на маке:
+      #   • BUILD_SHARED_LIBS=OFF и статические libstdc++/libgcc — рядом ничего класть не надо;
+      #   • GGML_OPENMP=OFF — иначе нужен libgomp, которого на чужой машине может не быть;
+      #   • GGML_NATIVE=OFF — без него бинарник заточен под процессор раннера и на другом
+      #     падает с «Illegal instruction». Вместо этого явный AVX2/FMA/F16C: это любой x86
+      #     примерно с 2013 года, а без AVX2 распознавание было бы в разы медленнее.
+      - name: Сборка
+        working-directory: ${{ runner.temp }}/src
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DWHISPER_BUILD_TESTS=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF \
+            -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build --config Release --target whisper-cli -j"$(nproc)"
+          mkdir -p "$RUNNER_TEMP/pub"
+          cp build/bin/whisper-cli "$RUNNER_TEMP/pub/whisper-cli"
+          strip "$RUNNER_TEMP/pub/whisper-cli"
+          chmod 755 "$RUNNER_TEMP/pub/whisper-cli"
+
+      # Только то, что есть в любом glibc-дистрибутиве. Всё прочее — «не запускается» у
+      # пользователя, причём без внятной ошибки в приложении.
+      - name: Ни одной посторонней библиотеки
+        run: |
+          ldd "$RUNNER_TEMP/pub/whisper-cli"
+          extra=$(ldd "$RUNNER_TEMP/pub/whisper-cli" | grep -vE 'linux-vdso|ld-linux|lib(c|m|pthread|dl|rt)\.so' || true)
+          if [ -n "$extra" ]; then echo "бинарник тянет посторонние библиотеки: $extra" >&2; exit 1; fi
+
+      # Настоящая проверка — распознать образец из самих исходников той же моделью, что
+      # качает кнопка. «Собрался» ещё не значит «слышит».
+      - name: Распознаёт образец
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/ggml-tiny.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          out=$("$RUNNER_TEMP/pub/whisper-cli" -m "$RUNNER_TEMP/ggml-tiny.bin" -f "$RUNNER_TEMP/src/samples/jfk.wav" -l en -nt -np)
+          echo "$out"
+          echo "$out" | grep -qi 'country'
+
+      # Имя ассета — whisper-cli-linux-x64: в том же релизе уже лежит маковский whisper-cli,
+      # а имя ассета гитхаб берёт из имени файла. Клиент кладёт файл под этим же именем и
+      # запускает по полю bin — переименовывать обратно незачем.
+      - name: Выложить файл
+        if: ${{ inputs.publish }}
+        run: |
+          cp "$RUNNER_TEMP/pub/whisper-cli" "$RUNNER_TEMP/whisper-cli-linux-x64"
+          gh release upload "whisper-$VERSION" "$RUNNER_TEMP/whisper-cli-linux-x64" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Дописать whisper.json
+        if: ${{ inputs.publish }}
+        run: |
+          cd "$RUNNER_TEMP"
+          gh release download whisper --pattern whisper.json --repo "$GITHUB_REPOSITORY" --clobber
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            const m = JSON.parse(fs.readFileSync("whisper.json", "utf8"));
+            if (m.version !== process.env.VERSION) {
+              console.error(`whisper.json описывает ${m.version}, а собрали ${process.env.VERSION} — сначала publish-whisper.mjs`);
+              process.exit(1);
+            }
+            const b = fs.readFileSync("whisper-cli-linux-x64");
+            m.runtimes["linux-x64"] = { bin: "whisper-cli-linux-x64", files: [{
+              name: "whisper-cli-linux-x64", bytes: b.length,
+              sha256: crypto.createHash("sha256").update(b).digest("hex"),
+            }] };
+            fs.writeFileSync("whisper.json", JSON.stringify(m, null, 2) + "\n");
+          '
+          cat whisper.json
+          gh release upload whisper whisper.json --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Артефакт (без публикации)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: whisper-cli-linux-x64
+          path: ${{ runner.temp }}/pub/whisper-cli
+          if-no-files-found: error

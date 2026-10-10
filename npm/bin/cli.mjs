@@ -22,8 +22,8 @@ if (process.platform === 'win32') {
   process.exit(1);
 }
 
-if (process.platform !== 'darwin') {
-  console.error('Swarm собирается под macOS и Windows; для этой системы сборок нет.');
+if (process.platform !== 'darwin' && process.platform !== 'linux') {
+  console.error('Swarm собирается под macOS, Windows и Linux; для этой системы сборок нет.');
   process.exit(1);
 }
 

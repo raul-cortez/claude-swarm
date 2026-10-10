@@ -60,6 +60,19 @@ test('decideUpdate: installer when newer but runtimeId differs', () => {
   assert.ok(d.installers.dmg);
 });
 
+// Установщик выбирается по системе, а не «exe, иначе dmg»: под Linux второе означало бы
+// скачать маковский образ. Манифест без ссылки для системы — пустая строка, не undefined.
+test('decideUpdate: installer — ссылка для своей системы', () => {
+  const m = manifest({ installers: { dmg: 'd.dmg', exe: 'w.exe', appimage: 'l.AppImage' } });
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', m, 'darwin').installer, 'd.dmg');
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', m, 'win32').installer, 'w.exe');
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', m, 'linux').installer, 'l.AppImage');
+  const old = manifest({ installers: { dmg: 'd.dmg', exe: 'w.exe' } });
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', old, 'linux').installer, '');
+  assert.strictEqual(core.pickInstaller(undefined, 'linux'), '');
+  assert.strictEqual(core.pickInstaller({ dmg: 'd' }, 'freebsd'), '');
+});
+
 // Указатель payload/ пишут ПРОШЛЫЕ версии приложения, поэтому вход тут — что угодно, и
 // каждая порча должна давать «ничего не ждёт», а не падение: на этом ответе висит плашка,
 // которая иначе предложила бы качать уже скачанное.

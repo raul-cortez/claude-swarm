@@ -29,6 +29,9 @@
 // только от системных фреймворков — проверяется через otool.
 // Windows: берём официальный whisper-bin-x64.zip. Кладём ВСЕ ggml-cpu-*.dll: ggml выбирает
 // подходящий под процессор в рантайме, и «не нашёл бэкенд» у пользователя дороже 6 МБ.
+// Linux: собирается в CI (.github/workflows/whisper-linux.yml) — честно его собрать можно
+// только на Linux. Скрипт запускает тот workflow последним шагом, и он сам дописывает
+// linux-x64 в манифест.
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -97,6 +100,16 @@ const manifest = {
     'win32-x64': { bin: 'whisper-cli.exe', files: winFiles.map(entry) },
   },
 };
+// Перевыкладка той же версии не должна стирать Linux: его запись дописал CI, а файл так и
+// лежит в том же релизе. Для новой версии старую запись не берём — она указала бы на
+// файл, которого в новом релизе нет.
+try {
+  const prev = JSON.parse(execFileSync('gh', ['release', 'download', 'whisper', '--repo', REPO,
+    '--pattern', 'whisper.json', '--output', '-'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  if (prev.version === VERSION && prev.runtimes && prev.runtimes['linux-x64']) {
+    manifest.runtimes['linux-x64'] = prev.runtimes['linux-x64'];
+  }
+} catch { /* манифеста ещё нет — первая публикация */ }
 for (const [k, v] of Object.entries(manifest.runtimes)) {
   step(`${k}: ${v.files.length} файлов, ${(v.files.reduce((s, f) => s + f.bytes, 0) / 1e6).toFixed(1)} МБ`);
 }
@@ -125,4 +138,11 @@ ensureRelease('whisper', 'whisper.cpp — точка входа',
 sh('gh', ['release', 'upload', 'whisper', '--repo', REPO, '--clobber', manifestPath]);
 
 fs.rmSync(work, { recursive: true, force: true });
-console.log(`\n✔ whisper.cpp ${VERSION} выложен. Кнопка «Включить голосовые» берёт его отсюда.`);
+
+// Linux — после манифеста: workflow дописывает в него свою запись и проверяет, что
+// манифест описывает ровно эту версию.
+step('запускаю сборку под Linux в CI');
+sh('gh', ['workflow', 'run', 'whisper-linux.yml', '--repo', REPO, '--ref', 'main',
+  '-f', `version=${VERSION}`, '-f', 'publish=true']);
+console.log(`\n✔ whisper.cpp ${VERSION} выложен для мака и Windows. Linux допишется сам через`);
+console.log(`  несколько минут: https://github.com/${REPO}/actions/workflows/whisper-linux.yml`);

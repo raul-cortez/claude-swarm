@@ -154,7 +154,9 @@ const START_COMMAND = 'claude';
 
 function pickShell() {
   if (os.platform() === 'win32') return process.env.COMSPEC || 'powershell.exe';
-  return process.env.SHELL || '/bin/zsh';
+  // Запасной вариант только на случай пустого $SHELL: zsh есть на любом маке, а на Linux его
+  // часто нет вовсе, и вкладка тогда умирала бы при старте.
+  return process.env.SHELL || (os.platform() === 'darwin' ? '/bin/zsh' : '/bin/bash');
 }
 
 // Default working dir for sessions that don't pick a folder. Deliberately NOT

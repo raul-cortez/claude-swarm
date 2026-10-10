@@ -122,7 +122,7 @@ async function checkForUpdate() {
   const info = readBuildInfo();
   const buf = await httpGet(manifestUrl());
   const manifest = JSON.parse(buf.toString('utf8'));
-  return core.decideUpdate(runningVersion(), info.runtimeId, manifest);
+  return core.decideUpdate(runningVersion(), info.runtimeId, manifest, process.platform);
 }
 
 // --- установка обновления ------------------------------------------------------

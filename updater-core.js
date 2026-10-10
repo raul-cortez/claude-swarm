@@ -75,14 +75,28 @@ function validateManifest(obj) {
   };
 }
 
+// Какой из установщиков в манифесте — для этой ОС. Ключи манифеста — форматы файлов, а не
+// названия систем, потому что так их пишет release.mjs; соответствие держим здесь одно.
+const INSTALLER_KEYS = { darwin: 'dmg', win32: 'exe', linux: 'appimage' };
+function pickInstaller(installers, platform) {
+  const key = INSTALLER_KEYS[platform];
+  const url = key && installers ? installers[key] : '';
+  return typeof url === 'string' ? url : '';
+}
+
 // Decide what an installed (version, runtimeId) should do given a fetched manifest.
-function decideUpdate(installedVersion, installedRuntimeId, manifest) {
+// `installer` — ссылка на полный установщик для platform, '' если такого нет: старые
+// манифесты не знали Linux, и обещать человеку «скачать установщик» в пустоту нельзя.
+function decideUpdate(installedVersion, installedRuntimeId, manifest, platform) {
   const m = validateManifest(manifest);
   if (compareVersions(m.version, installedVersion) <= 0) {
     return { kind: 'none', version: m.version, notes: m.notes };
   }
   const kind = m.runtimeId === installedRuntimeId ? 'asar' : 'installer';
-  return { kind, version: m.version, notes: m.notes, asar: m.asar, installers: m.installers };
+  return {
+    kind, version: m.version, notes: m.notes, asar: m.asar, installers: m.installers,
+    installer: pickInstaller(m.installers, platform),
+  };
 }
 
 // Обновление, которое УЖЕ лежит рядом и ждёт запуска. На входе — сырое содержимое
@@ -118,6 +132,6 @@ function isNetworkError(err) {
 }
 
 module.exports = {
-  compareVersions, computeRuntimeId, validateManifest, decideUpdate, pendingFrom, nextHop, MAX_REDIRECTS,
+  compareVersions, computeRuntimeId, validateManifest, decideUpdate, pickInstaller, pendingFrom, nextHop, MAX_REDIRECTS,
   ghSlug, isNetworkError,
 };

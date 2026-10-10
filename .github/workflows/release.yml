@@ -1,18 +1,20 @@
 name: Release
 
-# Собирает виндовую половину релиза и публикует его.
+# Собирает виндовую и линуксовую части релиза и публикует его.
 #
 # Разделение труда: мак-половину (.dmg, app.asar, manifest.json) выкладывает
 # scripts/release.mjs с машины автора — подпись у нас ad-hoc, поэтому мак собирается за
-# клавиатурой, а не на раннере. Здесь добавляется .exe.
+# клавиатурой, а не на раннере. Здесь добавляются .exe, .AppImage и .deb.
 #
 # Последний шаг — СНЯТЬ ЧЕРНОВИК, и это несущая часть схемы, а не формальность.
 # Обновлялка ходит за releases/latest/download/manifest.json, а `latest` у гитхаба
-# черновики игнорирует. Значит пока .exe не собран, версии для обновлялки не существует,
-# и никто не может попасть в окно, где манифест обещает установщик, которого ещё нет.
+# черновики игнорирует. Значит пока .exe и .AppImage не собраны, версии для обновлялки не
+# существует, и никто не может попасть в окно, где манифест обещает установщик, которого
+# ещё нет. Поэтому публикация — отдельной задачей, которая ждёт ОБЕ сборки: упади одна, и
+# релиз останется черновиком, а не выйдет без половины установщиков.
 #
-# Запуск вручную (workflow_dispatch) собирает .exe и кладёт артефактом, ничего не
-# публикуя, — этим удобно проверять виндовую сборку, не выпуская версию.
+# Запуск вручную (workflow_dispatch) собирает установщики и кладёт артефактами, ничего не
+# публикуя, — этим удобно проверять сборки, не выпуская версию.
 
 on:
   workflow_dispatch:
@@ -90,12 +92,6 @@ jobs:
         shell: bash
         run: gh release upload "$GITHUB_REF_NAME" dist/*.exe --clobber --repo "$GITHUB_REPOSITORY"
 
-      # Теперь релиз полон, и только теперь ему можно стать latest.
-      - name: Опубликовать релиз
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
-
       # Ручной запуск: публиковать нечего, отдаём артефактом.
       - name: Артефакт (ручной запуск)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -104,3 +100,93 @@ jobs:
           name: swarm-windows
           path: dist/*.exe
           if-no-files-found: error
+
+  linux:
+    # 22.04, а не latest: бинарник терминала и сам Electron слинкованы с glibc раннера, и
+    # чем он старее, тем на большем числе дистрибутивов запустится AppImage.
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      # То же, что у Windows: node-pty приходит готовым под нашу цель Electron.
+      - name: Зависимости
+        run: npm ci
+        env:
+          npm_config_runtime: electron
+          npm_config_target: 29.4.6
+          npm_config_disturl: https://electronjs.org/headers
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      # Без нативного терминала под linux-x64 приложение откроется пустым — ловим здесь,
+      # а не жалобой пользователя.
+      - name: Терминал собран под Linux
+        run: |
+          find node_modules/@homebridge/node-pty-prebuilt-multiarch -name '*.node' -exec file {} \; | tee /dev/stderr | grep -q 'ELF 64-bit'
+
+      - name: build-info.json
+        run: node scripts/write-build-info.mjs
+
+      # --publish never — по той же причине, что у Windows.
+      - name: Сборка установщиков
+        run: npm run dist:linux -- --publish never
+
+      - name: Что собралось
+        run: ls -la dist/*.AppImage dist/*.deb
+
+      # scripts/install.sh не запускает AppImage, а распаковывает его и берёт оттуда
+      # запускалку `AppRun` и иконку `swarm.png` по именам. Поменяй сборщик раскладку —
+      # установка одной командой сломается молча, поэтому проверяем её здесь.
+      - name: Раскладка AppImage, на которую опирается install.sh
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE"/dist/*.AppImage --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          test -f squashfs-root/swarm.png
+          test -d squashfs-root/resources/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch
+
+      - name: Дождаться черновика релиза
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          for i in $(seq 1 30); do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "релиз $GITHUB_REF_NAME на месте"
+              exit 0
+            fi
+            echo "ждём релиз $GITHUB_REF_NAME … ($i/30)"
+            sleep 10
+          done
+          echo "релиз $GITHUB_REF_NAME так и не появился — release.mjs его не создал?" >&2
+          exit 1
+
+      - name: Долить AppImage и deb в релиз
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.AppImage dist/*.deb --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Артефакт (ручной запуск)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: swarm-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  publish:
+    # Теперь релиз полон, и только теперь ему можно стать latest.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Опубликовать релиз
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"

@@ -90,9 +90,11 @@ test('parseOutput на тишине даёт пустую строку, а не 
   assert.strictEqual(V.parseOutput(null), '');
 });
 
-test('setupHint говорит про brew на маке и про релизы на винде', () => {
+test('setupHint говорит про brew на маке, про релизы на винде и не про brew на Linux', () => {
   assert.ok(/brew install whisper-cpp/.test(V.setupHint('darwin')));
   assert.ok(/whisper-cli\.exe/.test(V.setupHint('win32')));
+  assert.ok(/^Linux:/.test(V.setupHint('linux')));
+  assert.ok(!/brew/.test(V.setupHint('linux')));
 });
 
 // --- установка одной кнопкой ---------------------------------------------------
@@ -100,6 +102,12 @@ test('setupHint говорит про brew на маке и про релизы 
 const MANIFEST = {
   runtimes: {
     'darwin-arm64': { bin: 'whisper-cli', files: [{ name: 'whisper-cli', bytes: 2e6, sha256: 'aa' }] },
+    // Как пишет whisper-linux.yml: файл назван по системе, потому что в том же релизе
+    // лежит маковский whisper-cli.
+    'linux-x64': {
+      bin: 'whisper-cli-linux-x64',
+      files: [{ name: 'whisper-cli-linux-x64', bytes: 3e6, sha256: 'dd' }],
+    },
     'win32-x64': {
       bin: 'whisper-cli.exe',
       files: [
@@ -139,8 +147,16 @@ test('installPlan пропускает уже скачанное', () => {
   assert.strictEqual(p.bin, '/u/voice/whisper-cli');   // путь известен и без скачивания
 });
 
-test('installPlan отказывается на ОС, для которой распознавателя нет', () => {
+test('installPlan на Linux берёт свой бинарник и делает его исполняемым', () => {
   const p = plan({ platform: 'linux', arch: 'x64' });
+  assert.strictEqual(p.ok, true);
+  assert.deepStrictEqual(p.items.map((i) => i.name), ['whisper-cli-linux-x64', 'ggml-base.bin']);
+  assert.strictEqual(p.bin, '/u/voice/whisper-cli-linux-x64');
+  assert.deepStrictEqual(p.items.map((i) => i.exec), [true, false]);
+});
+
+test('installPlan отказывается на ОС, для которой распознавателя нет', () => {
+  const p = plan({ platform: 'freebsd', arch: 'x64' });
   assert.strictEqual(p.ok, false);
   assert.strictEqual(p.reason, 'no-runtime');
 });

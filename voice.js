@@ -97,6 +97,10 @@ function setupHint(platform) {
     return 'Windows: скачайте готовый whisper.cpp из его релизов на GitHub, распакуйте и'
       + ' укажите путь к whisper-cli.exe. Модель — ggml-base или крупнее, файл .bin.';
   }
+  if (platform === 'linux') {
+    return 'Linux: соберите whisper.cpp из исходников или поставьте пакетом дистрибутива и'
+      + ' укажите путь к whisper-cli. Модель — ggml-base или крупнее, файл .bin.';
+  }
   return 'macOS: brew install whisper-cpp. Модель скачайте отдельно (ggml-base или крупнее,'
     + ' файл .bin) и укажите путь к ней.';
 }
