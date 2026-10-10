@@ -125,11 +125,21 @@ jobs:
           npm_config_disturl: https://electronjs.org/headers
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
-      # Без нативного терминала под linux-x64 приложение откроется пустым — ловим здесь,
-      # а не жалобой пользователя.
+      # На Linux «npm ci» терминал под Electron НЕ ставит, и это не очевидно: в пакете
+      # лежат готовые бинарники под обычную ноду (prebuilds/linux-x64/node.abi*.node), его
+      # установщик находит подходящий для ноды раннера и на этом успокаивается. В Electron
+      # же грузится build/Release/pty.node, которого тогда нет, — приложение открылось бы
+      # без терминала. На маке и Windows таких бинарников в пакете нет, поэтому там
+      # prebuild-install срабатывает сам. Здесь зовём его явно.
+      - name: Терминал под Electron
+        working-directory: node_modules/@homebridge/node-pty-prebuilt-multiarch
+        run: node ../../prebuild-install/bin.js --runtime electron --target 29.4.6 --arch x64 --platform linux --verbose
+
       - name: Терминал собран под Linux
         run: |
-          find node_modules/@homebridge/node-pty-prebuilt-multiarch -name '*.node' -exec file {} \; | tee /dev/stderr | grep -q 'ELF 64-bit'
+          d=node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release
+          file "$d/pty.node" | tee /dev/stderr | grep -q 'ELF 64-bit.*x86-64'
+          test -x "$d/spawn-helper"
 
       - name: build-info.json
         run: node scripts/write-build-info.mjs
@@ -150,7 +160,7 @@ jobs:
           "$GITHUB_WORKSPACE"/dist/*.AppImage --appimage-extract >/dev/null
           test -x squashfs-root/AppRun
           test -f squashfs-root/swarm.png
-          test -d squashfs-root/resources/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch
+          test -f squashfs-root/resources/app.asar.unpacked/node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/pty.node
 
       - name: Дождаться черновика релиза
         if: startsWith(github.ref, 'refs/tags/v')
