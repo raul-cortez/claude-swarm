@@ -6020,7 +6020,7 @@ async function openUpdateModal() {
         goBtn.disabled = true;
         return;
       }
-      const fname = (u || '').split('/').pop() || 'installer';
+      const fname = u.split('/').pop() || 'installer';
       const prog = overlay.querySelector('.upd-progress');
       const bar = overlay.querySelector('.upd-bar');
       const laterBtn = overlay.querySelector('.upd-later');
@@ -6031,10 +6031,16 @@ async function openUpdateModal() {
       const off = window.swarm.onUpdateProgress((pct) => { bar.style.width = pct + '%'; });
       const res = await window.swarm.updateDownloadInstaller(u, fname);
       off();
-      if (res && res.ok) {
+      if (res && res.ok && res.relaunch) {
+        // Linux, папка от install.sh: новая версия уже разложена на место, осталось перезапуститься.
+        bar.style.width = '100%';
+        window.swarm.updateRelaunch();
+      } else if (res && res.ok) {
         bar.style.width = '100%';
         close();
-        confirmModalInfo('Установщик скачан в «Загрузки».');
+        confirmModalInfo(res.kind === 'deb'
+          ? 'Пакет скачан в «Загрузки» — откройте его, и Discover или центр приложений поставит новую версию.'
+          : 'Установщик скачан в «Загрузки».');
       } else {
         prog.hidden = true;
         laterBtn.disabled = false;

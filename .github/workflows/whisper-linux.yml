@@ -76,14 +76,19 @@ jobs:
           echo "$out"
           echo "$out" | grep -qi 'country'
 
-      # Имя ассета — whisper-cli-linux-x64: в том же релизе уже лежит маковский whisper-cli,
-      # а имя ассета гитхаб берёт из имени файла. Клиент кладёт файл под этим же именем и
-      # запускает по полю bin — переименовывать обратно незачем.
+      # В имени — начало sha256 содержимого. Ассет с постоянным именем пришлось бы затирать
+      # (--clobber) ДО правки манифеста, а сборка не побайтно воспроизводима: всё время между
+      # шагами — а если второй упадёт, то навсегда — манифест обещал бы старую сумму, и
+      # установка на Linux падала бы на проверке. С отпечатком в имени старый файл остаётся
+      # на месте, пока манифест на него показывает, а переключение — одна запись whisper.json.
+      # Отдельное имя нужно и потому, что в том же релизе лежит маковский whisper-cli.
       - name: Выложить файл
         if: ${{ inputs.publish }}
         run: |
-          cp "$RUNNER_TEMP/pub/whisper-cli" "$RUNNER_TEMP/whisper-cli-linux-x64"
-          gh release upload "whisper-$VERSION" "$RUNNER_TEMP/whisper-cli-linux-x64" --clobber --repo "$GITHUB_REPOSITORY"
+          sha=$(sha256sum "$RUNNER_TEMP/pub/whisper-cli" | cut -c1-12)
+          echo "ASSET=whisper-cli-linux-x64-$sha" >> "$GITHUB_ENV"
+          cp "$RUNNER_TEMP/pub/whisper-cli" "$RUNNER_TEMP/whisper-cli-linux-x64-$sha"
+          gh release upload "whisper-$VERSION" "$RUNNER_TEMP/whisper-cli-linux-x64-$sha" --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Дописать whisper.json
         if: ${{ inputs.publish }}
@@ -92,14 +97,15 @@ jobs:
           gh release download whisper --pattern whisper.json --repo "$GITHUB_REPOSITORY" --clobber
           node -e '
             const fs = require("fs"), crypto = require("crypto");
+            const name = process.env.ASSET;
             const m = JSON.parse(fs.readFileSync("whisper.json", "utf8"));
             if (m.version !== process.env.VERSION) {
               console.error(`whisper.json описывает ${m.version}, а собрали ${process.env.VERSION} — сначала publish-whisper.mjs`);
               process.exit(1);
             }
-            const b = fs.readFileSync("whisper-cli-linux-x64");
-            m.runtimes["linux-x64"] = { bin: "whisper-cli-linux-x64", files: [{
-              name: "whisper-cli-linux-x64", bytes: b.length,
+            const b = fs.readFileSync(name);
+            m.runtimes["linux-x64"] = { bin: name, files: [{
+              name, bytes: b.length,
               sha256: crypto.createHash("sha256").update(b).digest("hex"),
             }] };
             fs.writeFileSync("whisper.json", JSON.stringify(m, null, 2) + "\n");

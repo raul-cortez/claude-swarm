@@ -100,16 +100,28 @@ const manifest = {
     'win32-x64': { bin: 'whisper-cli.exe', files: winFiles.map(entry) },
   },
 };
-// Перевыкладка той же версии не должна стирать Linux: его запись дописал CI, а файл так и
-// лежит в том же релизе. Для новой версии старую запись не берём — она указала бы на
-// файл, которого в новом релизе нет.
+// Linux-запись дописывает CI, и её нельзя терять ни на минуту: иначе кнопка «Включить
+// голосовые» на Linux говорит «распознавателя нет», пока CI не соберёт новый, — а если он
+// упадёт, то и дольше. Та же версия: файл уже лежит в этом релизе, запись берём как есть.
+// Новая версия: переносим в новый релиз прежний бинарник (он самодостаточен и с моделями
+// совместим), CI потом заменит его свежим.
+let prevLinux = null;
 try {
   const prev = JSON.parse(execFileSync('gh', ['release', 'download', 'whisper', '--repo', REPO,
     '--pattern', 'whisper.json', '--output', '-'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
-  if (prev.version === VERSION && prev.runtimes && prev.runtimes['linux-x64']) {
-    manifest.runtimes['linux-x64'] = prev.runtimes['linux-x64'];
+  const e = prev.runtimes && prev.runtimes['linux-x64'];
+  if (e) {
+    manifest.runtimes['linux-x64'] = e;
+    if (prev.version !== VERSION) prevLinux = { version: prev.version, files: e.files };
   }
 } catch { /* манифеста ещё нет — первая публикация */ }
+if (prevLinux) {
+  step(`переношу Linux-сборку из whisper-${prevLinux.version}, пока CI собирает новую`);
+  for (const f of prevLinux.files) {
+    sh('gh', ['release', 'download', `whisper-${prevLinux.version}`, '--repo', REPO,
+      '--pattern', f.name, '--dir', pub, '--clobber']);
+  }
+}
 for (const [k, v] of Object.entries(manifest.runtimes)) {
   step(`${k}: ${v.files.length} файлов, ${(v.files.reduce((s, f) => s + f.bytes, 0) / 1e6).toFixed(1)} МБ`);
 }

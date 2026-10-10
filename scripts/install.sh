@@ -47,7 +47,8 @@ install_linux() {
   apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   bindir="$HOME/.local/bin"
 
-  if pgrep -x swarm >/dev/null 2>&1; then
+  # По пути, а не по имени: `swarm` зовут и чужие программы, и мешать они не должны.
+  if pgrep -f "$DEST/swarm" >/dev/null 2>&1; then
     die "Swarm сейчас запущен — закройте его и повторите"
   fi
 

@@ -72,6 +72,16 @@ if (!app.requestSingleInstanceLock()) {
 if (process.platform === 'win32') {
   app.setAppUserModelId('io.swarm.claude-swarm-lite');
 }
+// Linux: то же самое делает класс окна. На Wayland его берут из desktopName в package.json,
+// а на X11 Electron собирает WM_CLASS из имени приложения — без этого там было бы имя пакета
+// (claude-swarm-lite), ярлык со StartupWMClass=swarm окна бы не узнал, и в панели висела бы
+// безымянная иконка. От имени зависит и папка настроек, поэтому её закрепляем прежней:
+// иначе люди после обновления остались бы без своих вкладок и настроек.
+if (process.platform === 'linux') {
+  const userData = app.getPath('userData');
+  app.setName('Swarm');
+  app.setPath('userData', userData);
+}
 // Native macOS About reads CFBundleShortVersionString from the outer .app
 // (installer shell). After an asar-swap that stays stale — pin About to the
 // version inside package.json (same source as Settings / updater).

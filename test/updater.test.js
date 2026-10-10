@@ -70,7 +70,17 @@ test('decideUpdate: installer — ссылка для своей системы'
   const old = manifest({ installers: { dmg: 'd.dmg', exe: 'w.exe' } });
   assert.strictEqual(core.decideUpdate('0.3.0', 'X', old, 'linux').installer, '');
   assert.strictEqual(core.pickInstaller(undefined, 'linux'), '');
+  // Поставленному пакетом — пакет, а не AppImage, который обновил бы не ту копию.
+  const deb = manifest({ installers: { appimage: 'l.AppImage', deb: 'l.deb' } });
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', deb, 'linux', 'deb').installer, 'l.deb');
+  assert.strictEqual(core.decideUpdate('0.3.0', 'X', deb, 'linux', 'unpacked').installer, 'l.AppImage');
   assert.strictEqual(core.pickInstaller({ dmg: 'd' }, 'freebsd'), '');
+});
+
+test('linuxInstallKind: AppImage, пакет в /opt или папка от install.sh', () => {
+  assert.strictEqual(core.linuxInstallKind('/tmp/.mount_x/swarm', '/home/u/swarm.AppImage'), 'appimage');
+  assert.strictEqual(core.linuxInstallKind('/opt/Swarm/swarm', ''), 'deb');
+  assert.strictEqual(core.linuxInstallKind('/home/u/.local/share/swarm/swarm', undefined), 'unpacked');
 });
 
 // Указатель payload/ пишут ПРОШЛЫЕ версии приложения, поэтому вход тут — что угодно, и

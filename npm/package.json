@@ -1,6 +1,6 @@
 {
   "name": "claude-swarm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Установщик Swarm — пульта для нескольких сессий Claude Code сразу.",
   "bin": {
     "claude-swarm": "bin/cli.mjs"

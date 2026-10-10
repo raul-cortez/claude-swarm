@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const https = require('https');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const core = require('./updater-core');
 // Имена папки обновления и её служебных файлов — общие с загрузчиком, чтобы не
 // разъехались: одно место пишет, другое читает.
@@ -122,7 +122,7 @@ async function checkForUpdate() {
   const info = readBuildInfo();
   const buf = await httpGet(manifestUrl());
   const manifest = JSON.parse(buf.toString('utf8'));
-  return core.decideUpdate(runningVersion(), info.runtimeId, manifest, process.platform);
+  return core.decideUpdate(runningVersion(), info.runtimeId, manifest, process.platform, linuxKind());
 }
 
 // --- установка обновления ------------------------------------------------------
@@ -179,12 +179,48 @@ function pendingVersion() {
   } catch (_) { return ''; }  // указателя нет вовсе — обновление никто не ставил
 }
 
+function linuxKind() {
+  return process.platform === 'linux' ? core.linuxInstallKind(process.execPath, process.env.APPIMAGE) : '';
+}
+
+// Полное обновление. Обычно — установщик в «Загрузки», дальше человек ставит его сам. Но
+// папку от install.sh никакой установщик не обновит, поэтому её Swarm меняет сам и просит
+// перезапуск ({ relaunch: true }): скачать AppImage, распаковать рядом и поменять папки местами.
+// На Linux файлы работающей программы можно убирать — процесс держит их до выхода.
 async function downloadInstaller(url, filename, onProgress) {
   if (!enabled()) throw new Error('updater disabled');
+  const kind = linuxKind();
+  if (kind === 'unpacked') return reinstallUnpacked(url, onProgress);
   const dest = path.join(app.getPath('downloads'), filename);
   await download(url, dest, null, onProgress || null);
+  // AppImage из «Загрузок» без бита запуска не откроется двойным кликом.
+  if (kind === 'appimage') { try { fs.chmodSync(dest, 0o755); } catch (_) {} }
   shell.showItemInFolder(dest);
-  return { ok: true, path: dest };
+  return { ok: true, path: dest, kind };
+}
+
+async function reinstallUnpacked(url, onProgress) {
+  const appDir = path.dirname(process.execPath);
+  if (!fs.existsSync(path.join(appDir, 'AppRun'))) throw new Error('не узнаю папку установки: ' + appDir);
+  const work = fs.mkdtempSync(path.join(path.dirname(appDir), '.swarm-update-'));
+  try {
+    const img = path.join(work, 'swarm.AppImage');
+    await download(url, img, null, onProgress || null);
+    fs.chmodSync(img, 0o755);
+    await new Promise((resolve, reject) => execFile(img, ['--appimage-extract'], { cwd: work, maxBuffer: 64 << 20 },
+      (err) => (err ? reject(new Error('AppImage не распаковался: ' + err.message)) : resolve())));
+    const fresh = path.join(work, 'squashfs-root');
+    if (!fs.existsSync(path.join(fresh, 'AppRun'))) throw new Error('в AppImage нет приложения');
+    const old = appDir + '.old';
+    fs.rmSync(old, { recursive: true, force: true });
+    fs.renameSync(appDir, old);
+    try { fs.renameSync(fresh, appDir); }
+    catch (e) { fs.renameSync(old, appDir); throw e; }   // не оставить человека совсем без приложения
+    fs.rmSync(old, { recursive: true, force: true });
+    return { ok: true, relaunch: true, kind: 'unpacked' };
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
 }
 
 // --- self-relocation (macOS): приложение, запущенное прямо из смонтированного dmg,

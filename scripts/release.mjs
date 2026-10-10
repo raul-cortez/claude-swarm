@@ -221,6 +221,7 @@ const manifest = {
     dmg: `${base}/${dmgFile}`,
     exe: `${base}/${exeFile}`,
     appimage: `${base}/${appImageFile}`,
+    deb: `${base}/${debFile}`,
   },
   notes: commits,
   pubDate: today,
