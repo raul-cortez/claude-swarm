@@ -26,6 +26,10 @@
      разрешениями и «за телефоном», бирюзовый — акцентом интерфейса и ожиданием) и
      единственная, которая читается как «ночь» без подписи. */
   --night:     #6f7bd6;
+  /* Прораб. Раньше красился акцентом — а акцент того же бирюзового, что и «ждёт ответа», и
+     прораб выглядел так, будто зовёт всегда. Пурпурный — свободная часть круга: тёплое занято
+     работой и разрешениями, зелёное — готовностью, бирюзовое — ожиданием, холодное — ночью. */
+  --crew:      #d46fc0;
   --danger:    #e05a5a;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
   /* Шрифт интерфейса — им набраны настройки. Приложение в целом моноширинное
@@ -249,7 +253,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* Знак бригады — только у прораба (.is-crew), перед именем. Спрятан по умолчанию, а не
    удалён из разметки: так его можно просто переключить классом, не трогая DOM (см.
    paintCrew в renderer.js). */
-.tab .crew-icon { display: none; flex: none; color: var(--accent); }
+.tab .crew-icon { display: none; flex: none; color: var(--crew); }
 .tab.is-crew .crew-icon { display: inline-flex; }
 .tab .crew-icon svg { width: 11px; height: 11px; }
 /* Имя всегда в одну строку с многоточием — во всех плотностях, в обеих
@@ -419,14 +423,14 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 
 /* --- прораб: без статусного цвета, кроме «ждёт ответа» --------------------- */
 /* Спека: «его "работает/готов" ничего не значит, потому что бизнес-логику делают дети».
-   Готов/работает — панельный фон и тонкая акцентная рамка, знак бригады у
+   Готов/работает — панельный фон и тонкая пурпурная рамка (--crew), знак бригады у
    имени говорит «этот не работает, этот распоряжается». Ждёт ответа ОТ ЧЕЛОВЕКА — обычная
    жёлто-бирюзовая карточка, никакого исключения: это статус, который человеку и нужен. */
 /* :not(.is-auto) — мандат «работает без меня» самостоятельная сущность и «ничем не
    заменяется» (спека): прораб, которого отдали, красится ночным, а не своим дашедом. */
 .tab.is-crew:not(.status-waiting):not(.is-auto) {
-  --tab-c: var(--accent);
-  border-color: var(--accent);
+  --tab-c: var(--crew);
+  border-color: var(--crew);
   background: var(--panel-2);
 }
 .tab.is-crew:not(.status-waiting):not(.is-auto) .dot { background: transparent; }
@@ -2209,7 +2213,7 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
   color: var(--muted);
 }
 #crew-strip[hidden] { display: none; }
-.crew-strip-ic { display: flex; color: var(--accent); }
+.crew-strip-ic { display: flex; color: var(--crew); }
 .crew-strip-ic svg { width: 13px; height: 13px; flex: none; }
 body.pult-on #crew-strip { top: 34px; }
 
