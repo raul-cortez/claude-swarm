@@ -696,6 +696,19 @@ test('строка про самоперезапуск указывает на �
     'длинный протокол уехал в справку');
 });
 
+// Живой случай (2026-10-14): DeepSeek под оболочкой Клода прочёл «называй модель явно», увидел
+// одни клодовские имена и решил, что перезапуститься не может. На чужом провайдере поле model
+// не просим вовсе — без него вкладка поднимается на той же модели.
+test('на чужом провайдере строка про самоперезапуск не просит называть модель', () => {
+  assert.equal(H.foreignProvider({ ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' }), true);
+  assert.equal(H.foreignProvider({ ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }), false);
+  assert.equal(H.foreignProvider({}), false);
+  const t = H.selfRestartNote('/repo/.swarm-restart-tab.json', '', true);
+  assert.ok(!/"model"/.test(t) && /model НЕ пиши/.test(t));
+  assert.ok(/"restart": true/.test(t) && /"handoff"/.test(t), 'ответить всё равно есть чем');
+  assert.ok(/"model": "sonnet"/.test(H.selfRestartNote('/repo/.swarm-restart-tab.json', '', false)));
+});
+
 // Приложение старее скрипта (или копия не удалась) — справки рядом нет. Указывать на файл,
 // которого не прочесть, хуже, чем не указывать: агент потратит ход на Read и получит ошибку.
 // Молчать про эстафету при этом нельзя — свежая сессия начнёт с пустого места.

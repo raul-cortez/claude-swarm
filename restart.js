@@ -627,6 +627,7 @@
       ...guideLines(opts.guide),
       '   {"restart": true, "model": "sonnet", "prompt": "чем займётся свежая сессия",',
       '    "handoff": "где лежит эстафета"} — без prompt и без handoff перезапуска не будет.',
+      '   Ты не Claude (DeepSeek и т.п. под оболочкой Claude Code) — поле model не пиши.',
       '',
       'Работу новую пока не начинай — ответь и жди.',
     ].join('\n');

@@ -323,7 +323,20 @@ const nightRule = (tag) => withNightProtocol(nightRuleBody(), tag || '[swarm:в�
 // папка» из его точки зрения была не той, что отслеживает сворм (главное дерево), и файл ушёл
 // не туда — самоперезапуск не сработал, а разбираться пришлось руками. Абсолютный путь эту
 // догадку убирает целиком: агенту незачем знать, какая папка «его», — только куда писать.
-const selfRestartNote = (absPath, guide) => {
+// Агент на чужом провайдере (DeepSeek и т.п. под оболочкой Клода — ANTHROPIC_BASE_URL не на
+// anthropic.com). Псевдонимы fable/opus/sonnet/haiku там всё равно разворачиваются в модель
+// провайдера, но агент этого не знает: живой случай (2026-10-14) — DeepSeek прочёл «называй
+// модель явно», увидел в списке одни клодовские и решил, что перезапуститься не может. Ему
+// говорим другое: поле model не писать вовсе, вкладка поднимется на той же модели.
+const foreignProvider = (env = process.env) => {
+  const url = String((env && env.ANTHROPIC_BASE_URL) || '').trim();
+  if (!url) return false;
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase(); } catch (_) { return false; }
+  return !(host === 'anthropic.com' || host.endsWith('.anthropic.com'));
+};
+
+const selfRestartNote = (absPath, guide, foreign = foreignProvider()) => {
   const where = absPath
     ? `положи АБСОЛЮТНЫЙ путь ${absPath} — пиши туда всегда, даже если сам сейчас в другой`
       + ' папке (worktree, поддиректория задачи): именно этот файл я читаю для этой вкладки.'
@@ -342,9 +355,15 @@ const selfRestartNote = (absPath, guide) => {
       : 'Решишь перезапуститься — запиши эстафету (что сделано, на чём стоишь, что дальше, чем'
         + ' проверять) туда, где принято. Затем коротко —',
     `${where}`,
-    'Файл — одним JSON: {"restart": true, "model": "sonnet", "prompt": "чем займётся свежая',
-    'сессия", "handoff": "где лежит эстафета"}. Модель называй явно каждый раз, иначе вкладка, раз',
-    'попав на дорогую, доживает на ней до конца задачи.',
+    ...(foreign ? [
+      'Файл — одним JSON: {"restart": true, "prompt": "чем займётся свежая сессия", "handoff":',
+      '"где лежит эстафета"}. Поле model НЕ пиши: ты работаешь не на Claude, и без него вкладка',
+      'поднимется на той же модели, что сейчас.',
+    ] : [
+      'Файл — одним JSON: {"restart": true, "model": "sonnet", "prompt": "чем займётся свежая',
+      'сессия", "handoff": "где лежит эстафета"}. Модель называй явно каждый раз, иначе вкладка, раз',
+      'попав на дорогую, доживает на ней до конца задачи.',
+    ]),
   ].join('\n');
 };
 
@@ -1162,6 +1181,6 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, allSubsNote, fmtEta, GATE_FIVE, GATE_SEVEN,
-  selfRestartNote, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
+  selfRestartNote, foreignProvider, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
   DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN,
   peersNote, peersViewFor, crewNote, childNote, hireFileFor, CREW_MAX_DEFAULT };
