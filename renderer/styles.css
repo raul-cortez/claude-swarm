@@ -1858,6 +1858,9 @@ body.night-all .night-pill {
 .sub-row .sub-name { width: 9rem; flex: none; }
 .sub-row .sub-main .agent-del { flex: none; }
 .sub-row .sub-bar-row { margin-top: 8px; }
+.sub-row .sub-proxy-row { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.sub-row .sub-proxy-note { font-size: 11px; color: var(--danger); }
+.sub-row .sub-proxy-note[hidden] { display: none; }
 .sub-row .sub-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .sub-row .sub-note[hidden] { display: none; }
 .subs-preview {

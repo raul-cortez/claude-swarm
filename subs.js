@@ -106,6 +106,9 @@ function card(raw) {
     bar: r.bar === undefined ? true : !!r.bar,
     // Выученная папка конфига. Пусто — ещё не видели ни одного хода этой строки.
     home: String(r.home || '').trim(),
+    // Прокси для вкладок этой подписки (http://user:pass@host:port). Пусто — как в системе.
+    // Своя у каждой: рабочему аккаунту за корпоративным файрволом он нужен, личному — нет.
+    proxy: String(r.proxy || '').trim(),
   };
 }
 
@@ -466,6 +469,16 @@ function menuRows(state) {
 // Имя подписки для АГЕНТА: он получает числа хуком в начало хода и до сих пор не знал, чьи
 // они. Пусто — имени нет (карточки нет или человек его не дал), и тогда хук ничего не
 // придумывает: соврать про аккаунт хуже, чем промолчать.
+// Прокси для вкладки, открытой этой командой. Ищем по стему, как и аккаунт (matchIndex):
+// карточки с одним стемом — одна подписка в одном конфиге, и `claude --model opus` должен
+// идти тем же путём, что и `claude`. Из них берём первый заданный прокси.
+function proxyFor(list, command) {
+  const stem = stemOf(command);
+  if (!stem) return '';
+  const found = cards(list).find((c) => c.proxy && stemOf(c.line) === stem);
+  return found ? found.proxy : '';
+}
+
 function nameForHome(list, home) {
   const h = String(home || '').trim();
   if (!h) return '';
@@ -477,7 +490,7 @@ return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
-  pills, previewPills, menuRows, nameForHome,
+  pills, previewPills, menuRows, nameForHome, proxyFor,
 };
 
 });

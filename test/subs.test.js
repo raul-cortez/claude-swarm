@@ -311,6 +311,21 @@ test('вид чинится, если в настройках лежит чеп�
     { window: 'both', eta: 'never', highlight: 'fill' });
 });
 
+test('proxyFor: у каждой подписки свой прокси, ищем по стему команды', () => {
+  const list = [
+    { line: 'claude', proxy: 'http://corp:3128' },
+    { line: 'claude-my --model sonnet' },
+  ];
+  assert.strictEqual(subs.proxyFor(list, 'claude --resume abc'), 'http://corp:3128');
+  assert.strictEqual(subs.proxyFor(list, 'claude-my -n swarm-x'), '');
+  assert.strictEqual(subs.proxyFor(list, ''), '');               // чистый терминал
+  assert.strictEqual(subs.proxyFor(list, 'zsh'), '');
+  // Вторая карточка той же подписки без своего прокси идёт тем же путём.
+  assert.strictEqual(subs.proxyFor([{ line: 'claude --model opus' }, { line: 'claude', proxy: 'h:1' }], 'claude'), 'h:1');
+  assert.strictEqual(subs.card({ line: 'claude', proxy: '  h:1 ' }).proxy, 'h:1');
+  assert.strictEqual(subs.card({ line: 'claude' }).proxy, '');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + (e.message || e)); process.exitCode = 1; }

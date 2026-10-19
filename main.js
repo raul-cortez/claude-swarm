@@ -226,9 +226,11 @@ let HOOKS_ENABLED = false;
 // Это ПЕРВЫЙ режим, а не запертый: Shift+Tab за клавиатурой и кнопки из телеги работают
 // дальше как обычно.
 let PERMISSION_MODE = '';
-// Прокси для вкладок агента (Настройки → Общее → Сеть). Пусто — не вмешиваться. Только в
-// окружение вкладки, см. launch-line.proxyEnv; в логи не пишем — в строке бывает пароль.
-let NETWORK_PROXY = '';
+// Прокси подписок (Настройки → Подписки, у каждой карточки свой): [{ line, proxy }]. Вкладка
+// берёт прокси той подписки, чьей командой открыта (subs.proxyFor). Только в окружение
+// вкладки, см. launch-line.proxyEnv; в логи и в файл карточек для хука не пишем — в строке
+// бывает пароль.
+let NETWORK_PROXIES = [];
 
 // Copy a bundled script onto a real path (fs CAN read inside app.asar, but Node
 // can't exec from there) and return a launcher command that runs our own binary as
@@ -7364,7 +7366,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
     // Прокси — только вкладкам агента: панель терминала ⌘J — оболочка человека, а не Клода.
-    env: { ...proxyEnv(tabEnv(process.env), isPanel ? '' : NETWORK_PROXY), ...pass.env },
+    env: { ...proxyEnv(tabEnv(process.env), isPanel ? '' : subs.proxyFor(NETWORK_PROXIES, opts.command)), ...pass.env },
   });
 
   sessions.set(id, child);
@@ -7816,10 +7818,10 @@ ipcMain.on('settings:permissionMode', (_e, mode) => {
   PERMISSION_MODE = modeFlag(want) ? want : '';
 });
 
-// Прокси для новых вкладок агента. Уже открытые не трогаем: окружение процесса задаётся при
-// запуске, и подменить его живому Клоду нельзя.
-ipcMain.on('settings:networkProxy', (_e, value) => {
-  NETWORK_PROXY = String(value || '').trim();
+// Прокси подписок для новых вкладок. Уже открытые не трогаем: окружение процесса задаётся
+// при запуске, и подменить его живому Клоду нельзя.
+ipcMain.on('settings:networkProxy', (_e, list) => {
+  NETWORK_PROXIES = Array.isArray(list) ? list : [];
 });
 
 // Список режимов для селекта в настройках — ОТСЮДА, а не списком в рендерере: подписи и
