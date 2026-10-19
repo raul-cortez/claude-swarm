@@ -92,6 +92,43 @@ function tabEnv(parentEnv) {
   return env;
 }
 
+// Прокси для вкладок агента (Настройки → Общее → Сеть). Корпоративная сеть, где наружу
+// только через прокси, или Charles/Fiddler, чтобы посмотреть трафик Клода.
+//
+// Ставится ТОЛЬКО в окружение вкладки с агентом — не в process.env: сам сворм (обновления,
+// телега) ходит в сеть как раньше, а панель терминала ⌘J остаётся обычной оболочкой
+// человека. Пустая строка — не вмешиваться: что пришло из системы, то и остаётся.
+//
+// Схема необязательна: «host:8080» значит http://host:8080 — так прокси обычно и диктуют.
+// Неразборчивое — тоже «не вмешиваться»: вкладка без прокси хотя бы скажет внятную сетевую
+// ошибку, а мусор в HTTPS_PROXY роняет Клода на старте непонятно чем.
+function normalizeProxy(raw) {
+  const t = String(raw == null ? '' : raw).trim();
+  if (!t) return '';
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : 'http://' + t;
+  let u;
+  try { u = new URL(withScheme); } catch (_) { return ''; }
+  if (!/^(https?|socks5h?):$/.test(u.protocol) || !u.hostname) return '';
+  return withScheme;
+}
+
+// Адреса, которые в обход прокси нужны всегда: локальные MCP-серверы и инструменты,
+// которые Клод зовёт по localhost. Через корпоративный прокси они бы просто пропали.
+const LOCAL_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
+
+function proxyEnv(env, proxy) {
+  const out = Object.assign({}, env || {});
+  const url = normalizeProxy(proxy);
+  if (!url) return out;
+  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) out[name] = url;
+  // Свой NO_PROXY человека дополняем, а не затираем: в нём могут быть внутренние хосты.
+  const have = String(out.NO_PROXY || out.no_proxy || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const noProxy = have.concat(LOCAL_NO_PROXY.filter((h) => !have.includes(h))).join(',');
+  out.NO_PROXY = noProxy;
+  out.no_proxy = noProxy;
+  return out;
+}
+
 // Run `clear` before the command. On an xterm `clear` also drops the scrollback
 // (ESC[3J), so scrolling up in a fresh tab shows the conversation and nothing else.
 // cmd.exe has its own name for it and its own separator; every other shell we can land
@@ -102,4 +139,4 @@ function clearPrefix(shellPath) {
   return shellFamily(shellPath) === 'cmd' ? 'cls&' : 'clear; ';
 }
 
-module.exports = { shellFamily, envPassing, clearPrefix, tabEnv, INHERITED_SESSION_VARS };
+module.exports = { shellFamily, envPassing, clearPrefix, tabEnv, normalizeProxy, proxyEnv, INHERITED_SESSION_VARS };

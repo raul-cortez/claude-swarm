@@ -861,6 +861,10 @@ const hooksEnabled = true;
 // Смысл настройки в том, что «разреши уже всё» — самое частое, что делают руками сразу после
 // открытия вкладки, а с телефона Shift+Tab не нажать вообще.
 let permMode = localStorage.getItem('swarm.permMode') || '';
+// Прокси для вкладок агента (Settings → Общее → Сеть): строка вида http://user:pass@host:port.
+// Пусто — не вмешиваться. Ставится только в окружение вкладок с агентом, не приложению и не
+// панели терминала; разбор и проверка — в launch-line.js на стороне main.
+let networkProxy = localStorage.getItem('swarm.networkProxy') || '';
 // «Перезапускать агента, когда контекст заполнится» (Settings → Запуск). Выключено по
 // умолчанию: функция сама решает, когда стереть разговор, и включать такое за человека нельзя.
 // Порог — в процентах с полоски контекста, то есть отмеренных от точки автосжатия. Логика вся
@@ -1861,6 +1865,22 @@ function showSettingsModal(tab) {
             </div>
           </section>
         </div>
+        <section class="set-group">
+          <div class="set-group-h">Сеть</div>
+          <div class="set-field">
+            <div class="set-head">
+              <span class="set-label">Прокси для агента</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Если в вашей сети наружу можно только через прокси — или хочется
+                посмотреть трафик Клода в Charles или Fiddler. Прокси получают только вкладки с агентом: само
+                приложение и панель терминала ходят в сеть как раньше. Пароль можно вписать прямо в адрес.
+                Действует на новые вкладки. Пусто — как настроено в системе.</span>
+            </div>
+            <input class="set-input set-code" type="text" id="set-net-proxy" spellcheck="false"
+                   autocapitalize="off" placeholder="http://user:password@host:port" />
+            <span class="set-note" id="set-net-proxy-note"></span>
+          </div>
+        </section>
       </div>
 
       <!-- Подписки. Эта страница И ЕСТЬ список запуска: раньше он лежал на «Запуске»
@@ -2542,6 +2562,24 @@ function showSettingsModal(tab) {
     permI.value = permTitles.has(permMode) ? permMode : '';
     syncPermNote();
   });
+  // Прокси: подсказка под полем говорит сразу, если строку не разобрать, — иначе человек узнал
+  // бы об этом только по вкладке, которая молча ходит в сеть мимо прокси.
+  const proxyI = overlay.querySelector('#set-net-proxy');
+  const proxyNoteEl = overlay.querySelector('#set-net-proxy-note');
+  proxyI.value = networkProxy;
+  const syncProxyNote = () => {
+    const v = proxyI.value.trim();
+    let ok = !v;
+    if (v) {
+      try {
+        const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : 'http://' + v);
+        ok = /^(https?|socks5h?):$/.test(u.protocol) && !!u.hostname;
+      } catch (_) {}
+    }
+    proxyNoteEl.textContent = ok ? '' : 'Не похоже на адрес прокси — вкладки пойдут без него.';
+  };
+  proxyI.addEventListener('input', syncProxyNote);
+  syncProxyNote();
   // Самоперезапуск: галочка и порог. Границы ползунка приходят из restart.js — того же
   // модуля, по которому main решает «пора спросить», иначе панель обещала бы порог, с
   // которым перезапуск не работает.
@@ -3694,6 +3732,11 @@ function showSettingsModal(tab) {
     localStorage.setItem('swarm.termCwdMode', overlay.querySelector('input[name="set-term-cwd"]:checked')?.value || 'agent');
     localStorage.setItem('swarm.termCwdPath', termPathI.value || '');
     localStorage.setItem('swarm.termPersist', termPersistI.checked ? '1' : '0');
+    if (proxyI.value.trim() !== networkProxy) {
+      networkProxy = proxyI.value.trim();
+      localStorage.setItem('swarm.networkProxy', networkProxy);
+      window.swarm.setNetworkProxy(networkProxy);
+    }
     if (permI.value !== permMode) {
       permMode = permI.value;
       localStorage.setItem('swarm.permMode', permMode);
@@ -6715,6 +6758,7 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 // carries (or omits) the hooks block before the first claude spawn.
 window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
+window.swarm.setNetworkProxy(networkProxy); // и прокси — до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
 window.swarm.setCrew({ max: crewMax, model: crewModel, freed: crewFreed }); // настройки бригады

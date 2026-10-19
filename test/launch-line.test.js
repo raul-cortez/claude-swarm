@@ -103,6 +103,40 @@ test('tabEnv не трогает авторизацию и выбор аккау
   assert.strictEqual(env.SHELL, '/bin/zsh');
 });
 
+test('normalizeProxy: пусто и мусор — не вмешиваться, схема по умолчанию http', () => {
+  assert.strictEqual(LL.normalizeProxy(''), '');
+  assert.strictEqual(LL.normalizeProxy('   '), '');
+  assert.strictEqual(LL.normalizeProxy(null), '');
+  assert.strictEqual(LL.normalizeProxy('http://'), '');
+  assert.strictEqual(LL.normalizeProxy('ftp://host:21'), '');
+  assert.strictEqual(LL.normalizeProxy(' proxy.corp:3128 '), 'http://proxy.corp:3128');
+  assert.strictEqual(LL.normalizeProxy('http://user:p%40ss@10.0.0.1:8080'), 'http://user:p%40ss@10.0.0.1:8080');
+  assert.strictEqual(LL.normalizeProxy('https://proxy.corp'), 'https://proxy.corp');
+});
+
+test('proxyEnv ставит все четыре переменные и не трогает исходное окружение', () => {
+  const base = { PATH: '/usr/bin' };
+  const env = LL.proxyEnv(base, 'http://u:p@h:8080');
+  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) {
+    assert.strictEqual(env[k], 'http://u:p@h:8080', k);
+  }
+  assert.strictEqual(env.PATH, '/usr/bin');
+  assert.ok(!('HTTP_PROXY' in base), 'исходный объект не меняется');
+  assert.strictEqual(env.NO_PROXY, 'localhost,127.0.0.1,::1');
+});
+
+test('proxyEnv дополняет свой NO_PROXY человека, а не затирает', () => {
+  const env = LL.proxyEnv({ NO_PROXY: 'git.corp, localhost' }, 'h:1');
+  assert.strictEqual(env.NO_PROXY, 'git.corp,localhost,127.0.0.1,::1');
+  assert.strictEqual(env.no_proxy, env.NO_PROXY);
+});
+
+test('proxyEnv без прокси оставляет системные переменные как есть', () => {
+  const env = LL.proxyEnv({ HTTPS_PROXY: 'http://sys:1' }, '');
+  assert.strictEqual(env.HTTPS_PROXY, 'http://sys:1');
+  assert.ok(!('NO_PROXY' in env));
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }

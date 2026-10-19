@@ -196,7 +196,7 @@ const { DEFAULT_ASK_PHRASES, ASK_TAG, DONE_TAG, normalizePhrases, phraseSources,
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
-const { envPassing, clearPrefix, tabEnv, shellFamily } = require('./launch-line');
+const { envPassing, clearPrefix, tabEnv, proxyEnv, shellFamily } = require('./launch-line');
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
 const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
@@ -226,6 +226,9 @@ let HOOKS_ENABLED = false;
 // Это ПЕРВЫЙ режим, а не запертый: Shift+Tab за клавиатурой и кнопки из телеги работают
 // дальше как обычно.
 let PERMISSION_MODE = '';
+// Прокси для вкладок агента (Настройки → Общее → Сеть). Пусто — не вмешиваться. Только в
+// окружение вкладки, см. launch-line.proxyEnv; в логи не пишем — в строке бывает пароль.
+let NETWORK_PROXY = '';
 
 // Copy a bundled script onto a real path (fs CAN read inside app.asar, but Node
 // can't exec from there) and return a launcher command that runs our own binary as
@@ -7360,7 +7363,8 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...tabEnv(process.env), ...pass.env },
+    // Прокси — только вкладкам агента: панель терминала ⌘J — оболочка человека, а не Клода.
+    env: { ...proxyEnv(tabEnv(process.env), isPanel ? '' : NETWORK_PROXY), ...pass.env },
   });
 
   sessions.set(id, child);
@@ -7810,6 +7814,12 @@ ipcMain.on('settings:hooks', (_e, enabled) => {
 ipcMain.on('settings:permissionMode', (_e, mode) => {
   const want = String(mode || '');
   PERMISSION_MODE = modeFlag(want) ? want : '';
+});
+
+// Прокси для новых вкладок агента. Уже открытые не трогаем: окружение процесса задаётся при
+// запуске, и подменить его живому Клоду нельзя.
+ipcMain.on('settings:networkProxy', (_e, value) => {
+  NETWORK_PROXY = String(value || '').trim();
 });
 
 // Список режимов для селекта в настройках — ОТСЮДА, а не списком в рендерере: подписи и
