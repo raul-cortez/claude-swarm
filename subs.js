@@ -106,10 +106,57 @@ function card(raw) {
     bar: r.bar === undefined ? true : !!r.bar,
     // Выученная папка конфига. Пусто — ещё не видели ни одного хода этой строки.
     home: String(r.home || '').trim(),
-    // Прокси для вкладок этой подписки (http://user:pass@host:port). Пусто — как в системе.
-    // Своя у каждой: рабочему аккаунту за корпоративным файрволом он нужен, личному — нет.
+    // Прокси для вкладок этой подписки (http://user:pass@host:port). Свой у каждой: рабочему
+    // аккаунту за корпоративным файрволом он нужен, личному — нет. Галочка отдельно от адреса:
+    // снятая не стирает введённое, включил обратно — всё на месте. Записи до галочки знали
+    // только адрес, и для них «включено» — это «адрес задан».
     proxy: String(r.proxy || '').trim(),
+    proxyOn: r.proxyOn === undefined ? !!String(r.proxy || '').trim() : !!r.proxyOn,
   };
+}
+
+// Адрес прокси ↔ поля формы в карточке. Типа два: SOCKS Claude Code не поддерживает, и
+// предлагать его значило бы вкладку, которая молча не ходит в сеть. Логин и пароль в адресе
+// закодированы: @ и : в пароле иначе ломают разбор.
+const PROXY_TYPES = ['http', 'https'];
+
+function proxyParts(url) {
+  const out = { type: 'http', host: '', port: '', user: '', pass: '' };
+  const t = String(url || '').trim();
+  if (!t) return out;
+  let u;
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : 'http://' + t); } catch (_) { return out; }
+  const type = u.protocol.replace(/:$/, '');
+  const dec = (v) => { try { return decodeURIComponent(v); } catch (_) { return v; } };
+  out.type = PROXY_TYPES.includes(type) ? type : 'http';
+  out.host = u.hostname;
+  out.port = u.port;
+  out.user = dec(u.username);
+  out.pass = dec(u.password);
+  return out;
+}
+
+function proxyUrl(parts) {
+  const p = parts || {};
+  const host = String(p.host || '').trim();
+  if (!host) return '';
+  const type = PROXY_TYPES.includes(p.type) ? p.type : 'http';
+  const port = String(p.port || '').trim();
+  const user = String(p.user || '');
+  const pass = String(p.pass || '');
+  const auth = user ? encodeURIComponent(user) + (pass ? ':' + encodeURIComponent(pass) : '') + '@' : '';
+  return type + '://' + auth + host + (port ? ':' + port : '');
+}
+
+// Что не так с формой — одной фразой человеку, или пусто. Порт проверяем сами: URL примет
+// и «80a» как часть хоста, а Клод потом не стартует.
+function proxyProblem(parts) {
+  const p = parts || {};
+  if (!String(p.host || '').trim()) return 'Укажите сервер — без него вкладки пойдут без прокси.';
+  if (/[\s/@:]/.test(String(p.host).trim())) return 'В поле сервера — только адрес, без схемы и порта.';
+  const port = String(p.port || '').trim();
+  if (port && !(/^\d+$/.test(port) && +port >= 1 && +port <= 65535)) return 'Порт — число от 1 до 65535.';
+  return '';
 }
 
 function cards(raw) {
@@ -475,7 +522,7 @@ function menuRows(state) {
 function proxyFor(list, command) {
   const stem = stemOf(command);
   if (!stem) return '';
-  const found = cards(list).find((c) => c.proxy && stemOf(c.line) === stem);
+  const found = cards(list).find((c) => c.proxyOn && c.proxy && stemOf(c.line) === stem);
   return found ? found.proxy : '';
 }
 
@@ -491,6 +538,7 @@ return {
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
   pills, previewPills, menuRows, nameForHome, proxyFor,
+  PROXY_TYPES, proxyParts, proxyUrl, proxyProblem,
 };
 
 });

@@ -326,6 +326,32 @@ test('proxyFor: у каждой подписки свой прокси, ищем
   assert.strictEqual(subs.card({ line: 'claude' }).proxy, '');
 });
 
+test('прокси: галочка отдельно от адреса, снятая — вкладке прокси не даёт', () => {
+  assert.strictEqual(subs.card({ line: 'claude', proxy: 'h:1' }).proxyOn, true);   // запись до галочки
+  assert.strictEqual(subs.card({ line: 'claude', proxy: 'h:1', proxyOn: false }).proxyOn, false);
+  assert.strictEqual(subs.card({ line: 'claude' }).proxyOn, false);
+  assert.strictEqual(subs.proxyFor([{ line: 'claude', proxy: 'h:1', proxyOn: false }], 'claude'), '');
+});
+
+test('прокси: поля формы ↔ адрес, пароль с @ и : переживает круг', () => {
+  const url = subs.proxyUrl({ type: 'https', host: 'proxy.corp', port: '3128', user: 'e.n', pass: 'p@ss:w' });
+  assert.strictEqual(url, 'https://e.n:p%40ss%3Aw@proxy.corp:3128');
+  assert.deepStrictEqual(subs.proxyParts(url), { type: 'https', host: 'proxy.corp', port: '3128', user: 'e.n', pass: 'p@ss:w' });
+  assert.strictEqual(subs.proxyUrl({ host: 'h' }), 'http://h');
+  assert.strictEqual(subs.proxyUrl({ host: '' }), '');
+  assert.deepStrictEqual(subs.proxyParts('corp:8080'), { type: 'http', host: 'corp', port: '8080', user: '', pass: '' });
+  assert.deepStrictEqual(subs.proxyParts('мусор ::'), { type: 'http', host: '', port: '', user: '', pass: '' });
+});
+
+test('прокси: проблемы формы называются одной фразой', () => {
+  assert.ok(subs.proxyProblem({ host: '' }));
+  assert.ok(subs.proxyProblem({ host: 'http://h' }));
+  assert.ok(subs.proxyProblem({ host: 'h', port: '80a' }));
+  assert.ok(subs.proxyProblem({ host: 'h', port: '70000' }));
+  assert.strictEqual(subs.proxyProblem({ host: 'h', port: '3128' }), '');
+  assert.strictEqual(subs.proxyProblem({ host: 'h' }), '');
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + (e.message || e)); process.exitCode = 1; }

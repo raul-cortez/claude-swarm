@@ -937,14 +937,14 @@ function saveLaunch() {
 // Прокси подписок для main: только те, где он задан. Разбор и проверка строки — в main
 // (launch-line.normalizeProxy), здесь только выбор человека.
 function proxyList() {
-  return launchList.filter((a) => a.proxy).map((a) => ({ line: a.line, proxy: a.proxy }));
+  return launchList.filter((a) => a.proxyOn && a.proxy).map((a) => ({ line: a.line, proxy: a.proxy, proxyOn: true }));
 }
 
 function saveLaunchList() {
   const plain = launchList.map((a) => ({ line: a.line, name: a.name, bar: a.bar, home: a.home }));
   // Прокси хранится в той же записи, но в main уходит отдельно (setNetworkProxy), а не с
   // карточками: те пишутся в файл для хука, а в строке прокси бывает пароль.
-  localStorage.setItem('swarm.launchList', JSON.stringify(launchList.map((a, i) => Object.assign({}, plain[i], { proxy: a.proxy || '' }))));
+  localStorage.setItem('swarm.launchList', JSON.stringify(launchList.map((a, i) => Object.assign({}, plain[i], { proxy: a.proxy || '', proxyOn: !!a.proxyOn }))));
   try { window.swarm.setNetworkProxy(proxyList()); } catch (_) {}
   // Keep the single-agent fallback + legacy keys in sync with the first entry.
   launch = launchList[0];
@@ -3081,6 +3081,14 @@ function showSettingsModal(tab) {
   // Карточка подписки: строка запуска, имя, галка «показывать остатки в панели». Живых чисел
   // здесь НЕТ намеренно — настройка не сводка. Единственное, что карточка говорит про расход:
   // «остатков пока не видели», и то лишь пока их правда не видели.
+  const proxyPartsOf = (row) => ({
+    type: row.querySelector('.sub-proxy-type').value,
+    host: row.querySelector('.sub-proxy-host').value.trim(),
+    port: row.querySelector('.sub-proxy-port').value.trim(),
+    user: row.querySelector('.sub-proxy-user').value,
+    pass: row.querySelector('.sub-proxy-pass').value,
+  });
+
   const subsRow = (cardIn) => {
     const c = SUBS_API.card(cardIn || {});
     const row = document.createElement('div');
@@ -3097,11 +3105,29 @@ function showSettingsModal(tab) {
         <span class="set-check-tx">показывать остатки в нижней панели</span>
       </label>
       <span class="sub-note" hidden></span>
-      <div class="sub-proxy-row">
-        <input class="set-input set-code sub-proxy" type="text" spellcheck="false" autocapitalize="off"
-               autocorrect="off" placeholder="прокси: http://user:password@host:port — пусто, как в системе"
-               title="Только для вкладок этой подписки: само приложение и панель терминала ходят в сеть как раньше. Действует на новые вкладки." />
-        <span class="sub-proxy-note" hidden>Не похоже на адрес прокси — вкладки пойдут без него.</span>
+      <label class="set-check sub-bar-row">
+        <input type="checkbox" class="sub-proxy-on" />
+        <span class="set-check-tx">использовать прокси</span>
+      </label>
+      <div class="sub-proxy" hidden>
+        <span class="sub-proxy-k">Тип</span>
+        <select class="set-input set-select sub-proxy-type">
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+        </select>
+        <span class="sub-proxy-k">Сервер</span>
+        <div class="sub-proxy-hp">
+          <input class="set-input set-code sub-proxy-host" type="text" spellcheck="false" autocapitalize="off"
+                 autocorrect="off" placeholder="proxy.example.com" />
+          <input class="set-input set-code sub-proxy-port" type="text" inputmode="numeric" placeholder="порт" />
+        </div>
+        <span class="sub-proxy-k">Логин</span>
+        <input class="set-input set-code sub-proxy-user" type="text" spellcheck="false" autocapitalize="off"
+               autocorrect="off" autocomplete="off" placeholder="необязательно" />
+        <span class="sub-proxy-k">Пароль</span>
+        <input class="set-input set-code sub-proxy-pass" type="password" autocomplete="new-password"
+               placeholder="необязательно" />
+        <span class="sub-proxy-note" hidden></span>
       </div>`;
     const lineI = row.querySelector('.sub-line');
     const nameI = row.querySelector('.sub-name');
@@ -3110,25 +3136,29 @@ function showSettingsModal(tab) {
     nameI.value = c.name;
     barI.checked = c.bar !== false;
     row.dataset.home = c.home || '';
-    // Прокси: подсказка под полем говорит сразу, если строку не разобрать, — иначе человек
-    // узнал бы об этом только по вкладке, которая молча ходит в сеть мимо прокси. Та же
-    // проверка, что в launch-line.normalizeProxy, по которой main решает на самом деле.
-    const proxyI = row.querySelector('.sub-proxy');
+    // Прокси: галочка раскрывает форму, а поля собираются в адрес только при сохранении
+    // (subs.proxyUrl). Снятая галочка форму прячет, но не чистит — включил обратно, всё на месте.
+    // Подсказка под формой говорит сразу, если с полями что-то не так, — иначе человек узнал бы
+    // об этом только по вкладке, которая молча ходит в сеть мимо прокси.
+    const proxyOnI = row.querySelector('.sub-proxy-on');
+    const proxyBox = row.querySelector('.sub-proxy');
     const proxyNoteEl = row.querySelector('.sub-proxy-note');
-    proxyI.value = c.proxy;
-    const syncProxyNote = () => {
-      const v = proxyI.value.trim();
-      let ok = !v;
-      if (v) {
-        try {
-          const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : 'http://' + v);
-          ok = /^(https?|socks5h?):$/.test(u.protocol) && !!u.hostname;
-        } catch (_) {}
-      }
-      proxyNoteEl.hidden = ok;
+    const px = SUBS_API.proxyParts(c.proxy);
+    row.querySelector('.sub-proxy-type').value = px.type;
+    row.querySelector('.sub-proxy-host').value = px.host;
+    row.querySelector('.sub-proxy-port').value = px.port;
+    row.querySelector('.sub-proxy-user').value = px.user;
+    row.querySelector('.sub-proxy-pass').value = px.pass;
+    proxyOnI.checked = !!c.proxyOn;
+    const syncProxy = () => {
+      proxyBox.hidden = !proxyOnI.checked;
+      const problem = proxyOnI.checked ? SUBS_API.proxyProblem(proxyPartsOf(row)) : '';
+      proxyNoteEl.textContent = problem;
+      proxyNoteEl.hidden = !problem;
     };
-    proxyI.addEventListener('input', syncProxyNote);
-    syncProxyNote();
+    proxyOnI.addEventListener('change', syncProxy);
+    proxyBox.addEventListener('input', syncProxy);
+    syncProxy();
     // Знаем ли мы про эту строку хоть одно число. Не «подписка ли это по имени команды»:
     // `claude-glm` и `cld` — обёртки к чужим моделям, имя клодовое, а окон лимитов нет.
     // Признак приходит от самого Клода, с первым ответом модели (см. subs.js).
@@ -3162,7 +3192,8 @@ function showSettingsModal(tab) {
     name: r.querySelector('.sub-name').value.trim(),
     bar: r.querySelector('.sub-bar').checked,
     home: r.dataset.home || '',
-    proxy: r.querySelector('.sub-proxy').value.trim(),
+    proxy: SUBS_API.proxyUrl(proxyPartsOf(r)),
+    proxyOn: r.querySelector('.sub-proxy-on').checked,
   })).filter((c) => c.line);
 
   const subsPreviewEl = overlay.querySelector('#set-subs-preview');

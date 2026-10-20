@@ -108,7 +108,8 @@ function normalizeProxy(raw) {
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : 'http://' + t;
   let u;
   try { u = new URL(withScheme); } catch (_) { return ''; }
-  if (!/^(https?|socks5h?):$/.test(u.protocol) || !u.hostname) return '';
+  // SOCKS Claude Code не поддерживает (документация, «Enterprise network configuration»).
+  if (!/^https?:$/.test(u.protocol) || !u.hostname) return '';
   return withScheme;
 }
 

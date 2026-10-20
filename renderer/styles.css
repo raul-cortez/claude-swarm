@@ -1858,8 +1858,19 @@ body.night-all .night-pill {
 .sub-row .sub-name { width: 9rem; flex: none; }
 .sub-row .sub-main .agent-del { flex: none; }
 .sub-row .sub-bar-row { margin-top: 8px; }
-.sub-row .sub-proxy-row { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-.sub-row .sub-proxy-note { font-size: 11px; color: var(--danger); }
+/* Форма прокси под галочкой «использовать прокси»: подписи слева, поля справа. Отступ слева —
+   под текст галочки, чтобы форма читалась как её продолжение, а не как новый блок карточки. */
+.sub-row .sub-proxy {
+  margin: 8px 0 0 26px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center;
+}
+.sub-row .sub-proxy[hidden] { display: none; }
+.sub-row .sub-proxy-k { color: var(--muted); font-size: 12px; }
+.sub-row .sub-proxy-type { width: 9rem; }
+.sub-row .sub-proxy-hp { display: flex; gap: 8px; }
+.sub-row .sub-proxy-host { flex: 1; min-width: 0; }
+.sub-row .sub-proxy-port { width: 6rem; flex: none; }
+.sub-row .sub-proxy-note { grid-column: 1 / -1; font-size: 11px; color: var(--danger); }
 .sub-row .sub-proxy-note[hidden] { display: none; }
 .sub-row .sub-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .sub-row .sub-note[hidden] { display: none; }
