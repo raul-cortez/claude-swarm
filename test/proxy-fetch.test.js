@@ -26,8 +26,10 @@ async function stand(needAuth) {
       client.end('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n');
       return;
     }
-    const [host, port] = req.url.split(':');
-    const up = net.connect(Number(port), host, () => {
+    // Любое имя прокси ведёт к локальному сервису: так запрос, ушедший мимо туннеля, на имя
+    // geo.invalid просто не дойдёт, и тест это заметит.
+    const port = req.url.split(':').pop();
+    const up = net.connect(Number(port), '127.0.0.1', () => {
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       up.pipe(client); client.pipe(up);
     });
@@ -40,10 +42,10 @@ async function stand(needAuth) {
 test('ходит туннелем через прокси и отдаёт ответ сервиса', async () => {
   const s = await stand('');
   try {
-    const r = await fetchViaProxy(`http://127.0.0.1:${s.proxyPort}`, `http://127.0.0.1:${s.targetPort}/cdn-cgi/trace`, 3000);
+    const r = await fetchViaProxy(`http://127.0.0.1:${s.proxyPort}`, `http://geo.invalid:${s.targetPort}/cdn-cgi/trace`, 3000);
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.text, 'loc=FR\n');
-    assert.strictEqual(s.seen[0].path, `127.0.0.1:${s.targetPort}`);
+    assert.strictEqual(s.seen[0].path, `geo.invalid:${s.targetPort}`);
   } finally { s.close(); }
 });
 

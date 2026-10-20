@@ -53,7 +53,8 @@ function fetchViaProxy(proxyUrl, targetUrl, timeoutMs) {
         port: targetPort,
         path: t.pathname + t.search,
         headers: { Host: t.host, Connection: 'close' },
-        agent: false,
+        // Без agent: с agent:false Node заводит свой агент и createConnection не зовёт — запрос
+        // уходит мимо туннеля, напрямую с мака, и прокси «оказывается» в стране мака.
         createConnection: () => (secureTarget ? tls.connect({ socket, servername: t.hostname }) : socket),
       };
       const get = (secureTarget ? https : http).get(opts, (r) => {
