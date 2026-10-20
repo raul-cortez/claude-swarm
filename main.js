@@ -196,7 +196,7 @@ const { DEFAULT_ASK_PHRASES, ASK_TAG, DONE_TAG, normalizePhrases, phraseSources,
 const { systemPromptRule } = require('./agent-rules');
 // Keeps our own flags from filling a fresh tab's screen: long values go through the
 // shell's environment, and a `clear` wipes the typed line. See launch-line.js.
-const { envPassing, clearPrefix, tabEnv, proxyEnv, shellFamily } = require('./launch-line');
+const { envPassing, clearPrefix, tabEnv, proxyEnv, normalizeProxy, shellFamily } = require('./launch-line');
 const statusline = require('./swarm-statusline');   // числа расхода + текст для /usage
 const subs = require('./subs');                     // подписки: карточки запуска и что видно в панели
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
@@ -207,6 +207,7 @@ const cpu = require('./cpu');                        // значок загру�
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 const geo = require('./geo');                       // регион: из-под российского адреса сворм не работает
+const { fetchViaProxy } = require('./proxy-fetch');   // страна подписки — через её прокси
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
 // Opt-in: precise status via Claude hooks. Off by default; the renderer pushes the
@@ -5305,10 +5306,11 @@ function nightResolvePhase(id, d, now) {
 // живёт в масштабе минут, а снимок экрана ради поиска стены лимита незачем брать триста раз
 // в минуту.
 setInterval(() => {
-  if (!autoAny() || geoBlocked) return;   // замороженным вкладкам толчки ни к чему
+  if (!autoAny()) return;
   const now = Date.now();
   for (const [id, d] of det) {
     if (d.dead || !autoOn(d)) continue;
+    if (geoTabBlocked(d)) continue;          // замороженным вкладкам толчки ни к чему
     try {
       const st = nightSt(d);
       if (nightBusyWithRestart(d)) continue;
@@ -6331,11 +6333,11 @@ function crewFreeTick(now) {
 }
 
 setInterval(() => {
-  if (geoBlocked) return;                 // бригада заморожена вместе со всеми — не нанимать
   const now = Date.now();
   for (const id of sessions.keys()) {
     const d = det.get(id);
     if (!d || d.dead || !d.crew) continue;
+    if (geoTabBlocked(d)) continue;          // замороженный прораб не нанимает
     try { hireTick(id, d); } catch (e) { reportMainError(e); }
   }
   try { hireFireTick(now); } catch (e) { reportMainError(e); }
@@ -6672,7 +6674,7 @@ function restartWorkAgain(id, d) {
 }
 
 function restartTick(id, d, now) {
-  if (geoBlocked) return;                 // свежая сессия пошла бы в сеть из-под российского адреса
+  if (geoTabBlocked(d)) return;           // свежая сессия пошла бы в сеть из-под российского адреса
   const state = d.rs || restart.initial();
   // Ждём ухода агента, которого сами и закрыли: тогда ответ даёт ОДИН его pid, а всё остальное
   // в этой фазе не читается вовсе (см. goneStep). Разница не косметическая — этот такт идёт
@@ -7357,6 +7359,10 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     injectAgentRules(injectStatusline(opts.command != null ? opts.command : START_COMMAND, pass), pass)));
   const cmd = pinned.cmd;
 
+  // Прокси подписки, чьей командой открыта вкладка. Панель терминала ⌘J — оболочка человека, а
+  // не Клода, ей прокси не положен. Запоминаем во вкладке: по нему решается, замерзает ли она
+  // (страна её выхода — страна прокси, см. geo.tabBlocked).
+  const tabProxy = isPanel ? '' : normalizeProxy(subs.proxyFor(NETWORK_PROXIES, opts.command));
   const child = pty.spawn(shell, isWin ? [] : ['-l'], {
     name: 'xterm-256color',
     cols: opts.cols || 80,
@@ -7365,8 +7371,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    // Прокси — только вкладкам агента: панель терминала ⌘J — оболочка человека, а не Клода.
-    env: { ...proxyEnv(tabEnv(process.env), isPanel ? '' : subs.proxyFor(NETWORK_PROXIES, opts.command)), ...pass.env },
+    env: { ...proxyEnv(tabEnv(process.env), tabProxy), ...pass.env },
   });
 
   sessions.set(id, child);
@@ -7374,6 +7379,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   if (!isPanel) {
     d0 = makeDetector(opts.cols, opts.rows);
     d0.cwd = cwd;                       // the transcript lives under a slug of this path
+    d0.proxy = tabProxy;                // выход в сеть через прокси подписки — для проверки страны
     d0.tabKey = String(opts.tabKey || '');   // survives relaunch: the Telegram topic key
     d0.name = String(opts.name || '');
     // Мандат «работай без меня» принадлежит вкладке, а не сеансу приложения: сохраняется рядом с
@@ -7464,7 +7470,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     if (cmd) {
       // Агент стартует, только когда известно, что адрес не российский (см. geoGate): иначе
       // восстановленные на старте вкладки успели бы сходить в сеть раньше первой проверки.
-      setTimeout(() => geoGate(() => {
+      setTimeout(() => geoGate(id, () => {
         // Вкладку могли закрыть за эти 350 мс — тогда и отметок о запуске быть не должно.
         if (!ptyType(id, clearPrefix(shell) + cmd + '\r')) return;
         // С этой секунды в шелле крутится НАШ запуск (см. scanTabProcesses): чем он развернулся,
@@ -7822,6 +7828,8 @@ ipcMain.on('settings:permissionMode', (_e, mode) => {
 // при запуске, и подменить его живому Клоду нельзя.
 ipcMain.on('settings:networkProxy', (_e, list) => {
   NETWORK_PROXIES = Array.isArray(list) ? list : [];
+  // Новый прокси — сразу узнать его страну: вкладка подписки ждёт этого, прежде чем запустить агента.
+  if (geoKnown) geoCheck('прокси подписок').catch(reportMainError);
 });
 
 // Список режимов для селекта в настройках — ОТСЮДА, а не списком в рендерере: подписи и
@@ -7916,30 +7924,88 @@ let geoCheckedAt = 0;                  // когда последний раз �
 let geoWhy = '';                       // что вызвало последнюю проверку
 let geoBusy = false;                   // проверка идёт — новая встанет за ней, а не рядом
 let geoAgain = '';                     // повод, пришедший, пока шла проверка
-const geoHeld = [];                    // запуски агентов, ждущие первой проверки или открытия
+const geoHeld = [];                    // запуски агентов { id, fn }, ждущие проверки или открытия
 const geoFrozen = new Map();           // pid -> { id вкладки, shell: это сама оболочка }
+// Страна выхода через прокси подписок (Настройки → Подписки): адрес прокси -> { country, tried }.
+// Ключ — нормализованный адрес; наружу (в окно, в лог) он не уходит — в нём бывает пароль.
+const geoProxy = new Map();
 
-function geoGate(fn) {
-  if (geoKnown && !geoBlocked) { fn(); return; }
-  geoHeld.push(fn);
+// Состояние вкладки: по стране её прокси, если он есть, иначе по стране мака (geo.tabBlocked).
+function geoTabBlocked(d) {
+  return geo.tabBlocked(geoBlocked, d && d.proxy ? geoProxy.get(d.proxy) : null);
+}
+function geoTabKnown(d) {
+  const proxy = (d && d.proxy) || '';
+  return geo.tabKnown(geoKnown, proxy, proxy ? geoProxy.get(proxy) : null);
 }
 
-async function geoAsk() {
+function geoGate(id, fn) {
+  const d = det.get(id);
+  if (geoTabKnown(d) && !geoTabBlocked(d)) { fn(); return; }
+  geoHeld.push({ id, fn });
+}
+
+async function geoAsk(proxy) {
   for (const src of geo.SOURCES) {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), geo.FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(src.url, { signal: ctl.signal });
-      if (!res.ok) continue;
-      const c = src.parse(await res.text());
+      let text;
+      if (proxy) {
+        const r = await fetchViaProxy(proxy, src.url, geo.FETCH_TIMEOUT_MS);
+        if (r.status !== 200) continue;
+        text = r.text;
+      } else {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), geo.FETCH_TIMEOUT_MS);
+        try {
+          const res = await fetch(src.url, { signal: ctl.signal });
+          if (!res.ok) continue;
+          text = await res.text();
+        } finally { clearTimeout(timer); }
+      }
+      const c = src.parse(text);
       if (c) return c;
-    } catch (_) { /* нет сети, VPN переподключается — следующий сервис */ } finally { clearTimeout(timer); }
+    } catch (_) { /* нет сети, VPN переподключается, прокси молчит — следующий сервис */ }
   }
   return '';
 }
 
+// Подписки с прокси, как их показывать человеку: по строке запуска, без адреса прокси.
+function geoSubsNow() {
+  return NETWORK_PROXIES.map((c) => {
+    const st = geoProxy.get(normalizeProxy(c && c.proxy)) || {};
+    const country = st.country || '';
+    return { line: String((c && c.line) || ''), country, flag: geo.flagOf(country), tried: !!st.tried };
+  });
+}
+
 function geoStateNow() {
-  return { blocked: geoBlocked, country: geoCountry, flag: geo.flagOf(geoCountry), checkedAt: geoCheckedAt, why: geoWhy };
+  const blockedTabs = [];
+  for (const [id, d] of det) if (!d.dead && geoTabBlocked(d)) blockedTabs.push(id);
+  return {
+    blocked: geo.screenBlocked(geoBlocked, [...geoProxy.values()]),
+    direct: geoBlocked,
+    country: geoCountry, flag: geo.flagOf(geoCountry), checkedAt: geoCheckedAt, why: geoWhy,
+    subs: geoSubsNow(),
+    blockedTabs,
+  };
+}
+
+// Страну каждого прокси спрашиваем через него самого, все разом. Прокси, которого больше нет в
+// настройках, забываем: иначе его последняя страна держала бы окно открытым (geo.screenBlocked).
+async function geoCheckProxies(why) {
+  const want = new Set(NETWORK_PROXIES.map((c) => normalizeProxy(c && c.proxy)).filter(Boolean));
+  for (const k of [...geoProxy.keys()]) if (!want.has(k)) geoProxy.delete(k);
+  const label = (url) => {
+    const c = NETWORK_PROXIES.find((x) => normalizeProxy(x && x.proxy) === url);
+    return subs.stemOf(c && c.line) || '?';
+  };
+  await Promise.all([...want].map(async (url) => {
+    const c = await geoAsk(url);
+    const was = geoProxy.get(url) || { country: '', tried: false };
+    if (c && c !== was.country) tgLog(`регион подписки ${label(url)} через прокси (${why}): ${was.country || '?'} → ${c}`);
+    if (!c && !was.tried) tgLog(`регион подписки ${label(url)}: прокси не ответил (${why})`);
+    geoProxy.set(url, { country: c || was.country, tried: true });
+  }));
 }
 
 async function geoCheck(why) {
@@ -7950,7 +8016,7 @@ async function geoCheck(why) {
 }
 
 async function geoCheckOnce(why) {
-  const c = await geoAsk();
+  const [c] = await Promise.all([geoAsk(''), geoCheckProxies(why)]);
   const was = geoBlocked;
   const wasCountry = geoCountry;
   geoBlocked = geo.nextBlocked(geoBlocked, c);
@@ -7960,12 +8026,25 @@ async function geoCheckOnce(why) {
   geoWhy = c ? why : `${why}, сервисы не ответили`;
   if (geoCountry !== wasCountry || geoBlocked !== was) {
     tgLog(`регион (${geoWhy}): ${wasCountry || '?'} → ${geoCountry || '?'}`
-      + (geoBlocked !== was ? (geoBlocked ? ' — закрываю сворм, замораживаю агентов' : ' — открываю, размораживаю агентов') : ''));
+      + (geoBlocked !== was ? (geoBlocked ? ' — замораживаю вкладки без прокси из другой страны' : ' — размораживаю вкладки без прокси') : ''));
   }
   safeSend('geo:state', geoStateNow());
-  if (geoBlocked) { geoFreeze(); return; }
-  geoThaw();
-  for (const fn of geoHeld.splice(0)) { try { fn(); } catch (e) { reportMainError(e); } }
+  geoApply();
+}
+
+// Привести вкладки в соответствие с решением: замороженные — заморозить, остальные разбудить и
+// запустить в них агентов, которые ждали проверки.
+function geoApply() {
+  const thaw = [...geoFrozen].filter(([, f]) => !geoTabBlocked(det.get(f.id))).map(([pid]) => pid);
+  if (thaw.length) geoWake(thaw);
+  if ([...det.values()].some((d) => !d.dead && geoTabBlocked(d))) geoFreeze();
+  const held = geoHeld.splice(0);
+  for (const h of held) {
+    const d = det.get(h.id);
+    if (!d) continue;                                   // вкладку закрыли, пока ждала
+    if (!geoTabKnown(d) || geoTabBlocked(d)) { geoHeld.push(h); continue; }
+    try { h.fn(); } catch (e) { reportMainError(e); }
+  }
 }
 
 // Порядок важен, проверено на живой оболочке. Остановить Клода, пока оболочка вкладки бодрствует,
@@ -7977,7 +8056,7 @@ const GEO_SHELL_WAKE_MS = 50;
 function geoFreeze() {
   if (os.platform() === 'win32') return;
   execFile('ps', ['-eo', 'pid=,ppid='], { maxBuffer: 4 << 20 }, (err, out) => {
-    if (err || !geoBlocked) return;
+    if (err) return;
     const kids = new Map();
     for (const line of String(out).split('\n')) {
       const m = line.match(/^\s*(\d+)\s+(\d+)\s*$/);
@@ -7991,6 +8070,7 @@ function geoFreeze() {
     };
     for (const [id, child] of sessions) {
       if (!det.has(id) || !child || child.pid == null) continue;   // панель терминала — не агент
+      if (!geoTabBlocked(det.get(id))) continue;                    // её выход не в России
       stop(Number(child.pid), id, true);
       const stack = [...(kids.get(String(child.pid)) || [])];
       while (stack.length) {
@@ -8035,7 +8115,7 @@ setInterval(() => {
   geoNet = sig;
 }, geo.NET_POLL_MS);
 // Пока закрыто — дозамораживаем: в вкладке могло родиться что-то новое (MCP-сервер, команда).
-setInterval(() => { if (geoBlocked) geoFreeze(); }, 5_000);
+setInterval(() => { if ([...det.values()].some((d) => !d.dead && geoTabBlocked(d))) geoFreeze(); }, 5_000);
 
 app.whenReady().then(() => {
   // Offer to move into ~/Applications on macOS so a later asar-swap can write.

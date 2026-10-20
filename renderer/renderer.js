@@ -835,6 +835,9 @@ function makeXterm() {
 // `-n swarm-…` and restore via `--resume swarm-…` (see RESUME_API). Clean terminals
 // (blank) are never pinned.
 let launchList = loadLaunchList();
+// Последнее состояние региона от главного процесса (renderGeo). Объявлено здесь, а не рядом с
+// renderGeo: флажки подписок читает панель остатков, а она рисуется раньше.
+let geoNow = null;
 let launch = launchList[0];
 let launchMode = localStorage.getItem('swarm.launchMode') || 'agent';
 let launchPick = localStorage.getItem('swarm.launchPick') || 'folder';
@@ -1529,6 +1532,8 @@ async function createSession(opts = {}) {
     // The conversation this tab is in. Saved with the tab; the next launch resumes it.
     claudeSessionId: claudeSessionId || null,
   });
+  // Вкладка подписки, чей выход в России, рождается под плашкой сразу, а не к следующей проверке.
+  window.swarm.geo.state().then(renderGeo).catch(() => {});
   const okey = resolvedCwd || '';
   if (!folderOrder.includes(okey)) folderOrder.push(okey);
   if (!withinOrder.has(okey)) withinOrder.set(okey, []);
@@ -6306,6 +6311,13 @@ function pillNode(p, withLabel, title, highlight) {
   btn.type = 'button';
   btn.dataset.home = p.home;
   btn.title = title || '';
+  const flag = geoFlagForPill(p);
+  if (flag) {
+    const f = document.createElement('span');
+    f.className = 'u-flag';
+    f.textContent = flag;
+    btn.appendChild(f);
+  }
   if (withLabel) {
     const alias = document.createElement('span');
     alias.className = 'u-alias';
@@ -6486,15 +6498,51 @@ try {
 // Из-под российского адреса сворм не работает: заглушка поверх всего окна, агенты заморожены
 // главным процессом и продолжат сами, как только адрес сменится. Кнопок нет — делать здесь нечего.
 let geoScreen = null;
-let geoNow = null;
 const geoFlagEl = document.getElementById('geo-flag');
 const geoNames = (() => { try { return new Intl.DisplayNames(['ru'], { type: 'region' }); } catch (_) { return null; } })();
+const geoName = (c) => (c ? ((geoNames && geoNames.of(c)) || c) : 'не известна');
 function geoTitle() {
   const s = geoNow;
   if (!s || !s.checkedAt) return 'Страна ещё не проверена';
-  const name = s.country ? ((geoNames && geoNames.of(s.country)) || s.country) : 'не известна';
   const ago = Math.max(0, Math.round((Date.now() - s.checkedAt) / 1000));
-  return `Адрес: ${name}\nПроверено ${ago} с назад (${s.why || '—'})`;
+  // Флажок — страна самого мака. Подписки со своим прокси выходят в сеть из другой страны, и
+  // у них свой флажок в пилюле остатков — здесь только перечисляем, чтобы не путать одно с другим.
+  const viaProxy = (s.subs || []).map((x) => `${geoSubLabel(x.line)}: ${x.country ? geoName(x.country) : 'прокси не отвечает'} (через прокси)`);
+  return [`Адрес: ${geoName(s.country)}`, ...viaProxy, `Проверено ${ago} с назад (${s.why || '—'})`].join('\n');
+}
+// Подпись подписки по строке запуска — её имя из карточки, если оно есть.
+function geoSubLabel(line) {
+  const stem = SUBS_API.stemOf(line);
+  const c = launchList.find((a) => SUBS_API.stemOf(a.line) === stem && a.name);
+  return c ? c.name : stem;
+}
+// Флажок подписки с прокси для её пилюли: страна её выхода, а не мака. Пусто — у подписки нет
+// прокси или его страна ещё не известна.
+function geoFlagForPill(p) {
+  const subsGeo = (geoNow && geoNow.subs) || [];
+  if (!subsGeo.length) return '';
+  const acc = subsAccounts.find((a) => a.home === p.home);
+  const i = acc ? SUBS_API.matchIndex(launchList, acc) : -1;
+  if (i === -1) return '';
+  const stem = SUBS_API.stemOf(launchList[i].line);
+  const g = subsGeo.find((x) => SUBS_API.stemOf(x.line) === stem && x.flag);
+  return g ? g.flag : '';
+}
+// Плашка на вкладке, чей выход в России, когда окно не закрыто целиком (у другой подписки прокси
+// из другой страны). Агент под ней заморожен главным процессом и продолжит сам.
+function renderGeoTabs(s) {
+  const frozen = new Set((s && !s.blocked && s.blockedTabs) || []);
+  for (const [id, sess] of sessions) {
+    let plate = sess.holder.querySelector('.geo-tab');
+    if (!frozen.has(id)) { if (plate) plate.remove(); continue; }
+    if (plate) continue;
+    plate = document.createElement('div');
+    plate.className = 'geo-tab';
+    plate.innerHTML = '<div class="geo-box"><div class="geo-title">Вкладка заморожена</div>'
+      + '<div class="geo-text">Эта подписка выходит в сеть из России. Работа не потеряна: когда адрес'
+      + ' сменится, агент продолжит с того же места сам. Подписки с прокси из другой страны работают.</div></div>';
+    sess.holder.appendChild(plate);
+  }
 }
 if (geoFlagEl) geoFlagEl.addEventListener('mouseenter', () => { geoFlagEl.title = geoTitle(); });
 function renderGeo(s) {
@@ -6504,6 +6552,8 @@ function renderGeo(s) {
     geoFlagEl.textContent = (s && s.flag) || '🏳';
     geoFlagEl.title = geoTitle();
   }
+  renderGeoTabs(s);
+  renderUsagePills();                  // флажки подписок с прокси
   const blocked = !!(s && s.blocked);
   if (!blocked) { if (geoScreen) { geoScreen.remove(); geoScreen = null; } return; }
   if (geoScreen) return;

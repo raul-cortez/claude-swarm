@@ -61,6 +61,35 @@ test('флажок: код страны — эмодзи, мусор — пус�
   assert.strictEqual(GEO.flagOf('XYZ'), '');
 });
 
+test('вкладка без прокси замерзает вместе с маком', () => {
+  assert.strictEqual(GEO.tabBlocked(true, null), true);
+  assert.strictEqual(GEO.tabBlocked(false, null), false);
+});
+
+test('вкладка с прокси живёт страной прокси, а не мака', () => {
+  assert.strictEqual(GEO.tabBlocked(false, { country: 'RU', tried: true }), true);   // Франция, прокси в России
+  assert.strictEqual(GEO.tabBlocked(true, { country: 'DE', tried: true }), false);   // Россия, прокси в Германии
+});
+
+test('прокси ни разу не ответил — вкладка как мак', () => {
+  assert.strictEqual(GEO.tabBlocked(true, { country: '', tried: true }), true);
+  assert.strictEqual(GEO.tabBlocked(false, { country: '', tried: true }), false);
+});
+
+test('агента не запускаем, пока не проверен и прокси вкладки', () => {
+  assert.strictEqual(GEO.tabKnown(false, '', null), false);
+  assert.strictEqual(GEO.tabKnown(true, '', null), true);
+  assert.strictEqual(GEO.tabKnown(true, 'http://h:1', null), false);
+  assert.strictEqual(GEO.tabKnown(true, 'http://h:1', { country: '', tried: true }), true);
+});
+
+test('окно закрывается, только если работать не может ни одна подписка', () => {
+  assert.strictEqual(GEO.screenBlocked(false, [{ country: 'RU' }]), false);
+  assert.strictEqual(GEO.screenBlocked(true, []), true);
+  assert.strictEqual(GEO.screenBlocked(true, [{ country: 'RU' }, { country: '' }]), true);
+  assert.strictEqual(GEO.screenBlocked(true, [{ country: 'RU' }, { country: 'NL' }]), false);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; console.log('ok —', name); } catch (e) { console.error('FAIL —', name); console.error(e); process.exit(1); }
 }

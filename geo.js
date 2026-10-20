@@ -62,4 +62,37 @@ function nextBlocked(prev, country) {
   return BLOCKED.has(String(country).toUpperCase());
 }
 
-module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf };
+// --- прокси подписок ------------------------------------------------------------
+// У подписки бывает свой прокси (Настройки → Подписки), и тогда её вкладки выходят в сеть не
+// оттуда, где стоит мак. Страну такой подписки спрашиваем через её прокси, а решение «заморозить»
+// принимаем по вкладке, а не по всему сворму: во Франции с прокси подписки в России замёрзнуть
+// должна именно она, а в России с прокси за границей — работать.
+//
+// Состояние прокси — { country, tried }: country — последний ответ (пусто — ни разу не ответил),
+// tried — проверка через него уже была. Как и у прямого выхода, молчание ответ не меняет.
+
+// Заморожена ли вкладка. Без прокси — как сам мак. Прокси ни разу не ответил — тоже как мак:
+// мёртвый прокси вкладку и так в сеть не пустит, а гадать о его стране не по чему.
+function tabBlocked(directBlocked, proxyState) {
+  const c = proxyState && proxyState.country;
+  if (!c) return !!directBlocked;
+  return BLOCKED.has(String(c).toUpperCase());
+}
+
+// Можно ли уже решать про вкладку: прямой выход проверен, а если у неё прокси — проверен и он.
+// Пока нельзя, агента во вкладке не запускаем (см. geoGate в main.js).
+function tabKnown(directKnown, proxy, proxyState) {
+  if (!directKnown) return false;
+  return !proxy || !!(proxyState && proxyState.tried);
+}
+
+// Закрывать ли окно целиком. Только когда мак в России И ни одна подписка не выходит через
+// прокси из другой страны: иначе закрытое окно отняло бы у человека ту подписку, которая
+// работать вправе. Остальные вкладки тогда замораживаются поштучно, с плашкой на каждой.
+function screenBlocked(directBlocked, proxyStates) {
+  if (!directBlocked) return false;
+  const list = Array.isArray(proxyStates) ? proxyStates : [];
+  return !list.some((st) => st && st.country && !BLOCKED.has(String(st.country).toUpperCase()));
+}
+
+module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf, tabBlocked, tabKnown, screenBlocked };

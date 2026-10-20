@@ -1789,6 +1789,7 @@ body.night-all .night-pill {
 .usage-pills[hidden] { display: none; }
 .geo-flag { -webkit-app-region: no-drag; flex: none; font-size: 13px; line-height: 1; margin-right: 4px; cursor: default; }
 .geo-flag[hidden] { display: none; }
+.usage-pill .u-flag { font-size: 12px; line-height: 1; margin-right: 4px; }
 .usage-pill {
   -webkit-app-region: no-drag; flex: none; white-space: nowrap; cursor: pointer;
   display: inline-flex; align-items: center; gap: 5px;
@@ -2353,3 +2354,8 @@ body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
 .geo-box { max-width: 420px; text-align: center; padding: 24px; }
 .geo-title { font-size: 18px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
 .geo-text { font-size: 13px; line-height: 1.5; color: var(--muted); }
+/* Замороженная вкладка — плашка поверх её терминала, а не всего окна: остальные подписки живут. */
+.geo-tab {
+  position: absolute; inset: 0; z-index: 5; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+}
