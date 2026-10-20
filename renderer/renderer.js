@@ -838,6 +838,7 @@ let launchList = loadLaunchList();
 // Последнее состояние региона от главного процесса (renderGeo). Объявлено здесь, а не рядом с
 // renderGeo: флажки подписок читает панель остатков, а она рисуется раньше.
 let geoNow = null;
+const geoFlagEl = document.getElementById('geo-flag');
 let launch = launchList[0];
 let launchMode = localStorage.getItem('swarm.launchMode') || 'agent';
 let launchPick = localStorage.getItem('swarm.launchPick') || 'folder';
@@ -6363,7 +6364,12 @@ function renderUsagePills() {
   if (!usagePills) return;
   // Вид → Нижняя панель → Подписки: быстрее, чем снимать галку «показывать в панели» на
   // каждой карточке по отдельности, и не трогает сами карточки/предпросмотр в настройках.
-  if (!usagePillsEnabled) { usagePills.hidden = true; closeSubsMenu(); return; }
+  if (!usagePillsEnabled) {
+    usagePills.hidden = true;
+    closeSubsMenu();
+    if (geoFlagEl) geoFlagEl.hidden = !(geoNow && geoNow.checkedAt);   // пилюль нет — флажок общий
+    return;
+  }
   const st = subsState();
   // Папку конфига карточки узнают отсюда: вкладка отработала — в снимке написано, где она
   // живёт. Сохраняем только когда узнали что-то новое (learnHome возвращает тот же список,
@@ -6390,6 +6396,8 @@ function renderUsagePills() {
     usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p), subsView.highlight));
   });
   usagePills.hidden = !rows.length;
+  // Флажки встали в пилюли — общий прячем, иначе одна страна показана дважды и не там.
+  if (geoFlagEl) geoFlagEl.hidden = !(geoNow && geoNow.checkedAt) || (geoPerSub() && rows.length > 0);
   if (!rows.length) closeSubsMenu();
   if (!subsMenu.classList.contains('hidden')) fillSubsMenu();   // список открыт — обновим числа
 }
@@ -6498,7 +6506,6 @@ try {
 // Из-под российского адреса сворм не работает: заглушка поверх всего окна, агенты заморожены
 // главным процессом и продолжат сами, как только адрес сменится. Кнопок нет — делать здесь нечего.
 let geoScreen = null;
-const geoFlagEl = document.getElementById('geo-flag');
 const geoNames = (() => { try { return new Intl.DisplayNames(['ru'], { type: 'region' }); } catch (_) { return null; } })();
 const geoName = (c) => (c ? ((geoNames && geoNames.of(c)) || c) : 'не известна');
 function geoTitle() {
@@ -6516,17 +6523,21 @@ function geoSubLabel(line) {
   const c = launchList.find((a) => SUBS_API.stemOf(a.line) === stem && a.name);
   return c ? c.name : stem;
 }
-// Флажок подписки с прокси для её пилюли: страна её выхода, а не мака. Пусто — у подписки нет
-// прокси или его страна ещё не известна.
+// Флажки по подпискам — только когда хоть у одной есть прокси: тогда страны выхода у подписок
+// разные, и один флажок на всех врал бы. Без прокси страна у всех одна — флажок мака, как раньше.
+function geoPerSub() {
+  return !!(geoNow && geoNow.checkedAt && (geoNow.subs || []).length && usagePillsEnabled);
+}
+// Флажок пилюли: у подписки с прокси — страна прокси (пока не известна — белый), у остальных —
+// страна мака. Всегда слева от имени, у каждой одинаково, чтобы флажок читался как её собственный.
 function geoFlagForPill(p) {
-  const subsGeo = (geoNow && geoNow.subs) || [];
-  if (!subsGeo.length) return '';
+  if (!geoPerSub()) return '';
   const acc = subsAccounts.find((a) => a.home === p.home);
   const i = acc ? SUBS_API.matchIndex(launchList, acc) : -1;
-  if (i === -1) return '';
-  const stem = SUBS_API.stemOf(launchList[i].line);
-  const g = subsGeo.find((x) => SUBS_API.stemOf(x.line) === stem && x.flag);
-  return g ? g.flag : '';
+  const stem = i === -1 ? '' : SUBS_API.stemOf(launchList[i].line);
+  const g = stem ? geoNow.subs.find((x) => SUBS_API.stemOf(x.line) === stem) : null;
+  if (g) return g.flag || '🏳';
+  return geoNow.flag || '🏳';
 }
 // Плашка на вкладке, чей выход в России, когда окно не закрыто целиком (у другой подписки прокси
 // из другой страны). Агент под ней заморожен главным процессом и продолжит сам.
@@ -6553,7 +6564,7 @@ function renderGeo(s) {
     geoFlagEl.title = geoTitle();
   }
   renderGeoTabs(s);
-  renderUsagePills();                  // флажки подписок с прокси
+  renderUsagePills();                  // флажки по подпискам, если у какой-то есть прокси
   const blocked = !!(s && s.blocked);
   if (!blocked) { if (geoScreen) { geoScreen.remove(); geoScreen = null; } return; }
   if (geoScreen) return;
