@@ -2301,6 +2301,14 @@ body.pult-on #gate-strip { top: 34px; }
   color: color-mix(in srgb, var(--night) 45%, var(--text));
 }
 .gate-take:hover { background: color-mix(in srgb, var(--night) 34%, transparent); }
+/* Заморозка по региону — та же плашка, но не ночная: забирать нечего, кнопки и луны нет. */
+#gate-strip.is-geo {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
+  border-bottom-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: color-mix(in srgb, var(--text) 82%, var(--danger));
+}
+#gate-strip.is-geo .gate-moon { display: none; }
+#gate-strip.is-geo .gate-take[hidden] { display: none; }
 /* Попробовали напечатать в чужую вкладку: нажатие не ушло никуда, и сказать об этом надо
    заметно — но без окна поперёк экрана. Плашка сама и есть ответ, ей только прибавляется
    света и один короткий толчок. */
@@ -2341,21 +2349,3 @@ body.has-digest #gate-strip { top: var(--digest-h, 58px); }
 body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
 
 /* Регион: заглушка поверх всего окна, выше модалок — под ней ничего нажать нельзя. */
-.geo-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: drag;
-}
-.geo-box { max-width: 420px; text-align: center; padding: 24px; }
-.geo-title { font-size: 18px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
-.geo-text { font-size: 13px; line-height: 1.5; color: var(--muted); }
-/* Замороженная вкладка — плашка поверх её терминала, а не всего окна: остальные подписки живут. */
-.geo-tab {
-  position: absolute; inset: 0; z-index: 5; background: var(--bg);
-  display: flex; align-items: center; justify-content: center;
-}

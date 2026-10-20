@@ -838,6 +838,10 @@ let launchList = loadLaunchList();
 // Последнее состояние региона от главного процесса (renderGeo). Объявлено здесь, а не рядом с
 // renderGeo: флажки подписок читает панель остатков, а она рисуется раньше.
 let geoNow = null;
+// Вкладки, замороженные по региону: id -> страна их выхода (renderGeoTabs). Здесь же, наверху: по
+// ним гейт решает, уходит ли печать, а он работает с первой восстановленной вкладки.
+let geoFrozenTabs = new Map();
+function geoFrozen(id) { return geoFrozenTabs.has(String(id)); }
 const geoFlagEl = document.getElementById('geo-flag');
 let launch = launchList[0];
 let launchMode = localStorage.getItem('swarm.launchMode') || 'agent';
@@ -5346,12 +5350,15 @@ function autoNow(id) {
 // агента значило бы пересчитывать сетку по десять раз за час.
 function gatedTab(id) {
   const s = sessions.get(id);
-  return !!(s && (nightNow.on || s.auto));
+  return !!(s && (nightNow.on || s.auto || geoFrozen(id)));
 }
 
 function typeInto(id, bytes) {
   if (!bytes) return;
   const s = sessions.get(id);
+  // Замороженная по региону — печать не уходит совсем, даже ответ на разрешение: агент стоит, и
+  // набранное он прочёл бы разом после разморозки, уже не к месту.
+  if (geoFrozen(id)) { blinkGate(id); return; }
   if (!autoNow(id)) {
     if (s && s.scanTyped) s.scanTyped(bytes);
     window.swarm.sendInput(id, bytes);
@@ -5376,6 +5383,24 @@ function renderGate() {
     return;
   }
   const name = s.tab.querySelector('.label').textContent;
+  gateEl.classList.toggle('is-geo', geoFrozen(activeId));
+  if (geoFrozen(activeId)) {
+    // Регион — не владение: забирать здесь нечего, кнопки нет. Сменится адрес — плашка уйдёт сама.
+    const c = geoFrozenTabs.get(String(activeId));
+    const where = c ? geoName(c) : 'страна не известна';
+    // Одна строка с многоточием, как у ночной: главное — в начале, подробности — в подсказке.
+    const text = gateEl.querySelector('.gate-text');
+    text.textContent = gateBlocked
+      ? `Нажатие не ушло: «${name}» заморожена — выход в сеть из страны, где Claude недоступен.`
+      : `«${name}» заморожена: выход в сеть — ${where}, там Claude недоступен. Сменится адрес — продолжит сам.`;
+    text.title = 'Агент остановлен, печать и сообщения из телеги в эту вкладку не уходят. Работа не'
+      + ' потеряна: когда адрес сменится, агент продолжит с того же места. Остальные вкладки работают.';
+    gateEl.querySelector('.gate-take').hidden = true;
+    if (!was) refitActive();
+    return;
+  }
+  gateEl.querySelector('.gate-take').hidden = false;
+  gateEl.querySelector('.gate-text').title = '';
   // Кнопка одна, и это тоже часть починки. Раньше их было две — «Забрать себе» и «Я за
   // клавиатурой», — потому что общее положение лежало отдельным слоем поверх вкладок: снять
   // отметку карточки было мало. Теперь общее положение считается ПО вкладкам, и «забрать эту»
@@ -5462,6 +5487,10 @@ function paintAuto(s) {
   s.tab.classList.toggle('is-auto', on);
   const sub = s.tab.querySelector('.sub');
   if (sub && done) sub.textContent = 'работа сдана';
+  // Заморожена по региону — это видно и в списке вкладок, не только открыв её.
+  const frozen = geoFrozen(s.id);
+  s.tab.classList.toggle('is-geo', frozen);
+  if (sub && frozen) sub.textContent = 'заморожена: регион';
   s.tab.title = !on ? ''
     : done
       ? 'Ночной режим, работа сдана: агент сказал, что задача кончилась, — откройте вкладку и'
@@ -5469,6 +5498,10 @@ function paintAuto(s) {
         + ' полумесяц или кнопка в плашке над терминалом.'
       : 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
         + ' не уходит — полумесяц или кнопка в плашке над терминалом, чтобы забрать себе.';
+  if (frozen) {
+    s.tab.title = 'Заморожена: подписка этой вкладки выходит в сеть из страны, где Claude недоступен.'
+      + ' Агент стоит, печать не уходит. Сменится адрес — продолжит с того же места сам.';
+  }
   const moon = s.tab.querySelector('.moon');
   if (moon) {
     moon.title = !on ? 'Ночной режим: пусть работает без вас'
@@ -6503,9 +6536,7 @@ try {
 } catch (_) { /* моста нет — перепишем при следующем сохранении */ }
 
 // --- регион ---------------------------------------------------------------------------
-// Из-под российского адреса сворм не работает: заглушка поверх всего окна, агенты заморожены
-// главным процессом и продолжат сами, как только адрес сменится. Кнопок нет — делать здесь нечего.
-let geoScreen = null;
+// Регион: решение по вкладкам принимает главный процесс (geo.js), здесь — флажки и плашка.
 const geoNames = (() => { try { return new Intl.DisplayNames(['ru'], { type: 'region' }); } catch (_) { return null; } })();
 const geoName = (c) => (c ? ((geoNames && geoNames.of(c)) || c) : 'не известна');
 function geoTitle() {
@@ -6539,21 +6570,13 @@ function geoFlagForPill(p) {
   if (g) return g.flag || '🏳';
   return geoNow.flag || '🏳';
 }
-// Плашка на вкладке, чей выход в России, когда окно не закрыто целиком (у другой подписки прокси
-// из другой страны). Агент под ней заморожен главным процессом и продолжит сам.
+// Вкладки, замороженные по региону: id -> страна их выхода. Окно регион не закрывает никогда —
+// замерзает только вкладка: плашка над терминалом (та же, что у ночного режима), печать в неё не
+// уходит, агент остановлен главным процессом и продолжит сам, когда адрес сменится.
 function renderGeoTabs(s) {
-  const frozen = new Set((s && !s.blocked && s.blockedTabs) || []);
-  for (const [id, sess] of sessions) {
-    let plate = sess.holder.querySelector('.geo-tab');
-    if (!frozen.has(id)) { if (plate) plate.remove(); continue; }
-    if (plate) continue;
-    plate = document.createElement('div');
-    plate.className = 'geo-tab';
-    plate.innerHTML = '<div class="geo-box"><div class="geo-title">Вкладка заморожена</div>'
-      + '<div class="geo-text">Эта подписка выходит в сеть из России. Работа не потеряна: когда адрес'
-      + ' сменится, агент продолжит с того же места сам. Подписки с прокси из другой страны работают.</div></div>';
-    sess.holder.appendChild(plate);
-  }
+  geoFrozenTabs = new Map(((s && s.blockedTabs) || []).map((t) => [String(t.id), t.country || '']));
+  for (const sess of sessions.values()) paintAuto(sess);
+  renderGate();
 }
 if (geoFlagEl) geoFlagEl.addEventListener('mouseenter', () => { geoFlagEl.title = geoTitle(); });
 function renderGeo(s) {
@@ -6565,15 +6588,6 @@ function renderGeo(s) {
   }
   renderGeoTabs(s);
   renderUsagePills();                  // флажки по подпискам, если у какой-то есть прокси
-  const blocked = !!(s && s.blocked);
-  if (!blocked) { if (geoScreen) { geoScreen.remove(); geoScreen = null; } return; }
-  if (geoScreen) return;
-  geoScreen = document.createElement('div');
-  geoScreen.className = 'geo-screen';
-  geoScreen.innerHTML = '<div class="geo-box"><div class="geo-title">Swarm недоступен в вашем регионе</div>'
-    + '<div class="geo-text">Агенты заморожены. Работа не потеряна: когда адрес сменится, они продолжат'
-    + ' с того же места сами.</div></div>';
-  document.body.appendChild(geoScreen);
 }
 window.swarm.geo.onState(renderGeo);
 window.swarm.geo.state().then(renderGeo).catch(() => {});

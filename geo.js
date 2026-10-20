@@ -1,8 +1,8 @@
 'use strict';
-// geo.js — регион, из которого работает сворм. Из-под российского адреса сворм не работает:
-// окно закрывается заглушкой, агенты замораживаются (SIGSTOP) и продолжают с того же места, как
-// только адрес сменится. Здесь только решения — разбор ответов сервисов и переходы состояния;
-// сеть, сигналы и окно живут в main.js.
+// geo.js — регион, из которого работает сворм. Из-под российского адреса агенты не работают:
+// вкладка, чей выход в сеть российский, замораживается (SIGSTOP), печать в неё закрыта, а когда
+// адрес сменится, агент продолжает с того же места. Окно сворма при этом открыто. Здесь только
+// решения — разбор ответов сервисов и переходы состояния; сеть, сигналы и окно живут в main.js.
 //
 // Страну спрашиваем у двух сервисов по очереди (первый не ответил — второй). Оба отдают страну
 // того адреса, с которого мы к ним пришли, без ключей и регистрации.
@@ -81,18 +81,12 @@ function tabBlocked(directBlocked, proxyState) {
 
 // Можно ли уже решать про вкладку: прямой выход проверен, а если у неё прокси — проверен и он.
 // Пока нельзя, агента во вкладке не запускаем (см. geoGate в main.js).
+//
+// Окно сворма регион не закрывает: из любой страны можно открыть приложение, переключать вкладки,
+// менять настройки. Замерзает только вкладка, чей выход в запрещённой стране.
 function tabKnown(directKnown, proxy, proxyState) {
   if (!directKnown) return false;
   return !proxy || !!(proxyState && proxyState.tried);
 }
 
-// Закрывать ли окно целиком. Только когда мак в России И ни одна подписка не выходит через
-// прокси из другой страны: иначе закрытое окно отняло бы у человека ту подписку, которая
-// работать вправе. Остальные вкладки тогда замораживаются поштучно, с плашкой на каждой.
-function screenBlocked(directBlocked, proxyStates) {
-  if (!directBlocked) return false;
-  const list = Array.isArray(proxyStates) ? proxyStates : [];
-  return !list.some((st) => st && st.country && !BLOCKED.has(String(st.country).toUpperCase()));
-}
-
-module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf, tabBlocked, tabKnown, screenBlocked };
+module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf, tabBlocked, tabKnown };

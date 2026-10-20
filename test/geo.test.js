@@ -83,13 +83,6 @@ test('агента не запускаем, пока не проверен и п
   assert.strictEqual(GEO.tabKnown(true, 'http://h:1', { country: '', tried: true }), true);
 });
 
-test('окно закрывается, только если работать не может ни одна подписка', () => {
-  assert.strictEqual(GEO.screenBlocked(false, [{ country: 'RU' }]), false);
-  assert.strictEqual(GEO.screenBlocked(true, []), true);
-  assert.strictEqual(GEO.screenBlocked(true, [{ country: 'RU' }, { country: '' }]), true);
-  assert.strictEqual(GEO.screenBlocked(true, [{ country: 'RU' }, { country: 'NL' }]), false);
-});
-
 for (const [name, fn] of tests) {
   try { fn(); passed++; console.log('ok —', name); } catch (e) { console.error('FAIL —', name); console.error(e); process.exit(1); }
 }
