@@ -6574,8 +6574,18 @@ function geoFlagForPill(p) {
 // замерзает только вкладка: плашка над терминалом (та же, что у ночного режима), печать в неё не
 // уходит, агент остановлен главным процессом и продолжит сам, когда адрес сменится.
 function renderGeoTabs(s) {
+  const was = geoFrozenTabs;
   geoFrozenTabs = new Map(((s && s.blockedTabs) || []).map((t) => [String(t.id), t.country || '']));
-  for (const sess of sessions.values()) paintAuto(sess);
+  for (const sess of sessions.values()) {
+    // Разморозилась — вернуть карточке её обычную подпись. Сама она не вернётся: агент всё время
+    // заморозки стоял, и если он и до неё был свободен, нового статуса, который перепишет «.sub»,
+    // может не прийти часами — «заморожена: регион» так и висела бы на живой вкладке.
+    if (was.has(String(sess.id)) && !geoFrozenTabs.has(String(sess.id))) {
+      const sub = sess.tab && sess.tab.querySelector('.sub');
+      if (sub) sub.textContent = sess.status === 'waiting' ? waitLabel(sess) : (effectiveStatus(sess).detail || ({ ready: 'готов', running: 'работает' })[sess.status] || '');
+    }
+    paintAuto(sess);
+  }
   renderGate();
 }
 if (geoFlagEl) geoFlagEl.addEventListener('mouseenter', () => { geoFlagEl.title = geoTitle(); });
