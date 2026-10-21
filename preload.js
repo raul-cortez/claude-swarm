@@ -117,6 +117,18 @@ contextBridge.exposeInMainWorld('swarm', {
   // Показать журнал моста в Finder: «пришли журнал» не должно означать «открой терминал».
   showTgLog: () => ipcRenderer.invoke('telegram:showLog'),
 
+  // Сон простаивающей вкладки (sleep.js): галочка и через сколько минут простоя.
+  setSleep: (opts) => ipcRenderer.send('settings:sleep', opts),
+  // Какая вкладка открыта в окне: её не усыпляют, а открытую спящую — будят.
+  tabWatched: (id) => ipcRenderer.send('tab:watched', { id }),
+  wakeTab: (id) => ipcRenderer.invoke('tab:wake', { id }),
+  // Вкладка уснула / просыпается / проснулась.
+  onSleep: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:sleep', handler);
+    return () => ipcRenderer.removeListener('session:sleep', handler);
+  },
+
   // Самоперезапуск вкладки, когда её контекст заполнился (restart.js). Порог в процентах,
   // отмеренных от точки автосжатия — то же число, что на полоске контекста.
   setRestart: (opts) => ipcRenderer.send('settings:restart', opts),

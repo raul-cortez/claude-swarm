@@ -132,6 +132,7 @@ const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scope
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
+const SLEEP_API = window.SWARM_SLEEP;         // сон простаивающей вкладки: границы ползунка, общие с main
 const SUBS_API = window.SWARM_SUBS;           // подписки: карточки запуска и что видно в панели
 const DIGEST_API = window.SWARM_DIGEST;       // дайджест вкладки: потолок длины, общий с main
 const HIRE_API = window.SWARM_HIRE;           // найм по просьбе прораба: потолок бригады, общий с main
@@ -335,6 +336,8 @@ const ICONS = {
   crew: SVG('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>'),
   // Lucide "rotate-ccw" — кнопка капсулы «Поднять упавший разговор».
   resume: SVG('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
+  // Lucide "snowflake" — вкладка спит: агента закрыли за простой, чтобы не держал память.
+  snowflake: SVG('<line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/>'),
   // Lucide "pencil" — кнопка капсулы «Переименовать».
   rename: SVG('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'),
 };
@@ -823,6 +826,10 @@ let permMode = localStorage.getItem('swarm.permMode') || '';
 // в restart.js, здесь только память о выборе.
 let restartOn = localStorage.getItem('swarm.restart') === '1';
 let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
+// «Усыплять простаивающие вкладки» (Settings → Запуск). Включено по умолчанию: сон ничего не
+// стирает — разговор лежит на диске и поднимается сам, — а память освобождает заметную.
+let sleepOn = localStorage.getItem('swarm.sleep') !== '0';
+let sleepMin = SLEEP_API.clampMin(localStorage.getItem('swarm.sleepMin'));
 // «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
 // который агент сам не может себе включить, и человек не обязан его хотеть.
 let digestOn = localStorage.getItem('swarm.digest') === '1';
@@ -1188,6 +1195,22 @@ window.swarm.onAgentGone(({ id, how, label, reset, canResume }) => {
     + ']\x1b[0m\r\n');
 });
 
+// Вкладка уснула (main закрыл агента за простой, см. sleep.js), просыпается или проснулась.
+window.swarm.onSleep(({ id, sleeping, waking, reset }) => {
+  const s = sessions.get(String(id));
+  if (!s || !s.term) return;
+  const was = s.sleep || '';
+  s.sleep = sleeping ? 'sleeping' : waking ? 'waking' : '';
+  if (sleeping) {
+    if (reset) s.term.write(reset);
+    s.term.write('\r\n\x1b[2m[вкладка спит: агента закрыли за простой, чтобы не занимал память.'
+      + ' Начните печатать или напишите ей откуда угодно — разговор поднимется сам]\x1b[0m\r\n');
+  } else if (waking && was !== 'waking') {
+    s.term.write('\r\n\x1b[2m[просыпается — поднимаю тот же разговор]\x1b[0m\r\n');
+  }
+  paintAuto(s);
+});
+
 // Вкладка сменила агента. Флаги СТИРАЕМ вместе с именем: они были от прежнего запуска, а какие
 // набрал человек — мы не знаем. Иначе папка, открытая как `claude --model opus`, после ручного
 // перехода на codex предлагала бы в меню «codex --model opus» и запускала бы codex с чужим
@@ -1411,6 +1434,9 @@ async function createSession(opts = {}) {
       <span class="foot">
         <span class="sub">готов</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
+        <!-- Спит: агент закрыт за простой (sleep.js в main). Справа внизу, где у работающей
+             вкладки стоят сабагенты: у спящей их не бывает, и место одно и то же. -->
+        <span class="sleep-mark" hidden>${ICONS.snowflake}</span>
         <!-- Подвал прораба: пилюли детей вместо его собственного статуса/сабагентов — см.
              спеку, «подвал принадлежит тому, что в этой вкладке работает». Наполняется
              renderCrewDots(), сама вкладка ничего не решает. -->
@@ -1724,6 +1750,32 @@ function showSettingsModal(tab) {
                 <div class="set-range">
                   <input type="range" class="set-range-input" id="set-restart-pct" />
                   <span class="set-range-num" id="set-restart-pct-num"></span>
+                </div>
+              </div>
+            </div>
+            <div class="set-row">
+              <label class="set-check">
+                <input type="checkbox" id="set-sleep" />
+                <span class="set-check-tx">Усыплять простаивающие вкладки</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Каждая открытая вкладка держит в памяти своего агента — 150–300 МБ, даже
+                когда он ничего не делает. Давно простаивающую вкладку усыпляем: агент закрывается, а карточка,
+                история на экране и сам разговор остаются. На карточке появляется снежинка. Откройте вкладку,
+                начните печатать или напишите ей из телеги — разговор поднимется сам за пару секунд. Вкладку,
+                которая работает без вас, ждёт ответа или крутит что-то в фоне, не трогаем.</span>
+            </div>
+            <div class="set-sub">
+              <div class="set-field is-row">
+                <div class="set-head">
+                  <span class="set-label">Усыплять после простоя</span>
+                  <button type="button" class="set-q" aria-label="подсказка">?</button>
+                  <span class="set-hint" hidden>Сколько минут вкладка должна простоять без дела. Левее — память
+                    освобождается раньше, но и просыпаться вкладкам придётся чаще.</span>
+                </div>
+                <div class="set-range">
+                  <input type="range" class="set-range-input" id="set-sleep-min" />
+                  <span class="set-range-num" id="set-sleep-min-num"></span>
                 </div>
               </div>
             </div>
@@ -2519,6 +2571,23 @@ function showSettingsModal(tab) {
   restartPctI.addEventListener('input', syncRestart);
   restartI.addEventListener('change', syncRestart);
   syncRestart();
+  // Сон: галочка и минуты простоя. Границы — из sleep.js, по нему же решает main.
+  const sleepI = overlay.querySelector('#set-sleep');
+  sleepI.checked = sleepOn;
+  const sleepMinI = overlay.querySelector('#set-sleep-min');
+  const sleepNumEl = overlay.querySelector('#set-sleep-min-num');
+  sleepMinI.min = String(SLEEP_API.MIN_MIN);
+  sleepMinI.max = String(SLEEP_API.MAX_MIN);
+  sleepMinI.step = '5';
+  sleepMinI.value = String(sleepMin);
+  const syncSleep = () => {
+    sleepNumEl.textContent = sleepMinI.value + ' мин';
+    sleepMinI.disabled = !sleepI.checked;
+    sleepNumEl.classList.toggle('off', !sleepI.checked);
+  };
+  sleepMinI.addEventListener('input', syncSleep);
+  sleepI.addEventListener('change', syncSleep);
+  syncSleep();
   const digestI = overlay.querySelector('#set-digest');
   digestI.checked = digestOn;
   // Своя формулировка — та же схема заготовки, что у ночных текстов ниже (nightFields/flatText):
@@ -3720,6 +3789,14 @@ function showSettingsModal(tab) {
       localStorage.setItem('swarm.restartPct', String(restartPct));
       window.swarm.setRestart({ enabled: restartOn, threshold: restartPct });
     }
+    const nextSleepMin = SLEEP_API.clampMin(sleepMinI.value);
+    if (sleepI.checked !== sleepOn || nextSleepMin !== sleepMin) {
+      sleepOn = sleepI.checked;
+      sleepMin = nextSleepMin;
+      localStorage.setItem('swarm.sleep', sleepOn ? '1' : '0');
+      localStorage.setItem('swarm.sleepMin', String(sleepMin));
+      window.swarm.setSleep({ enabled: sleepOn, minutes: sleepMin });
+    }
     saveNightTexts();
     saveTgDrafts();
     // Совпало с заготовкой — сохраняем пусто, и текст продолжит обновляться вместе со свормом
@@ -3852,6 +3929,8 @@ function activate(id, opts) {
   // In pult mode the highlighted tab is the Пульт, not the agent you're reading.
   if (!pultOn) s.tab.classList.add('active');
   activeId = id;
+  // main не усыпляет вкладку, на которую смотрят, а открытую спящую — будит.
+  window.swarm.tabWatched(id);
   renderGate();
   renderDigestStrip();
   renderCrewStrip();
@@ -5438,6 +5517,17 @@ function paintAuto(s) {
     s.tab.title = 'Заморожена: подписка этой вкладки выходит в сеть из страны, где Claude недоступен.'
       + ' Агент стоит, печать не уходит. Сменится адрес — продолжит с того же места сам.';
   }
+  // Спит — поверх обычного статуса, как и «работа сдана»: подпись под именем и снежинка.
+  const asleep = !!s.sleep && !frozen;
+  s.tab.classList.toggle('is-sleep', asleep);
+  const mark = s.tab.querySelector('.sleep-mark');
+  if (mark) {
+    mark.hidden = !asleep;
+    mark.title = s.sleep === 'waking' ? 'Просыпается: поднимаю тот же разговор'
+      : 'Спит: агента закрыли за простой, чтобы не занимал память. Откройте вкладку или напишите'
+        + ' ей — разговор поднимется сам.';
+  }
+  if (sub && asleep) sub.textContent = s.sleep === 'waking' ? 'просыпается…' : 'спит';
   const moon = s.tab.querySelector('.moon');
   if (moon) {
     moon.title = !on ? 'Ночной режим: пусть работает без вас'
@@ -6810,6 +6900,9 @@ window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
 window.swarm.setNetworkProxy(proxyList()); // прокси подписок — до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
+window.swarm.setSleep({ enabled: sleepOn, minutes: sleepMin });          // сон простаивающих вкладок
+// Вернулись к окну — открытая вкладка снова «на глазах»: спящую будим (main решает сам).
+window.addEventListener('focus', () => { if (activeId) window.swarm.tabWatched(activeId); });
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
 window.swarm.setCrew({ max: crewMax, model: crewModel, freed: crewFreed }); // настройки бригады
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:

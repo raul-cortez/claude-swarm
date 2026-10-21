@@ -204,6 +204,7 @@ const peers = require('./peers');                    // визитка вкла�
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
+const sleep = require('./sleep');                    // сон простаивающей вкладки: когда можно и жив ли сабагент
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 const geo = require('./geo');                       // регион: из-под российского адреса сворм не работает
 const { fetchViaProxy } = require('./proxy-fetch');   // страна подписки — через её прокси
@@ -1473,9 +1474,12 @@ function agentGone(id, d, wasBusy) {
     // Пока крутится круг самоперезапуска, `/exit` печатаем МЫ САМИ. Называть это падением
     // значило бы показывать «агент упал» на каждом ночном перезапуске — то есть обесценить
     // сообщение ровно до того, как оно понадобится по-настоящему.
-    expected: !!(d.rsPendingLine || (d.rs && d.rs.phase === 'exiting')),
+    expected: !!(d.rsPendingLine || (d.rs && d.rs.phase === 'exiting') || d.sleepExiting),
   });
   if (!v.gone) return;
+  // Агента закрыли МЫ, чтобы вкладка уснула (см. sleepNow). Это не падение и не выход: вкладка
+  // жива, разговор цел, и поднимется она сама, как только понадобится.
+  if (d.sleepExiting) { sleepSettled(id, d); return; }
   // Гасим наследство агента в эмуляторе ВСЕГДА, не только на падении: после честного `/exit`
   // Клод убирает за собой сам, и лишний сброс ничего не стоит (в строке одни выключения), а
   // после падения убрать некому — и каждое движение мыши сыплет `35;57;4M` в приглашение.
@@ -1495,6 +1499,25 @@ function agentGone(id, d, wasBusy) {
     restartLog(`вкладка ${id}: агент ушёл сам (${v.why === 'signal' ? word : 'ход оборван'}), `
       + `разговор ${d.claudeSessionId || '—'}`);
   }
+}
+
+// Потомки агента, похожие на запущенный им инструмент. Обходим всё дерево: фоновая команда
+// живёт под оболочкой, а та — под агентом, и глубже, если команда сама что-то запустила.
+const TOOL_SHELL_RE = /shell-snapshots\/snapshot-/;
+function countToolProcs(kids, rootPid) {
+  let n = 0;
+  const seen = new Set();
+  const stack = [String(rootPid)];
+  while (stack.length) {
+    const pid = stack.pop();
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    for (const c of kids.get(pid) || []) {
+      if (TOOL_SHELL_RE.test(c.args)) n++;
+      stack.push(c.pid);
+    }
+  }
+  return n;
 }
 
 function scanTabProcesses() {
@@ -1524,6 +1547,14 @@ function scanTabProcesses() {
         // берём до перезаписи — «было занято, стало пусто» есть только здесь (см. agentGone).
         const wasBusy = dd.shellBusy;
         dd.shellBusy = !!run;
+        // Когда поднялся нынешний агент — от этой отметки сон считает «его» сабагентов и
+        // будильники: всё, что было до неё, умерло вместе с прошлым процессом.
+        if (run && !wasBusy) dd.agentSince = Date.now();
+        // Процессы инструментов под агентом: команды Bash (и фоновые тоже) Клод запускает
+        // оболочкой со своим снимком окружения — по нему их и узнаём. MCP-серверы и caffeinate
+        // живут под агентом всегда и о работе ничего не говорят.
+        dd.agentPid = run ? Number(run.pid) : 0;
+        dd.toolProcs = run ? countToolProcs(kids, run.pid) : 0;
         try { agentGone(id, dd, wasBusy); } catch (e) { reportMainError(e); }
       }
       if (!run) continue;                // в шелле пусто — вкладка помнит прежнее
@@ -2919,6 +2950,15 @@ function inputState(id, text) {
   return submitState(draft, text);
 }
 function typeAndSubmit(id, text, body, enter) {
+  // Вкладка спит: агента в ней нет, и текст ушёл бы оболочке командой. Откладываем и будим —
+  // отдаст его wakeWatch, как только поднятый агент покажет поле ввода.
+  const sd = det.get(id);
+  if (sd && (sd.sleeping || sd.waking || sd.sleepExiting)) {
+    sd.sleepQueue = (sd.sleepQueue || []).concat({ text, body, enter });
+    if (sd.sleeping) wakeTab(id, sd, 'пришло сообщение');
+    else if (sd.sleepExiting) sleepLog(`вкладка ${id}: сообщение пришло, пока засыпала — подниму следом`);
+    return;
+  }
   // Поля ввода на экране нет ещё ДО печати — значит, печатаем в меню (цифра варианта из кнопки
   // телеги) или в диалог. Ждать там своего текста в поле бессмысленно, а Enter через десять
   // секунд мог бы попасть уже в СЛЕДУЮЩИЙ запрос разрешения — поэтому прежний порядок: Enter
@@ -6597,7 +6637,7 @@ function restartAsk(id, d, pct) {
   // затевался.
   const text = (d.rs && d.rs.silent > 0)
     ? restart.askAgainText({ pct, answerFile: file })
-    : restart.askText({ pct, answerFile: file, sub: d.sub || 0, guide: restartGuidePath() });
+    : restart.askText({ pct, answerFile: file, sub: liveSubagents(id, d), guide: restartGuidePath() });
   if (!restartType(id, text)) {
     // Печать не удалась — вкладки уже нет. Возвращаем автомат в исходное, иначе он будет ждать
     // ответа на просьбу, которой никто не видел.
@@ -6728,7 +6768,9 @@ function restartTick(id, d, now) {
     box: byPid ? false : !!d.waitingBox,
     // Сколько сабагентов считает прямо сейчас. Вкладка с ними «готова» на вид, а закрыть её —
     // значит убить их вместе с агентом (см. turnOver).
-    sub: byPid ? 0 : (d.sub || 0),
+    // Только ЖИВЫЕ: зависшие висят на экране после того, как отработали, и держали перезапуск
+    // часами (см. liveSubagents).
+    sub: byPid ? 0 : liveSubagents(id, d),
     shellBusy: byPid ? d.rsShellBusy : d.shellBusy,
     modeVisible: byPid ? false : !!readMode(snapshot(d)),
     uptimeMs: d.sessionStartAt ? now - d.sessionStartAt : 0,
@@ -7323,6 +7365,240 @@ function restartExit(id, d) {
   });
 }
 
+// --- сон простаивающей вкладки (sleep.js) ---------------------------------------------
+// Простаивающий `claude` держит в памяти 150–300 МБ, и пятнадцать открытых вкладок съедают
+// гигабайты. Давно простаивающей вкладке мы закрываем агента и помечаем её спящей; поднимается
+// она тем же разговором, как только к ней подходят: человек открыл вкладку, пришло сообщение из
+// телеги, написал прораб или ночь. Что именно проверяется перед сном — см. sleep.js.
+//
+// Включено по умолчанию: в отличие от перезапуска, сон ничего не стирает — разговор целиком на
+// диске, а подъём занимает секунды.
+let SLEEP_ENABLED = true;
+let SLEEP_MIN = sleep.DEFAULT_MIN;
+// Какая вкладка открыта в окне. Её не усыпляем, пока окно в фокусе: человек на неё смотрит.
+let SLEEP_WATCHED = '';
+const SLEEP_EVERY_MS = 60_000;
+// Хвосты для проверки. Главной стенограмме нужно увидеть будильники агента, а они могут стоять
+// далеко от конца; сабагенту — только последние шаги.
+const SLEEP_TR_TAIL = 2 * 1024 * 1024;
+const SLEEP_SUB_TAIL = 256 * 1024;
+// Сколько ждём, пока поднятый агент покажет поле ввода, прежде чем отдать ему отложенное.
+const WAKE_READY_MIN_MS = 3000;
+const WAKE_READY_MAX_MS = 90_000;
+
+function sleepLog(msg) { logTo('sleep.log', msg); }
+
+// Последний признак жизни вкладки — от него и считается простой.
+function sleepActiveAt(d) {
+  return Math.max(d.startedAt || 0, d.agentSince || 0, d.turnStartedAt || 0, d.turnEndedAt || 0,
+    d.inputAt || 0, d.wokeAt || 0, d.trMtime || 0);
+}
+
+// Чем вкладка занята «у нас» — тем, что сон оборвал бы на середине.
+function sleepBusyWith(d) {
+  if (d.dead) return 'вкладка закрывается';
+  if (d.rs && d.rs.phase && d.rs.phase !== 'idle') return 'идёт перезапуск';
+  if (d.rsPendingLine) return 'идёт перезапуск';
+  if (geoTabBlocked(d)) return 'заморожена по региону';
+  if (d.tgAck || d.tgPending || tgHeldFresh(d, Date.now())) return 'ждёт мост телеги';
+  if (d.sleepQueue && d.sleepQueue.length) return 'есть отложенные сообщения';
+  if (d.sleeping || d.sleepExiting || d.waking) return 'уже спит';
+  return '';
+}
+
+// Сабагенты нынешней жизни агента — по их собственным файлам. null — проверить нечем (нет
+// стенограммы), и тогда решает экран.
+function sleepSubStates(d) {
+  if (!d.trFile) return null;
+  const dir = d.trFile.replace(/\.jsonl$/, '') + path.sep + 'subagents';
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const now = Date.now();
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const file = path.join(dir, name);
+    let st;
+    try { st = fs.statSync(file); } catch (_) { continue; }
+    // Писался в прошлой жизни агента — этот процесс его не ведёт.
+    if (st.mtimeMs < (d.agentSince || 0)) continue;
+    let meta = null;
+    try { meta = JSON.parse(fs.readFileSync(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')); } catch (_) { meta = null; }
+    let records = [];
+    try { records = sleep.parseTail(tailText(file, SLEEP_SUB_TAIL)); } catch (_) { records = []; }
+    out.push({
+      file: name,
+      state: sleep.subagentState({ meta, records, ageMs: now - st.mtimeMs, toolProcs: d.toolProcs || 0 }),
+    });
+  }
+  return out;
+}
+
+// Сколько сабагентов работает НА САМОМ ДЕЛЕ. Экран говорит «ждём N фоновых агентов», но эта
+// строка висит и после того, как агент отчитался, и пока он молча висит — и держит тогда и
+// перезапуск, и сон. Пока экран никого не видит, файлы не читаем вовсе. Не смогли проверить —
+// верим экрану: лишний раз подождать дешевле, чем закрыть живого.
+function liveSubagents(id, d) {
+  const shown = d.sub || 0;
+  if (!shown) return 0;
+  const now = Date.now();
+  if (d.subCheck && now - d.subCheck.at < 30_000) return Math.min(shown, d.subCheck.live);
+  const list = sleepSubStates(d);
+  if (!list) return shown;
+  const t = sleep.tallySubagents(list.map((e) => e.state));
+  const live = t.running;
+  if (live < shown && (!d.subCheck || d.subCheck.live !== live)) {
+    restartLog(`вкладка ${id}: экран показывает сабагентов ${shown}, по их файлам работают ${live}`
+      + ` (зависли ${t.stuck}, отработали ${t.done}) — зависших не жду`);
+  }
+  d.subCheck = { at: now, live };
+  return Math.min(shown, live);
+}
+
+function sleepTick() {
+  if (!SLEEP_ENABLED) return;
+  const now = Date.now();
+  const focused = !!(win && !win.isDestroyed() && win.isFocused());
+  for (const [id, d] of det) {
+    if (!sessions.has(id)) continue;
+    const q = sleep.quickDecision({
+      enabled: SLEEP_ENABLED, idleMin: SLEEP_MIN, now, activeAt: sleepActiveAt(d),
+      status: d.status, bg: !!d.bg, box: !!d.waitingBox, auto: autoOn(d),
+      agentUp: d.shellBusy === true && !!d.agentPid, canResume: canResumeTab(d),
+      busyWith: sleepBusyWith(d), watched: focused && SLEEP_WATCHED === id,
+      toolProcs: d.toolProcs || 0,
+    });
+    if (q.act !== 'check') continue;
+    // Без стенограммы не проверить ни сабагентов, ни будильников — а значит, и не усыплять.
+    if (!d.trFile) continue;
+    let deep;
+    try {
+      const subs = sleepSubStates(d) || [];
+      let trAgeMs = Infinity;
+      let records = [];
+      if (d.trFile) {
+        trAgeMs = now - fs.statSync(d.trFile).mtimeMs;
+        records = sleep.parseTail(tailText(d.trFile, SLEEP_TR_TAIL));
+      }
+      deep = sleep.deepDecision({
+        records, since: d.agentSince || 0, now, idleMin: SLEEP_MIN, trAgeMs,
+        subStates: subs.map((e) => e.state),
+      });
+    } catch (e) { reportMainError(e); continue; }
+    if (deep.act !== 'sleep') {
+      // В журнал — только смену причины, иначе он рос бы строкой в минуту на вкладку.
+      if (d.sleepWhy !== deep.why) sleepLog(`вкладка ${id}: не усыпляю — ${deep.why}`);
+      d.sleepWhy = deep.why;
+      continue;
+    }
+    d.sleepWhy = '';
+    sleepNow(id, d, deep.why);
+  }
+}
+setInterval(sleepTick, SLEEP_EVERY_MS);
+
+// Закрыть агента. Тем же путём, что перезапуск (restartExit): по процессу, а не буквами в поле
+// ввода. Вкладка становится спящей, когда оболочка правда опустеет (agentGone → sleepSettled).
+function sleepNow(id, d, why) {
+  const pid = d.agentPid;
+  if (!pid) return;
+  d.sleepExiting = true;
+  d.sleepExitAt = Date.now();
+  sleepLog(`вкладка ${id}${d.name ? ' (' + d.name + ')' : ''}: усыпляю, простой`
+    + ` ${Math.round((Date.now() - sleepActiveAt(d)) / 60000)} мин${why ? ', ' + why : ''}`);
+  killAgent(pid, (e) => {
+    if (e && pidAlive(pid)) {
+      sleepAbort(id, d);
+      sleepLog(`вкладка ${id}: закрыть агента не вышло (${e.code || 'ошибка'}) — не сплю`);
+    }
+  });
+  // Не ушёл за минуту — не держим вкладку в полусне: следующий такт решит заново.
+  setTimeout(() => {
+    if (d.sleepExiting && !d.sleeping) {
+      sleepAbort(id, d);
+      sleepLog(`вкладка ${id}: агент не закрылся за минуту — не сплю`);
+    }
+  }, 60_000);
+}
+
+function sleepSettled(id, d) {
+  d.sleepExiting = false;
+  d.sleeping = true;
+  d.sleptAt = Date.now();
+  d.subCheck = null;
+  // Мышиный режим гасим и здесь, как после любого ухода агента (см. agentGone): иначе колесо в
+  // спящей вкладке сыпало бы в приглашение оболочки мусором.
+  safeSend('session:sleep', { id, sleeping: true, waking: false, reset: deadtab.RESET_SEQ });
+  writeTabsMap();
+  // Человек мог открыть вкладку или написать ей, пока агент закрывался, — поднимаем сразу.
+  const focused = !!(win && !win.isDestroyed() && win.isFocused());
+  if (focused && SLEEP_WATCHED === id) wakeTab(id, d, 'вкладку открыли, пока засыпала');
+  else if (d.sleepQueue && d.sleepQueue.length) wakeTab(id, d, 'пришло сообщение, пока засыпала');
+}
+
+// Засыпание сорвалось, а сообщения уже отложены — отдаём их живому агенту как есть.
+function sleepAbort(id, d) {
+  d.sleepExiting = false;
+  const queue = d.sleepQueue || [];
+  d.sleepQueue = [];
+  for (const m of queue) typeAndSubmit(id, m.text, m.body, m.enter);
+}
+
+// Поднять спящую вкладку. Возвращает, поехало ли.
+function wakeTab(id, d, why) {
+  if (!d || !d.sleeping || d.waking) return false;
+  if (!resumeAgentNow(id, d, `пробуждение: ${why}`)) {
+    sleepLog(`вкладка ${id}: поднять не вышло (${why}) — оболочка занята или нечем`);
+    return false;
+  }
+  d.sleeping = false;
+  d.waking = true;
+  d.wokeAt = Date.now();
+  sleepLog(`вкладка ${id}: просыпается — ${why}`);
+  safeSend('session:sleep', { id, sleeping: false, waking: true });
+  writeTabsMap();
+  wakeWatch(id, d);
+  return true;
+}
+
+// Ждём, пока поднятый агент покажет поле ввода, и отдаём ему всё, что пришло во сне.
+function wakeWatch(id, d) {
+  const started = Date.now();
+  const step = () => {
+    if (!sessions.has(id) || !d.waking) return;
+    const age = Date.now() - started;
+    const up = d.shellBusy === true && age >= WAKE_READY_MIN_MS && inputState(id, '') !== 'unknown';
+    if (!up && age < WAKE_READY_MAX_MS) { setTimeout(step, 500); return; }
+    d.waking = false;
+    d.wokeAt = Date.now();
+    safeSend('session:sleep', { id, sleeping: false, waking: false });
+    const queue = d.sleepQueue || [];
+    d.sleepQueue = [];
+    if (!up) sleepLog(`вкладка ${id}: поле ввода так и не показалось — отдаю отложенное наудачу`);
+    for (const m of queue) typeAndSubmit(id, m.text, m.body, m.enter);
+    if (queue.length) sleepLog(`вкладка ${id}: отдал отложенных сообщений: ${queue.length}`);
+  };
+  setTimeout(step, 500);
+}
+
+ipcMain.on('settings:sleep', (_e, opts = {}) => {
+  SLEEP_ENABLED = !!(opts && opts.enabled);
+  SLEEP_MIN = sleep.clampMin(opts && opts.minutes);
+  sleepLog(`настройка: сон ${SLEEP_ENABLED ? 'вкл' : 'выкл'}, через ${SLEEP_MIN} мин простоя`);
+});
+
+// Какая вкладка открыта в окне. Открыли спящую — будим.
+ipcMain.on('tab:watched', (_e, { id } = {}) => {
+  SLEEP_WATCHED = String(id == null ? '' : id);
+  const d = det.get(SLEEP_WATCHED);
+  if (d && d.sleeping) wakeTab(SLEEP_WATCHED, d, 'открыли вкладку');
+});
+
+ipcMain.handle('tab:wake', (_e, { id } = {}) => {
+  const key = String(id == null ? '' : id);
+  return wakeTab(key, det.get(key), 'кнопка');
+});
+
 ipcMain.on('settings:restart', (_e, opts = {}) => {
   const was = RESTART_ENABLED;
   RESTART_ENABLED = !!(opts && opts.enabled);
@@ -7620,11 +7896,20 @@ ipcMain.on('session:input', (_event, { id, data }) => {
   // Нажатие клавиши уезжает синхронно, как раньше, а вставка из буфера — порциями: ваш
   // многострочный текст в терминале это такой же килобайт в pty, как и строка перезапуска,
   // и вешал он приложение точно так же. См. ptyType.
+  // Спящая вкладка: агента нет, и нажатия ушли бы оболочке командами. Будим, а сами нажатия
+  // не передаём — окно и так пишет в терминал, что вкладка просыпается.
+  const sd = det.get(id);
+  if (sd && (sd.sleeping || sd.waking || sd.sleepExiting)) {
+    const k = keyboardEvent(data);
+    if (sd.sleeping && (k.typed || k.submit)) wakeTab(id, sd, 'начали печатать');
+    return;
+  }
   ptyType(id, data);
   // Your keystrokes echo back + redraw the input box — that's you typing, not the
   // agent working. Grace it so it isn't counted as activity.
   const d = det.get(id);
   if (!d) return;
+  d.inputAt = Date.now();
   // You're at the keyboard for this tab, so it is no longer «driven from the phone»:
   // full-size answers and interactive pickers are useful again. The mode follows where
   // YOU are, not where the last message came from.
