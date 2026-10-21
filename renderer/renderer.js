@@ -303,11 +303,6 @@ const ICONS = {
   grip: SVG('<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>'),
   // Lucide "bot" — the sub-agent badge.
   agents: SVG('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'),
-  // Lucide "cpu" — значок загрузки CPU на карточке. Монохромный, currentColor: цвет
-  // задаёт тир (cpu-mid/cpu-hi, styles.css), а не сама иконка. Рисуется мелко (9px), поэтому
-  // в styles.css ему поднят stroke-width: на такой уменьшке штатные 2 единицы виуборда
-  // вырождаются в еле видимую серую дымку, особенно ножки по краям.
-  cpu: SVG('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>'),
   // Lucide "monitor" / "smartphone" — «где я сейчас»: за столом или с одним телефоном.
   monitor: SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   phone: SVG('<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>'),
@@ -673,37 +668,6 @@ function updateAgents(s) {
   if (num) num.textContent = n > 1 ? String(n) : '';
 }
 
-// Значок температуры промпт-кэша (❄️/🔥) — на КАРТОЧКЕ вкладки, не в полоске дайджеста: та
-// рисуется только для активной вкладки, а смысл значка ровно в том, чтобы увидеть его СО
-// СТОРОНЫ, не переключаясь. Пишет его не агент, а сторонний хук проекта (см. digest.readCache) —
-// на подавляющем большинстве вкладок его вообще не будет, пока хук не подключат.
-//
-// Значение верно только на СТАРТЕ сессии — дальше оно не отражает ничего актуального, — поэтому
-// значок не висит на карточке всё время жизни вкладки: показали и через CACHE_BADGE_MS спрятали.
-// Дайджест-тик присылает то же значение cache ещё и на каждое изменение текста (см. digestTick в
-// main.js), так что «показать» делаем один раз за сессию (s.cacheBadgeShown), а не при каждом вызове.
-const CACHE_BADGE_MS = 15_000;
-function updateCacheBadge(s) {
-  const el = s.tab.querySelector('.cache-badge');
-  if (!el) return;
-  if (s.digestCache !== 'warm' && s.digestCache !== 'cold') {
-    el.hidden = true;
-    if (s.cacheBadgeTimer) { clearTimeout(s.cacheBadgeTimer); s.cacheBadgeTimer = null; }
-    s.cacheBadgeShown = false;
-    return;
-  }
-  const warm = s.digestCache === 'warm';
-  el.title = warm ? 'старт тёплый: кэш подхватил префикс' : 'старт холодный: оплачен по полной';
-  if (s.cacheBadgeShown) return;
-  s.cacheBadgeShown = true;
-  el.textContent = warm ? '🔥' : '❄️';
-  el.hidden = false;
-  s.cacheBadgeTimer = setTimeout(() => {
-    s.cacheBadgeTimer = null;
-    el.hidden = true;
-  }, CACHE_BADGE_MS);
-}
-
 // Заполнение контекста на карточке вкладки. Число приходит готовым из main (ctxFillOf):
 // точное, от самого Клода. Разбирать процент из строки статуса здесь больше нельзя —
 // в неё попадает проза агента, и полоска показывала «80%» от фразы про загрузку
@@ -718,22 +682,6 @@ function updateCtx(s) {
   ctx.querySelector('.ctx-num').textContent = val + '%';
   ctx.classList.remove('ctx-lo', 'ctx-mid', 'ctx-hi');
   ctx.classList.add(val < 50 ? 'ctx-lo' : val < 80 ? 'ctx-mid' : 'ctx-hi');
-}
-
-// Значок загрузки CPU в подвале карточки. Не полоска, как у контекста: контекст — то, что
-// решает судьбу вкладки (перезапуск), а нагрузка — просто «жарко ли сейчас», и не заслуживает
-// своей строки на КАЖДОЙ карточке всегда. Больше того, ниже порога значка нет вовсе (см.
-// cpu.js HIDE_BELOW): он отвечает на вопрос «какие вкладки жёстко грузят машину», и пока
-// показывался на любой живой, ответа в нём не было.
-function updateCpu(s, pct) {
-  const el = s.tab.querySelector('.cpu-badge');
-  if (!el) return;
-  const b = window.SWARM_CPU.formatCpuBadge(pct);
-  el.classList.remove('cpu-mid', 'cpu-hi');
-  if (b.hidden) { el.hidden = true; return; }
-  el.classList.add('cpu-' + b.tier);
-  el.querySelector('.cpu-num').textContent = b.text;
-  el.hidden = false;
 }
 
 window.swarm.onExit(({ id }) => {
@@ -1212,9 +1160,6 @@ window.swarm.onTabProcess(({ id, cmd }) => {
   persistTabs();
 });
 
-// Та же посылка scanTabProcesses (main.js), другое поле: сколько CPU за последний тик
-// сожрало дерево процессов вкладки. cpuPct может быть null (первый тик после запуска —
-// не с чем сравнивать) — updateCpu(null) корректно прячет значок через formatCpuBadge.
 // Агент ушёл из ЖИВОЙ оболочки: `claude` кончился, а шелл остался с приглашением (main.js:
 // agentGone). Вкладка при этом рабочая — в неё можно печатать, — но агента в ней нет.
 window.swarm.onAgentGone(({ id, how, label, reset, canResume }) => {
@@ -1241,12 +1186,6 @@ window.swarm.onAgentGone(({ id, how, label, reset, canResume }) => {
       ? 'разговор цел — правый клик по карточке, «Поднять упавший разговор»'
       : 'поднять нечем: неизвестен id разговора или запускатель без --resume')
     + ']\x1b[0m\r\n');
-});
-
-window.swarm.onTabCpu(({ id, cpuPct }) => {
-  const s = sessions.get(id);
-  if (!s) return;
-  updateCpu(s, cpuPct);
 });
 
 // Вкладка сменила агента. Флаги СТИРАЕМ вместе с именем: они были от прежнего запуска, а какие
@@ -1472,8 +1411,6 @@ async function createSession(opts = {}) {
       <span class="foot">
         <span class="sub">готов</span>
         <span class="agents" hidden title="работающие сабагенты">${ICONS.agents}<span class="agents-num"></span></span>
-        <span class="cache-badge" hidden></span>
-        <span class="cpu-badge" hidden title="загрузка CPU деревом процессов вкладки — доля всей машины">${ICONS.cpu}<span class="cpu-num"></span></span>
         <!-- Подвал прораба: пилюли детей вместо его собственного статуса/сабагентов — см.
              спеку, «подвал принадлежит тому, что в этой вкладке работает». Наполняется
              renderCrewDots(), сама вкладка ничего не решает. -->
@@ -3937,7 +3874,6 @@ function closeSession(id) {
   if (activeId === id) closeDiffOverlay();
   if (s.runTimer) { clearTimeout(s.runTimer); s.runTimer = null; }
   if (s.leaveWaitTimer) { clearTimeout(s.leaveWaitTimer); s.leaveWaitTimer = null; }
-  if (s.cacheBadgeTimer) { clearTimeout(s.cacheBadgeTimer); s.cacheBadgeTimer = null; }
   hideLinkTip();
   window.swarm.killSession(id);
   s.term.dispose();
@@ -6970,16 +6906,12 @@ window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
 // Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
 // из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
 // неактивной вкладки), а рисуем — только для активной: полоска одна на сцену, как у гейта.
-function setDigestText(id, text, cache) {
+function setDigestText(id, text) {
   const s = sessions.get(String(id));
-  if (s) {
-    s.digestText = text || '';
-    s.digestCache = cache === 'warm' || cache === 'cold' ? cache : null;
-    updateCacheBadge(s);
-  }
+  if (s) s.digestText = text || '';
   if (id === activeId) renderDigestStrip();
 }
-window.swarm.onDigest(({ id, text, cache }) => setDigestText(id, text, cache));
+window.swarm.onDigest(({ id, text }) => setDigestText(id, text));
 
 // Знак бригады изнутри разговора — плавающая плашка поверх угла терминала, вне потока (см.
 // styles.css, «знак бригады изнутри»): в отличие от digest/gate её видимость ничего не сдвигает

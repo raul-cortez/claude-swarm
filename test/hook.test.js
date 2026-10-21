@@ -912,22 +912,12 @@ test('digest.readText уважает свой потолок, а не умолч
   assert.strictEqual(digest.readText(JSON.stringify({ digest: 'x'.repeat(2000) }), 700).length, 700);
 });
 
-// Поле `cache` пишет ПОСТОРОННИЙ хук проекта (например, fastio: warm-start-hint.mjs), не агент —
-// значит валидировать его надо отдельно от `digest`, и мусор в нём не должен ронять чтение.
-test('digest.readCache: warm/cold — берёт, всё остальное — null', () => {
-  const digest = require('../digest');
-  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x', cache: 'warm' })), 'warm');
-  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x', cache: 'cold' })), 'cold');
-  assert.strictEqual(digest.readCache(JSON.stringify({ digest: 'x' })), null, 'поля нет вообще');
-  assert.strictEqual(digest.readCache(JSON.stringify({ cache: 'горячо' })), null, 'чужое значение поля');
-  assert.strictEqual(digest.readCache('не json'), null);
-});
-
-test('digest.readCache не зависит от readText: оба поля читаются из одного файла порознь', () => {
+// В тот же файл может писать и посторонний хук проекта (например, поле `cache`) — чужое поле
+// не должно мешать прочитать своё.
+test('digest.readText не спотыкается о чужие поля в том же файле', () => {
   const digest = require('../digest');
   const raw = JSON.stringify({ digest: 'чиню баг с корзиной', cache: 'cold' });
   assert.strictEqual(digest.readText(raw), 'чиню баг с корзиной');
-  assert.strictEqual(digest.readCache(raw), 'cold');
 });
 
 test('дайджест: своя формулировка и потолок длины доезжают до текста инструкции', () => {

@@ -53,18 +53,5 @@
       + 'разработки. Если жду от тебя решения, скажи это отдельно.';
   }
 
-  // Температура промпт-кэша Anthropic на старте сессии — пишет СТОРОННИЙ хук проекта (например,
-  // fastio: scripts/hooks/warm-start-hint.mjs), не агент и не сворм, прямо в этот же файл рядом
-  // с `digest`. Поле чужое для агента: он его не пишет и не обязан о нём знать, а мы его просто
-  // не трогаем, когда перезаписываем `digest` (см. `readText`, который читает СВОЁ поле и не
-  // видит это). Отдельная функция, а не подмешивание в readText, — по той же причине: два разных
-  // писателя в один файл, значения читаются и валидируются порознь.
-  function readCache(raw) {
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (_) { return null; }
-    const v = parsed && parsed.cache;
-    return v === 'warm' || v === 'cold' ? v : null;
-  }
-
-  return { fileName, readText, readCache, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
+  return { fileName, readText, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
 });

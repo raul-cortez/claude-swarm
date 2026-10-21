@@ -295,22 +295,10 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .agents { flex: none; margin-left: auto; display: flex; align-items: center; gap: 2px; color: var(--run); font-size: 10px; font-variant-numeric: tabular-nums; }
 .tab .agents[hidden] { display: none; }
 .tab .agents svg { width: 12px; height: 12px; flex: none; }
-/* значок температуры промпт-кэша (❄️/🔥), пишет сторонний хук проекта — см. digest.readCache */
-.tab .cache-badge { flex: none; margin-left: auto; font-size: 10px; line-height: 1; }
-.tab .cache-badge[hidden] { display: none; }
-/* значок загрузки CPU (процессор + NN% от всей машины). Мельче соседей по подвалу: он тут
-   не главный — статус вкладки читают первым, и значок не должен отжимать его в многоточие.
-   Два оттенка, спокойного зелёного среди них нет: значок вообще не показывается, пока
-   нагрузка не заметная (см. cpu.js: HIDE_BELOW/HI_AT). */
-.tab .cpu-badge { flex: none; margin-left: auto; display: flex; align-items: center; gap: 1px; font-size: 9px; line-height: 1; font-variant-numeric: tabular-nums; }
-.tab .cpu-badge[hidden] { display: none; }
-.tab .cpu-badge svg { width: 9px; height: 9px; flex: none; stroke-width: 2.75; }
-.tab .cpu-badge.cpu-mid { color: var(--run); }
-.tab .cpu-badge.cpu-hi  { color: var(--danger); }
 
 /* --- подвал прораба: точки детей вместо его собственного статуса ----------- */
 /* Спека: «подвал принадлежит тому, что в этой вкладке работает» — у прораба это дети, не он
-   сам. Поэтому обычные жильцы подвала (подпись статуса, сабагенты, кэш, CPU) гасим, а пилюли
+   сам. Поэтому обычные жильцы подвала (подпись статуса, сабагенты) гасим, а пилюли
    показываем. Даже когда сам прораб ждёт ответа ОТ ЧЕЛОВЕКА (.status-waiting): об этом
    говорит жёлтая карточка и точка, как у любой ждущей вкладки, а подпись «вопрос» вместо
    пилюль превращала прораба в обычную вкладку — пропадала и бригада, и то, что это прораб.
@@ -321,7 +309,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab .crew-dots { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
 .tab.is-crew .crew-dots { display: flex; }
 .tab.is-crew .sub { display: none; }
-.tab.is-crew .agents, .tab.is-crew .cache-badge, .tab.is-crew .cpu-badge { display: none !important; }
+.tab.is-crew .agents { display: none !important; }
 .crew-dot-list { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
 /* Пилюли развёрнутого подвала — ростом ровно в строку .sub (min-height .foot), чтобы
    разворот сверху не менял высоту карточки. */

@@ -203,7 +203,6 @@ const restart = require('./restart');               // самоперезапу�
 const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
-const cpu = require('./cpu');                        // значок загрузки CPU: проценты между тиками, пороги
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 const geo = require('./geo');                       // регион: из-под российского адреса сворм не работает
@@ -616,10 +615,6 @@ function makeDetector(cols, rows) {
     // снимок, а байты перерисовки не считаются работой. См. snapshot() ниже.
     scrolledBack: false, liveSnap: '', livePrompt: '',
     status: '', detail: '', statusline: '', ctxPct: null, question: null, sub: 0, dead: false,
-    // Загрузка CPU деревом процессов вкладки: прошлый снимок (сумма CPU-секунд + время
-    // снимка), с которым scanTabProcesses сравнивает следующий, чтобы получить проценты
-    // между тиками (см. cpu.js). cpuPct — последнее посчитанное значение для рассылки.
-    cpuPrev: null, cpuPct: null,
     // Ход кончился словами «ничего, жду замер стенда»: статус «работает», но работает
     // не агент, а фоновая задача, и человеку это докладывают иначе. См. detector.js.
     bg: false,
@@ -1447,29 +1442,6 @@ const PROC_EVERY_MS = 5000;
 // вкладке «clear» вместо агента.
 const PROC_SETTLE_MS = 2000;
 
-// Сколько ядер у машины — делитель для процента загрузки: значок показывает долю ВСЕЙ машины,
-// а не одного ядра (см. cpu.js). Считаем один раз: за жизнь окна ядра не появляются и не
-// исчезают, а os.cpus() каждые пять секунд на каждую вкладку — лишняя работа на ровном месте.
-const CPU_CORES = Math.max(1, (os.cpus() || []).length);
-
-// Сумма CPU-секунд по всему дереву процессов вкладки (шелл + агент + все его потомки —
-// сабагенты node живут глубже первого потомка). csByPid и kids — снимок одного тика
-// scanTabProcesses; обходим в ширину, а не рекурсией, чтобы случайный цикл в данных ps
-// (в жизни не бывает, но `ps` — внешний ввод) не уронил приложение стек-оверфлоу.
-function treeCpuSeconds(kids, csByPid, rootPid) {
-  let total = csByPid.get(rootPid) || 0;
-  const seen = new Set([rootPid]);
-  const queue = (kids.get(rootPid) || []).map((e) => e.pid);
-  while (queue.length) {
-    const pid = queue.shift();
-    if (seen.has(pid)) continue;
-    seen.add(pid);
-    total += csByPid.get(pid) || 0;
-    for (const e of (kids.get(pid) || [])) queue.push(e.pid);
-  }
-  return total;
-}
-
 // Агент ушёл из ЖИВОЙ оболочки: `claude` кончился, а `zsh` остался стоять с приглашением.
 //
 // Снаружи это выглядит спокойно — статус вкладки сползает в «готов», карточка ничем не отличается
@@ -1526,37 +1498,20 @@ function agentGone(id, d, wasBusy) {
 }
 
 function scanTabProcesses() {
-  const now = Date.now();
-  execFile('ps', ['-eo', 'pid=,ppid=,time=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
+  execFile('ps', ['-eo', 'pid=,ppid=,args='], { maxBuffer: 4 << 20 }, (err, out) => {
     if (err) return;                     // ps недоступен — молча живём как раньше
     const kids = new Map();              // ppid -> [{ pid, args }]
-    const csByPid = new Map();           // pid -> накопленные CPU-секунды процесса
     for (const line of String(out).split('\n')) {
-      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+:\d+(?:\.\d+)?)\s+(.*)$/);
+      const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
       if (!m) continue;
       const list = kids.get(m[2]) || [];
-      list.push({ pid: m[1], args: m[4] });
+      list.push({ pid: m[1], args: m[3] });
       kids.set(m[2], list);
-      const cs = cpu.cpuSecondsFromTime(m[3]);
-      if (cs != null) csByPid.set(m[1], cs);
     }
     for (const [id, child] of sessions) {
       const shellPid = child && child.pid != null ? String(child.pid) : null;
       if (!shellPid) continue;
       const dd = det.get(id);
-      // Загрузка CPU — по всему дереву шелла, независимо от того, распознали ли команду
-      // ниже: пустой шелл (агент вышел) даёт дереву из одного процесса, что тоже честный
-      // снимок (обычно ~0%), а не повод молчать до следующего запуска.
-      if (dd) {
-        const cs = treeCpuSeconds(kids, csByPid, shellPid);
-        const prev = dd.cpuPrev;
-        dd.cpuPrev = { ts: now, cs };
-        if (prev) {
-          const pct = cpu.cpuPctFromDelta(prev.cs, cs, prev.ts, now, CPU_CORES);
-          dd.cpuPct = pct;
-          safeSend('session:cpu', { id, cpuPct: pct });
-        }
-      }
       // Первый потомок шелла и есть запущенная команда. Глубже не идём: `claude` там уже
       // будет своими node-процессами, а нам нужно имя, которым его зовут.
       const run = (kids.get(shellPid) || [])[0];
@@ -6088,21 +6043,11 @@ function digestTick(id, d) {
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
   const text = digest.readText(raw, DIGEST_MAX_LEN);
-  // Значок температуры кэша — поле другого писателя в тот же файл (см. digest.readCache).
-  // Сравниваем ОБА поля по отдельности: хук пишет его раньше, чем агент — свой первый digest
-  // (обычно файла ещё нет вообще), и «текст не изменился» (пусто → пусто) не должно топить
-  // единственное реальное изменение — появление значка.
-  const cache = digest.readCache(raw);
-  const textChanged = text !== (d.digestText || '');
-  const cacheChanged = cache !== (d.digestCache || null);
-  if (!textChanged && !cacheChanged) return;
+  if (text === (d.digestText || '')) return;
   d.digestText = text;
-  d.digestCache = cache;
-  safeSend('session:digest', { id, text, cache });
+  safeSend('session:digest', { id, text });
   // Дайджест — единственное в реестре, что рассказывает соседям О ЗАДАЧЕ, а не о вкладке.
-  // Обновляем только при textChanged: значок температуры кэша в реестр не идёт и будить
-  // запись не должен.
-  if (textChanged) writeTabsMap();
+  writeTabsMap();
 }
 
 setInterval(() => {
@@ -6125,11 +6070,10 @@ ipcMain.on('settings:digest', (_e, opts = {}) => {
     // Текст на карточках гасим вместе с функцией — он писался при включённой галочке и без неё
     // больше не обновится, то есть превратится в застывший обман о том, чем вкладка занята.
     for (const [tid, d] of det) {
-      if (!d || (!d.digestText && !d.digestCache)) continue;
+      if (!d || !d.digestText) continue;
       d.digestText = '';
-      d.digestCache = null;
       d.digestMtime = 0;
-      safeSend('session:digest', { id: tid, text: '', cache: null });
+      safeSend('session:digest', { id: tid, text: '' });
     }
   }
 });

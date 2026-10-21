@@ -48,13 +48,6 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:proc', handler);
   },
 
-  // Загрузка CPU деревом процессов вкладки, посчитанная тем же тиком, что и session:proc
-  // (main.js: scanTabProcesses). cb({ id, cpuPct }). Возвращает отписку.
-  onTabCpu: (cb) => {
-    const handler = (_e, payload) => cb(payload);
-    ipcRenderer.on('session:cpu', handler);
-    return () => ipcRenderer.removeListener('session:cpu', handler);
-  },
 
   // Агент ушёл из живой оболочки — упал сам или вышел (main.js: agentGone).
   // cb({ id, how, why, word, label, reset, resumeId, canResume }). Возвращает отписку.
