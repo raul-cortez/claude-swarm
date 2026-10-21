@@ -416,12 +416,12 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    жёлто-бирюзовая карточка, никакого исключения: это статус, который человеку и нужен. */
 /* :not(.is-auto) — мандат «работает без меня» самостоятельная сущность и «ничем не
    заменяется» (спека): прораб, которого отдали, красится ночным, а не своим дашедом. */
-.tab.is-crew:not(.status-waiting):not(.is-auto) {
+.tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) {
   --tab-c: var(--crew);
   border-color: var(--crew);
   background: var(--panel-2);
 }
-.tab.is-crew:not(.status-waiting):not(.is-auto) .dot { background: transparent; }
+.tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) .dot { background: transparent; }
 
 /* --- развёрнутая бригада: пилюли на месте точек ---------------------------- */
 /* Отдельной ленты рядом с карточкой нет: стрелка в подвале (.crew-toggle) превращает точки в
@@ -623,6 +623,21 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
    влево. Состояние теперь говорит луна вместо точки статуса — см. выше. */
 .tab.is-auto .tools { border-color: color-mix(in srgb, var(--night) 55%, var(--border)); }
 .tab.is-auto .moon { color: var(--night); }
+
+/* Вкладка, замороженная по региону, красится ЦЕЛИКОМ красным — поверх статуса, ночи и прораба.
+   Агент в ней стоит, а последний статус («готов», «работает») остался от времени до заморозки:
+   зелёная карточка с мелкой подписью «заморожена: регион» читалась как свободная. Тон — как у
+   плашки над её терминалом (#gate-strip.is-geo). Стоит после ночных правил: та же
+   специфичность, побеждает порядок. */
+.tab.is-geo { --tab-c: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 18%, var(--panel-2)); }
+.tab.is-geo .dot { display: inline-block; background: var(--danger); }
+.tab.is-geo .dot-moon { display: none; }
+/* Как и ночную, эту заливку не гасит «Вкладки → Что показывать»: она не про статус. */
+body.tab-no-fill .tab.is-geo:not(#set-tab-preview *),
+#set-tab-preview.tab-no-fill .tab.is-geo {
+  background: color-mix(in srgb, var(--danger) 18%, var(--panel-2));
+  border-color: var(--danger);
+}
 
 /* drag & drop — the moved item becomes a faint dashed slot; others reflow around it */
 .tab.dragging {
