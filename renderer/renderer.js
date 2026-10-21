@@ -826,9 +826,9 @@ let permMode = localStorage.getItem('swarm.permMode') || '';
 // в restart.js, здесь только память о выборе.
 let restartOn = localStorage.getItem('swarm.restart') === '1';
 let restartPct = RESTART_API.clampPct(localStorage.getItem('swarm.restartPct'));
-// «Усыплять простаивающие вкладки» (Settings → Запуск). Включено по умолчанию: сон ничего не
-// стирает — разговор лежит на диске и поднимается сам, — а память освобождает заметную.
-let sleepOn = localStorage.getItem('swarm.sleep') !== '0';
+// «Усыплять простаивающие вкладки» (Settings → Запуск). Выключено по умолчанию: функция сама
+// закрывает агентов, и пока она не обкатана живьём, включает её человек.
+let sleepOn = localStorage.getItem('swarm.sleep') === '1';
 let sleepMin = SLEEP_API.clampMin(localStorage.getItem('swarm.sleepMin'));
 // «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
 // который агент сам не может себе включить, и человек не обязан его хотеть.
