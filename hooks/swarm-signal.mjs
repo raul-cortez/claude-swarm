@@ -452,12 +452,14 @@ const peersNote = (absPath) => [
 // Спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел «Кто что видит».
 //
 // Дубликат peers.viewFor — модулей приложения здесь нет, сверяется тестом. Принимает УЖЕ
-// готовый реестр (то, что лежит в swarm-tabs.json, ключ — id вкладки) и id разговора ЧИТАТЕЛЯ
-// (payload.session_id — единственное, что хук знает про себя).
-function peersViewFor(rows, sid) {
+// готовый реестр (то, что лежит в swarm-tabs.json, ключ — id вкладки), id разговора ЧИТАТЕЛЯ
+// (payload.session_id) и id его вкладки (SWARM_TAB_ID — его кладёт в окружение pty сворм; id
+// вкладки первым, почему — см. peers.viewFor).
+function peersViewFor(rows, sid, tabId) {
   const id = sid == null ? '' : String(sid);
-  let selfId = '';
-  if (id) {
+  const tid = tabId == null ? '' : String(tabId);
+  let selfId = tid && Object.prototype.hasOwnProperty.call(rows, tid) ? tid : '';
+  if (!selfId && id) {
     for (const k in rows) { if (rows[k].claudeSessionId === id) { selfId = k; break; } }
   }
   if (!selfId) return { role: 'solo', rows };
@@ -519,6 +521,10 @@ const crewNote = (view, absPath, hireFile, max, rule) => {
     'сам. Закрывай, когда он больше не нужен: закрытый разговор не вернуть, файлы остаются.',
     `Нанять исполнителя можешь сам, не дожидаясь человека: ${where}`,
     'Файл — одним JSON: {"hire": [{"name": "#629", "prompt": "что сделать", "model": "sonnet", "sub": "личная"}]}.',
+    'name — то, что человек увидит на карточке исполнителя: номер задачи (#629) или одно-два слова о',
+    'ней («касса»). Это единственное имя исполнителя: им же отвечай, закрывай и называй его человеку.',
+    'В бригаде имена не повторяются. Файл я читаю один раз и стираю — клади в него только новое',
+    'распоряжение, прежние повторять не нужно: они уже исполнены.',
     'sub — подписка из настроек сворма, на которой открыть исполнителя (без неё — твоя); как их делить,',
     'говорит человек, расход всех подписок я кладу тебе в начало каждого хода.',
     'Массив — можно нанять нескольких разом; model и sub необязательны. Задачу печатаю я сам, как только',
@@ -535,15 +541,22 @@ const crewNote = (view, absPath, hireFile, max, rule) => {
 // процесса читает из CLAUDE.md и скиллов проекта, как любая другая (спека, раздел «Кто что
 // видит»). Прораб умер или перезапускается — строки о нём в реестре уже нет (rows() мёртвых не
 // пишет), но сама вкладка остаётся в бригаде и ждёт: реестр только рассказывает, а не управляет.
-const childNote = (view) => {
+const childNote = (view, absPath) => {
   const p = view.parent;
   if (!p) {
     return '[сворм] Твой прораб сейчас недоступен (упал или перезапускается) — ты остаёшься в'
       + ' его бригаде и продолжаешь работу как обычно; вопросы копи, спросишь, когда он вернётся.';
   }
   const name = p.tab || p.project || 'вкладка прораба';
+  // Служебное имя в списке агентов меняется при каждом самоперезапуске прораба — запомнив его,
+  // ребёнок потом не находил прораба и решал, что тот закрылся. Поэтому — как его найти, а не
+  // само имя навсегда.
+  const agent = p.sessionKey
+    ? ` Написать ему (SendMessage) — по имени из списка агентов: сейчас «${p.sessionKey}», но после`
+      + ` его перезапуска оно сменится — свежее бери в реестре соседей${absPath ? ` (${absPath})` : ''}, строка с tab «${name}».`
+    : '';
   return `[сворм] Твой прораб — вкладка «${name}». Вопросы по задаче — ему, а не человеку;`
-    + ' разрешения на запись и команды — как обычно, человеку.';
+    + ' разрешения на запись и команды — как обычно, человеку.' + agent;
 };
 
 // Шаблон, не резолвнутое имя — та же причина, что у selfRestartNote выше. cfg — объект digest
@@ -906,7 +919,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
     const peersAt = fileURLToPath(new URL('./swarm-tabs.json', import.meta.url));
     let rows = null;
     try { rows = JSON.parse(readFileSync(peersAt, 'utf8')); } catch (_) { rows = null; }
-    if (rows && peersViewFor(rows, sid).role === 'prorab') subsForCrew = allSubsNote(ex.subCards, ex.snaps, nowSec);
+    if (rows && peersViewFor(rows, sid, process.env.SWARM_TAB_ID).role === 'prorab') subsForCrew = allSubsNote(ex.subCards, ex.snaps, nowSec);
   }
   const note = [showsUsage ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
     subsForCrew,
@@ -946,11 +959,11 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
     // Одиночке текст не меняем: у него реестр большой и читать его целиком — их работа.
     let raw = null;
     try { raw = JSON.parse(readFileSync(peersFile, 'utf8')); } catch (_) { raw = null; }
-    const view = raw ? peersViewFor(raw, sid) : { role: 'solo' };
+    const view = raw ? peersViewFor(raw, sid, process.env.SWARM_TAB_ID) : { role: 'solo' };
     const crewMax = ex.crew && Number.isFinite(ex.crew.max) ? ex.crew.max : CREW_MAX_DEFAULT;
     const crewRule = ex.crew && typeof ex.crew.rule === 'string' ? ex.crew.rule : '';
     peersIntro = view.role === 'prorab' ? crewNote(view, peersFile, fileInfo && fileInfo.hire, crewMax, crewRule)
-      : view.role === 'child' ? childNote(view)
+      : view.role === 'child' ? childNote(view, peersFile)
         : peersNote(peersFile);
   }
   const intro = [restartIntro, digestIntro, peersIntro].filter(Boolean).join('\n\n');

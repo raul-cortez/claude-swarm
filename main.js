@@ -2811,7 +2811,9 @@ async function tgOnService(u) {
     const name = u.service.name;
     if (!d || !name || name === d.name) return;
     tgLog(`  тему ${u.threadId} переименовали в «${name}» — переношу на вкладку ${id}`);
+    const was = d.name;
     d.name = name;
+    crewChildRenamed(id, d, was);
     d.tgTopicName = name;          // в телеге это имя уже стоит, ехать обратно нечему
     safeSend('app:renameTab', { id, name });
     return;
@@ -5123,13 +5125,36 @@ function crewLimitNote(id, d, untilMs) {
 // Живой ребёнок бригады с таким именем — прораб называет исполнителя ярлыком вкладки (спека,
 // «Раскрытие»: «прораб должен уметь назвать ребёнка при найме»), тем же словом сворм ищет его
 // среди своих. Сравнение без регистра: агенту проще не думать о точном регистре чужого ярлыка.
+//
+// Закрываемых не ищем: их место уже свободно, и найм нового под тем же именем — нормальная
+// жизнь бригады, а не двойник. Прежние ярлыки ребёнка (d.crewOldNames — человек переименовал
+// вкладку мышью или из телеги) тоже узнаём: прораб помнит то имя, каким нанимал, и без этого
+// после переименования переставал находить своего исполнителя.
 function findCrewChildByName(prorabId, name) {
   const n = String(name == null ? '' : name).trim().toLowerCase();
   if (!n) return '';
+  const norm = (v) => String(v || '').trim().toLowerCase();
   for (const [cid, c] of det) {
-    if (c.parentId === prorabId && !c.dead && String(c.name || '').trim().toLowerCase() === n) return cid;
+    if (c.parentId === prorabId && !c.dead && !c.crewClosing && norm(c.name) === n) return cid;
+  }
+  for (const [cid, c] of det) {
+    if (c.parentId === prorabId && !c.dead && !c.crewClosing
+      && (c.crewOldNames || []).some((o) => norm(o) === n)) return cid;
   }
   return '';
+}
+
+// Человек переименовал исполнителя — прорабу строка, иначе он так и звал бы его прежним именем,
+// а человек видел бы на карточке новое. Прежнее имя запоминаем: заявка со старым всё равно дойдёт.
+function crewChildRenamed(id, d, oldName) {
+  const was = String(oldName || '').trim();
+  if (!d || !d.parentId || !was || was === String(d.name || '').trim()) return;
+  d.crewOldNames = [...(d.crewOldNames || []).filter((o) => o !== was), was].slice(-5);
+  const parent = det.get(d.parentId);
+  if (!parent || parent.dead) return;
+  typeIntoTab(d.parentId, `[сворм] Человек переименовал исполнителя «${was}» в «${d.name}» — зови его`
+    + ' теперь так и в файле найма, и в разговоре с человеком.');
+  tgLog(`бригада (имя): вкладка ${id} «${was}» → «${d.name}»`);
 }
 
 // Упёрлись в стену лимита. Время сброса берём из снимка расхода — там оно абсолютное и
@@ -6172,6 +6197,14 @@ function hireTick(id, d) {
   d.hireMtime = st.mtimeMs;
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
+  // Заявка — письмо, а не доска: прочитал, исполнил, стёр. Пока файл жил вечно, каждое новое
+  // распоряжение исполняло заново и все прежние — агент переписывает файл целиком, и старый
+  // найм ехал вместе с новым ответом. Живьём: «#875», «#869», «#914» открылись дважды с разницей
+  // в пять секунд, у бригады появились двойники с одним именем, и дальше ответы и закрытия
+  // попадали не в того из двух. Недописанный файл (агент пишет не атомарно) не трогаем —
+  // дождёмся следующей записи, mtime её покажет.
+  try { JSON.parse(raw); } catch (_) { return; }
+  try { fs.unlinkSync(file); } catch (_) {}
   // Ответы на вопросы детей — тот же файл, что и найм (см. crewAskProrab): прораб не может
   // дотянуться до чужого pty сам, только через этот такт.
   for (const a of hire.parseAnswers(raw)) {
@@ -6204,17 +6237,35 @@ function hireTick(id, d) {
   }
   const entries = hire.parseRequest(raw);
   if (!entries.length) return;
+  // Имя в бригаде — адрес: по нему прораб отвечает, закрывает, а человек узнаёт вкладку на
+  // карточке. Двух с одним именем быть не может — иначе «закрой #900» закрывает одну из двух,
+  // и какую, не знает никто. Недавно заказанных, но ещё не открытых (окно создаёт вкладку не
+  // сразу) помним в d.hirePending.
+  const now = Date.now();
+  const pending = new Map([...(d.hirePending || new Map())].filter(([, t]) => now - t < 30_000));
+  const fresh = [];
+  for (const entry of entries) {
+    const key = entry.name.trim().toLowerCase();
+    if (findCrewChildByName(id, entry.name) || pending.has(key) || fresh.some((e) => e.name.trim().toLowerCase() === key)) {
+      typeIntoTab(id, `[сворм] «${entry.name}» уже в бригаде — второй раз не открываю. Нужна ещё одна`
+        + ' вкладка — назови её иначе; нужно дать этой новую задачу — пришли её ответом ({"answer": …}).');
+      continue;
+    }
+    fresh.push(entry);
+  }
+  d.hirePending = pending;
+  if (!fresh.length) return;
   let room = Math.max(0, CREW_MAX - crewLiveChildren(id));
   // Упёрлись в потолок — место освобождают закончившие: готовые, без задачи и без фоновой
   // работы, дольше всех простоявшие — первыми. Закрыть вкладку сам прораб не может (его руки —
   // только этот файл), и раньше он на «сначала закрой кого-то» просто вставал, хотя половина
   // бригады давно сдала работу. Заявка сверх потолка и есть его «эта уже не нужна».
-  if (entries.length > room) {
+  if (fresh.length > room) {
     const done = [...det.entries()]
       .filter(([, c]) => c.parentId === id && !c.dead && !c.crewClosing && c.status === 'ready'
         && !c.bg && !c.hireTask && c.crewIdleSince)
       .sort((a, b) => a[1].crewIdleSince - b[1].crewIdleSince)
-      .slice(0, entries.length - room);
+      .slice(0, fresh.length - room);
     if (done.length) {
       for (const [, c] of done) c.crewClosing = true;
       room += done.length;
@@ -6225,8 +6276,8 @@ function hireTick(id, d) {
         + ' на их место открываю новых.');
     }
   }
-  const accepted = entries.slice(0, room);
-  const skipped = entries.length - accepted.length;
+  const accepted = fresh.slice(0, room);
+  const skipped = fresh.length - accepted.length;
   for (const entry of accepted) {
     // Подписка по имени карточки. Нет такой — не открываем наугад на чужой: прораб держит правило
     // человека («2 на рабочей, 2 на личной»), и тихая подмена его бы сломала.
@@ -6237,6 +6288,7 @@ function hireTick(id, d) {
         + (names.length ? ` Есть: ${names.map((n) => `«${n}»`).join(', ')}.` : ' Имён у подписок в настройках нет.'));
       continue;
     }
+    pending.set(entry.name.trim().toLowerCase(), now);
     safeSend('app:createTab', {
       cwd: d.cwd, parentId: id, name: entry.name, model: entry.model || CREW_MODEL, hireTask: entry.prompt,
       line: card ? card.line : '',
@@ -7330,7 +7382,9 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...proxyEnv(tabEnv(process.env), tabProxy), ...pass.env },
+    env: { ...proxyEnv(tabEnv(process.env), tabProxy), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
+    // SWARM_TAB_ID — по нему хук находит свою вкладку в реестре соседей (peers.viewFor). Id
+    // разговора для этого не годится: /clear и самоперезапуск меняют его, а pty — нет.
   });
 
   sessions.set(id, child);
@@ -7408,10 +7462,17 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     if (opts.hireTask && opts.parentId) {
       const boss = det.get(String(opts.parentId));
       if (boss && !boss.dead) {
+        // Имя у исполнителя одно — то, каким его нанимали и какое человек видит на карточке.
+        // Служебное имя в списке агентов прораб раньше запоминал как второе — а оно меняется при
+        // каждом самоперезапуске вкладки, и по старому прораб считал живого исполнителя закрытым.
         const label = d0.name || '?';
-        const named = d0.sessionKey ? `«${d0.sessionKey}»` : 'без закреплённого имени (не-Claude агент)';
-        typeIntoTab(String(opts.parentId), `[сворм] Открыл «${label}» — в списке агентов она`
-          + ` зовётся ${named}.`);
+        const agent = d0.sessionKey
+          ? ` Писать ей напрямую (SendMessage) — по имени из списка агентов: сейчас «${d0.sessionKey}»,`
+            + ' но после её перезапуска оно сменится — свежее всегда в реестре соседей'
+            + ` (${path.join(app.getPath('userData'), 'swarm-tabs.json')}), строка с tab «${label}». Не запоминай его.`
+          : '';
+        typeIntoTab(String(opts.parentId), `[сворм] Открыл «${label}». Зови её только так — в файле`
+          + ` найма и в разговоре с человеком: это имя он видит на карточке.${agent}`);
       }
     }
     // Карта абсолютных путей restart/digest (files, см. tgWriteModes) должна знать про эту
@@ -7810,7 +7871,9 @@ ipcMain.handle('settings:modes', () => {
 ipcMain.on('tabs:name', (_e, { id, name } = {}) => {
   const d = det.get(String(id));
   if (!d) return;
+  const was = d.name;
   d.name = String(name || '');
+  crewChildRenamed(String(id), d, was);
   // No topic yet (a new tab, or one restored after a relaunch) → make it now, so you can
   // write to this tab from the phone before it ever speaks. Already has one → a rename,
   // so move the topic's title along with it.

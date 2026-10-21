@@ -956,7 +956,24 @@ test('фильтр реестра в хуке решает так же, как p
   ]);
   for (const sid of ['boss-sid', 'kid1-sid', 'free-sid', 'неизвестный']) {
     assert.deepStrictEqual(H.peersViewFor(rows, sid), P.viewFor(rows, sid), 'sid=' + sid);
+    for (const tid of ['boss', 'kid1', 'free', '999', '']) {
+      assert.deepStrictEqual(H.peersViewFor(rows, sid, tid), P.viewFor(rows, sid, tid), `sid=${sid} tab=${tid}`);
+    }
   }
+});
+
+test('ребёнку — как найти прораба в списке агентов, и что это имя меняется', () => {
+  const t = H.childNote({ role: 'child', parentId: 'boss',
+    parent: { tab: 'Прораб', sessionKey: 'swarm-p-a3f9' } }, '/x/swarm-tabs.json');
+  assert.match(t, /swarm-p-a3f9/);
+  assert.match(t, /сменится/);
+  assert.match(t, /\/x\/swarm-tabs\.json/);
+});
+
+test('прорабу — имя исполнителя одно, а файл найма исполняется один раз', () => {
+  const t = H.crewNote({ role: 'prorab', crew: {}, free: 0 }, '/x/swarm-tabs.json');
+  assert.match(t, /единственное имя/);
+  assert.match(t, /один раз и стираю/);
 });
 
 test('прорабу — своя бригада и число свободных, не общий текст «иди почитай файл»', () => {

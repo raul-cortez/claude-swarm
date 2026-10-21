@@ -101,15 +101,23 @@ function rows(entries) {
 }
 
 // Кто что видит — спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел
-// «Кто что видит». Принимает УЖЕ готовый reestr (то, что вернул `rows()`, ключ — id вкладки) и
-// id разговора ЧИТАТЕЛЯ (payload.session_id хука — единственное, что знает о себе сам агент).
+// «Кто что видит». Принимает УЖЕ готовый reestr (то, что вернул `rows()`, ключ — id вкладки),
+// id разговора ЧИТАТЕЛЯ (payload.session_id хука) и id его вкладки (SWARM_TAB_ID из окружения
+// pty, см. pty.spawn в main.js).
+//
+// Id вкладки — первым и главным. Id разговора меняется под ногами: /clear, самоперезапуск,
+// возобновление — и в миг SessionStart реестр ещё помнит прежний. Вкладка тогда не находила
+// себя и получала текст одиночки: ребёнок не знал своего прораба, прораб — своей бригады.
+// Id вкладки живёт столько же, сколько её pty, и перезапуск Клода внутри него не трогает.
+// Id разговора остался запасным — для хука от прежней версии приложения, без SWARM_TAB_ID.
 //
 // Продублирована в hooks/swarm-signal.mjs (модулей приложения там нет), сверяется тестом —
 // решение остаётся здесь одно, хук только его повторяет.
-function viewFor(rows, sid) {
+function viewFor(rows, sid, tabId) {
   const id = sid == null ? '' : String(sid);
-  let selfId = '';
-  if (id) {
+  const tid = tabId == null ? '' : String(tabId);
+  let selfId = tid && Object.prototype.hasOwnProperty.call(rows, tid) ? tid : '';
+  if (!selfId && id) {
     for (const k in rows) { if (rows[k].claudeSessionId === id) { selfId = k; break; } }
   }
   // Себя не нашли — старая версия main.js без claudeSessionId в реестре, или это не вкладка

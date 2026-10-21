@@ -169,6 +169,26 @@ test('мёртвый прораб — ребёнок остаётся в бри�
   assert.strictEqual(view.parent, null);
 });
 
+test('вкладка узнаёт себя по id вкладки, даже когда реестр помнит прежний разговор', () => {
+  // Самоперезапуск или /clear: SessionStart приходит с новым session_id, а реестр ещё хранит
+  // старый. По одному id разговора ребёнок оказывался одиночкой и не знал своего прораба.
+  const rows = P.rows([
+    ['boss', tab({ claudeSessionId: 'boss-sid', crew: true })],
+    ['kid1', tab({ claudeSessionId: 'kid1-old', parentId: 'boss' })],
+  ]);
+  assert.strictEqual(P.viewFor(rows, 'kid1-new').role, 'solo');
+  const view = P.viewFor(rows, 'kid1-new', 'kid1');
+  assert.strictEqual(view.role, 'child');
+  assert.strictEqual(view.parentId, 'boss');
+  assert.ok(view.parent);
+  assert.strictEqual(P.viewFor(rows, 'boss-new', 'boss').role, 'prorab');
+});
+
+test('чужой id вкладки, которого нет в реестре, — запасной путь по id разговора', () => {
+  const rows = P.rows([['kid1', tab({ claudeSessionId: 'kid1-sid', parentId: 'boss' })]]);
+  assert.strictEqual(P.viewFor(rows, 'kid1-sid', '999').role, 'child');
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log('ok — ' + name); }
