@@ -208,6 +208,7 @@ const sleep = require('./sleep');                    // сон простаив�
 const night = require('./night');                   // работа без человека: правило агенту, толчки, отчёт
 const geo = require('./geo');                       // регион: из-под российского адреса сворм не работает
 const { fetchViaProxy } = require('./proxy-fetch');   // страна подписки — через её прокси
+const subProxy = require('./sub-proxy');            // прокси подписки — в её собственных настройках
 let STATUSLINE_COMMAND = null; // the provisioned statusline launcher command
 let HOOK_COMMAND = null;       // the provisioned hook launcher command
 // Opt-in: precise status via Claude hooks. Off by default; the renderer pushes the
@@ -461,12 +462,58 @@ let subsCardsNow = [];
 function subsWriteCards(list) {
   const cards = subs.cards(list).map((c) => ({ line: c.line, name: c.name, home: c.home }));
   subsCardsNow = cards;
+  subProxySync();   // папка подписки могла только что узнаться
   const body = JSON.stringify({ cards });
   if (body === subsWritten) return;
   try {
     fs.writeFileSync(path.join(app.getPath('userData'), 'swarm-subs.json'), body);
     subsWritten = body;
   } catch (e) { reportMainError(e); }
+}
+
+// Прокси подписок — ещё и в настройки самих подписок (<папка конфига>/settings.json, env), чтобы
+// Клод, запущенный руками (стрелкой вверх в чужой вкладке, из обычного терминала), выходил в
+// сеть так же, как запущенный свормом. Решения — sub-proxy.js. Что записали мы и что стояло
+// до нас — в swarm-proxy-owned.json: снимая, возвращаем как было. Адрес с паролем в лог не идёт.
+function subProxyOwnedFile() { return path.join(app.getPath('userData'), 'swarm-proxy-owned.json'); }
+let subProxyTimer = null;
+function subProxySync() {
+  if (subProxyTimer) return;
+  // Карточки и прокси приходят двумя сообщениями подряд — сводим один раз.
+  subProxyTimer = setTimeout(() => { subProxyTimer = null; subProxySyncNow(); }, 200);
+}
+function subProxySyncNow() {
+  let owned = {};
+  try { owned = JSON.parse(fs.readFileSync(subProxyOwnedFile(), 'utf8')) || {}; } catch (_) { owned = {}; }
+  const ownedWas = JSON.stringify(owned);
+  const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, normalizeProxy);
+  const homes = new Set([...want.keys(), ...Object.keys(owned)]);
+  for (const home of homes) {
+    const file = path.join(home, 'settings.json');
+    let settings = {};
+    try {
+      settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+      // Нет файла — начнём с пустого. Битый — не трогаем: затереть чужие настройки хуже, чем
+      // остаться без записи (вкладкам сворма прокси всё равно положен окружением).
+      if (e.code !== 'ENOENT') { tgLog(`прокси подписки: ${file} не читается — не трогаю`); continue; }
+    }
+    const w = want.has(home) ? want.get(home) : null;
+    const r = subProxy.apply(settings, w, owned[home] || {});
+    if (r.changed) {
+      try {
+        fs.mkdirSync(home, { recursive: true });
+        const tmp = file + '.swarm-tmp';
+        fs.writeFileSync(tmp, JSON.stringify(r.settings, null, 2) + '\n');
+        fs.renameSync(tmp, file);
+        tgLog(`прокси подписки: ${home} — ${w == null ? 'снял своё' : w ? 'через прокси' : 'напрямую'}`);
+      } catch (e) { reportMainError(e); continue; }
+    }
+    if (Object.keys(r.owned).length) owned[home] = r.owned; else delete owned[home];
+  }
+  if (JSON.stringify(owned) !== ownedWas) {
+    try { fs.writeFileSync(subProxyOwnedFile(), JSON.stringify(owned)); } catch (e) { reportMainError(e); }
+  }
 }
 
 // The launcher of a command line — first real token, skipping `VAR=value` prefixes.
@@ -8197,6 +8244,7 @@ ipcMain.on('settings:permissionMode', (_e, mode) => {
 // при запуске, и подменить его живому Клоду нельзя.
 ipcMain.on('settings:networkProxy', (_e, list) => {
   NETWORK_PROXIES = Array.isArray(list) ? list : [];
+  subProxySync();
   // Новый прокси — сразу узнать его страну: вкладка подписки ждёт этого, прежде чем запустить агента.
   if (geoKnown) geoCheck('прокси подписок').catch(reportMainError);
 });
