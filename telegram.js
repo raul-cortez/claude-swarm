@@ -579,6 +579,48 @@ function actionKeyboard(tab, actions) {
   return rows.length ? { inline_keyboard: rows } : null;
 }
 
+// --- выбор подписки для нового агента -----------------------------------------
+// /new и «ещё агент» из телеги не открывают вкладку сразу, если подписок больше одной: молча
+// взятая подписка соседней вкладки — ровно то, на что человек жаловался («выбирается сама»).
+// Кнопка несёт НОМЕР карточки и короткую метку её строки запуска: номер дёшев для 64 байт,
+// а метка ловит случай, когда между показом и нажатием список подписок в настройках
+// переставили, — тогда номер указывал бы на чужую подписку, и открыли бы не ту.
+//   n|<tab id>|<номер карточки>|<метка строки>
+const NS_PREFIX = 'n';
+
+function subTag(line) {
+  let h = 5381;
+  for (const ch of String(line || '')) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0;
+  return h.toString(36);
+}
+
+function subPickData(tab, idx, line) {
+  const data = [NS_PREFIX, tab, idx, subTag(line)].join('|');
+  return data.length <= CB_MAX ? data : null;
+}
+
+function parseSubPick(raw) {
+  const parts = String(raw == null ? '' : raw).split('|');
+  if (parts.length !== 4 || parts[0] !== NS_PREFIX) return null;
+  const idx = Number(parts[2]);
+  if (!parts[1] || !parts[3] || !Number.isInteger(idx) || idx < 0) return null;
+  return { tab: parts[1], idx, tag: parts[3] };
+}
+
+// По кнопке на подписку, одна в ряд: подпись — имя карточки (или её строка запуска, если имени
+// нет). Подписку этой вкладки помечаем: это и есть «как раньше», один тап без раздумий.
+function subKeyboard(tab, cards, current) {
+  const rows = [];
+  (Array.isArray(cards) ? cards : []).forEach((c, i) => {
+    const data = subPickData(tab, i, c && c.line);
+    if (!data) return;
+    const name = String((c && c.name) || '').trim() || String((c && c.line) || '').trim();
+    const mark = current && name === current ? ' ✓' : '';
+    rows.push([{ text: `${name}${mark}`.slice(0, BTN_MAX), callback_data: data }]);
+  });
+  return rows.length ? { inline_keyboard: rows } : null;
+}
+
 function callbackData(tab, fingerprint, n) {
   const data = [CB_PREFIX, tab, fingerprint, n].join('|');
   return data.length <= CB_MAX ? data : null;
@@ -832,5 +874,6 @@ module.exports = {
   inputWrites, PASTE_ON, PASTE_OFF, ENTER, BACK_TAB, ESC, routeFailure,
   COMMANDS, CLAUDE_COMMANDS, MENU_COMMANDS, isOwnCommand, claudeLine,
   QA_ACTIONS, HEADER_ACTIONS, actionData, parseAction, actionKeyboard,
+  subTag, subPickData, parseSubPick, subKeyboard,
   createPoller,
 };

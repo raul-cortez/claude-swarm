@@ -3825,8 +3825,8 @@ async function tgOnAction(qa, u, ack, routed) {
   }
   if (qa.action === 'new') {
     if (!d.cwd) { await ack('Не знаю папку этой вкладки.'); return; }
-    safeSend('app:createTab', { cwd: d.cwd });
-    await ack('Открываю ещё одного агента в этой папке.');
+    await ack(subsCardsNow.length > 1 ? 'Выбери подписку.' : 'Открываю ещё одного агента в этой папке.');
+    await tgOfferNewTab(u, tab, d);
     return;
   }
   // Ответы на «тему закрыли, а вкладка жива» (см. tgOnService). Вкладку закрывает рендерер —
@@ -3926,6 +3926,8 @@ async function tgOnCallback(u) {
   // худшим, что этот мост умеет, поэтому пути не пересекаются даже случайно.
   const qa = telegram.parseAction(u.data);
   if (qa) { await tgOnAction(qa, u, ack, routed); return; }
+  const pick = telegram.parseSubPick(u.data);
+  if (pick) { await tgOnSubPick(pick, u, ack, routed); return; }
   const cb = telegram.parseCallbackData(u.data);
   if (!cb) { await ack('Не понял эту кнопку.'); return; }
   // Здесь расхождение с темой — ОТКАЗ, в отличие от быстрых кнопок: это сообщение несёт текст
@@ -4493,9 +4495,48 @@ async function tgNewTab(u) {
       + ' Список тем — /tabs.' });
     return;
   }
+  await tgOfferNewTab(u, id, d);
+}
+
+// Ещё один агент в папке вкладки — с /new и с кнопки «ещё агент». Подписок больше одной —
+// сначала спрашиваем, на какой: молча взятая подписка соседей по папке и есть «выбирается
+// сама». Одна или ни одной — спрашивать не о чем, открываем сразу, как раньше.
+async function tgOfferNewTab(u, id, d) {
+  if (subsCardsNow.length > 1) {
+    await tgSend({
+      threadId: u.threadId,
+      text: `На какой подписке открыть агента в ${d.cwd}?`,
+      replyMarkup: telegram.subKeyboard(String(id), subsCardsNow, d.subName || tabSubName(d, sessionHomes())),
+    });
+    return;
+  }
   safeSend('app:createTab', { cwd: d.cwd });
   await tgSend({ threadId: u.threadId, text: `Открываю ещё одного агента в ${d.cwd}.`
     + ' Его тема появится в группе через пару секунд.' });
+}
+
+// Нажали подписку под «На какой подписке открыть агента». Папку даёт вкладка этой темы, как и
+// у быстрых кнопок; карточку — номер с кнопки, но только если метка строки запуска совпала:
+// иначе список подписок успели поменять, и номер указал бы на чужую.
+async function tgOnSubPick(pick, u, ack, routed) {
+  const at = telegram.callbackTab({ threadId: u.threadId, routed, payloadTab: pick.tab, sameCrew: tgSameCrew });
+  const d = at.tab == null ? null : det.get(at.tab);
+  if (!d || d.dead || !d.cwd) { await ack('Эта вкладка уже закрыта — папку взять неоткуда.'); return; }
+  const card = subsCardsNow[pick.idx];
+  if (!card || telegram.subTag(card.line) !== pick.tag) {
+    await ack('Список подписок поменялся — скажи /new ещё раз.');
+    return;
+  }
+  const name = card.name || card.line;
+  tgLog(`  новый агент из телеги: ${d.cwd} на «${name}»`);
+  safeSend('app:createTab', { cwd: d.cwd, line: card.line });
+  await ack(`Открываю на «${name}».`);
+  // Кнопки убираем: второй тап открыл бы второго агента.
+  await tgFetchJson(telegram.apiUrl(TG.token, 'editMessageText'), {
+    chat_id: u.chatId,
+    message_id: u.messageId,
+    text: `Открываю агента в ${d.cwd} на «${name}». Его тема появится в группе через пару секунд.`,
+  }).catch(reportMainError);
 }
 
 // /mode — посмотреть и переключить режим разрешений из телеги, тем же Shift+Tab, которым

@@ -440,6 +440,22 @@ test('без sameCrew поведение прежнее — точное сов�
   assert.strictEqual(at.mismatch, true);
 });
 
+test('выбор подписки: кнопка на карточку, метка ловит перестановку, текущая помечена', () => {
+  const cards = [{ name: 'Рабочая', line: 'claude' }, { name: '', line: 'claude-my --model sonnet' }];
+  const kb = T.subKeyboard('7', cards, 'Рабочая').inline_keyboard.flat();
+  assert.deepStrictEqual(kb.map((b) => b.text), ['Рабочая ✓', 'claude-my --model sonnet']);
+  const pick = T.parseSubPick(kb[1].callback_data);
+  assert.deepStrictEqual(pick, { tab: '7', idx: 1, tag: T.subTag('claude-my --model sonnet') });
+  assert.notStrictEqual(pick.tag, T.subTag('claude'), 'другая строка — другая метка');
+  assert.ok(Buffer.byteLength(kb[1].callback_data) <= T.CB_MAX);
+  assert.strictEqual(T.parseAction(kb[0].callback_data), null, 'не сойдёт за быструю кнопку');
+  assert.strictEqual(T.parseCallbackData(kb[0].callback_data), null, 'не сойдёт за разрешение');
+  assert.strictEqual(T.parseSubPick('n|7|-1|abc'), null);
+  assert.strictEqual(T.parseSubPick('n|7|x|abc'), null);
+  assert.strictEqual(T.parseSubPick('q|7|auto'), null);
+  assert.strictEqual(T.subKeyboard('7', []), null);
+});
+
 test('actionKeyboard даёт кнопки с подписями и рабочими данными', () => {
   const kb = T.actionKeyboard('3');
   const flat = kb.inline_keyboard.flat();

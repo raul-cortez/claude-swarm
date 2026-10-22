@@ -6935,7 +6935,13 @@ window.swarm.onDecodeAudio(async ({ reqId, bytes }) => {
 // умолчание — то же самое наследование, что и у обычной новой вкладки, просто без переспроса.
 window.swarm.onCreateTab((payload = {}) => {
   const { cwd, parentId, name, model, hireTask, line } = payload;
-  if (!hireTask) { createSession({ cwd }); return; }
+  // /new из телеги: подписку человек выбрал кнопкой — открываем её строкой, без неё — как раньше.
+  if (!hireTask) {
+    if (!line) { createSession({ cwd }); return; }
+    const picked = parseAgentLine(line);
+    createSession({ cwd, cmd: picked.cmd, flags: picked.flags || '' });
+    return;
+  }
   // Чем открыть исполнителя: подписка из заявки (main нашёл её карточку) — её строкой; без неё —
   // тем же, чем открыт сам прораб. НЕ командой соседей по папке (folderChoice): так было раньше,
   // и в папке, где руками открывали личной, прораб на рабочей нанимал на личной, сам того не зная.
