@@ -142,6 +142,13 @@ const TERMTALK = window.SWARM_TERMTALK;      // речь терминала (м�
 // persisted as a single JSON blob in localStorage (see swarm.appearance). Read by
 // makeXterm() for NEW tabs and by applyAppearance() to restyle LIVE tabs on save.
 let appearance = loadAppearance();
+paintTermBg();
+
+// Терминал лежит плавающей панелью (#stage), и её фон обязан совпадать с фоном темы терминала:
+// иначе светлая тема оказалась бы белым листом в тёмной рамке отступов вокруг него.
+function paintTermBg() {
+  document.documentElement.style.setProperty('--term-bg', APPEARANCE.getTheme(appearance.theme).xterm.background);
+}
 
 function loadAppearance() {
   let raw = null;
@@ -193,6 +200,7 @@ function saveKeybinds() {
 // cell grid, so the pty must be resized (same reason applyLayout refits).
 function applyAppearance() {
   const xt = APPEARANCE.getTheme(appearance.theme).xterm;
+  paintTermBg();
   // termPanel.sessions (dockable terminal panel, ⌘J) is a SEPARATE map from `sessions`
   // (agent tabs) — restyle both, or a panel tab left open through Save would keep the
   // old theme/font/cursor until closed and reopened.
