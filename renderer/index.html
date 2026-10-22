@@ -92,6 +92,7 @@
   <footer id="statusbar">
     <button id="git-branch" class="git-branch" hidden title="Git — ветка активной сессии">
       <span class="git-ic"></span>
+      <span class="git-wt" hidden>WT</span>
       <span class="git-name"></span>
       <span class="git-track"></span>
     </button>
@@ -99,6 +100,8 @@
       <span class="d-add"></span>
       <span class="d-del"></span>
     </button>
+    <!-- Worktree only: commits of the agent's branch the branch it was cut from doesn't have. -->
+    <button id="git-unmerged" class="git-unmerged" hidden></button>
     <span id="git-msg" class="git-msg"></span>
     <!-- Action icons (VS Code style), pinned to the right of the bar. -->
     <div id="bar-actions">

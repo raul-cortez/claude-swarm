@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:claude', handler);
   },
 
+  // Where the tab's agent works right now (a worktree it entered, or back home): the repo
+  // root, or null outside any repo. The git bar follows it. cb({ id, cwd }). Returns an
+  // unsubscribe fn.
+  onSessionWorkdir: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:workdir', handler);
+    return () => ipcRenderer.removeListener('session:workdir', handler);
+  },
+
   // Чем вкладка занята на самом деле: имя команды, которая крутится в её шелле (main
   // подсматривает его в дереве процессов). Рендерер решает, агент это или нет, и если да —
   // запоминает как команду вкладки. cb({ id, cmd }). Возвращает отписку.
@@ -270,8 +279,9 @@ contextBridge.exposeInMainWorld('swarm', {
     fetch:    (cwd)         => ipcRenderer.invoke('git:fetch', cwd),
     pull:     (cwd)         => ipcRenderer.invoke('git:pull', cwd),
     checkout: (cwd, branch) => ipcRenderer.invoke('git:checkout', cwd, branch),
-    diffstat: (cwd)         => ipcRenderer.invoke('git:diffstat', cwd),
-    difftext: (cwd, path)   => ipcRenderer.invoke('git:difftext', cwd, path),
+    // since: a worktree's base branch → the branch's committed work instead of local edits.
+    diffstat: (cwd, since)       => ipcRenderer.invoke('git:diffstat', cwd, since),
+    difftext: (cwd, path, since) => ipcRenderer.invoke('git:difftext', cwd, path, since),
   },
 
   // Open a file in the OS' default editor (the diff overlay's way out to an IDE).

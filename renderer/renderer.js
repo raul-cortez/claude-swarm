@@ -238,6 +238,7 @@ const gitBtn      = document.getElementById('git-branch');
 const gitMenu     = document.getElementById('git-menu');
 const gitMsgEl    = document.getElementById('git-msg');
 const gitDiffBtn  = document.getElementById('git-diff');
+const gitUnmergedBtn = document.getElementById('git-unmerged');
 
 // --- dockable terminal panel: DOM refs (see the section near the layout code) ---
 const stageAgentsEl   = document.getElementById('stage-agents');
@@ -476,6 +477,15 @@ window.swarm.onData(({ id, data }) => {
 // The tab moved to another Claude conversation — /clear, a `claude` typed by hand, a
 // /resume inside the terminal. Main learns the new id from the hook marker; we save it,
 // so «восстанавливать диалоги» reopens what you were actually in, not what we launched.
+// The agent moved: into a worktree, back home, out of any repo (cwd null). The bar follows
+// the agent, not the folder the tab was opened in — see gitCwd.
+window.swarm.onSessionWorkdir(({ id, cwd }) => {
+  const s = sessions.get(id);
+  if (!s || (s.workdir || null) === (cwd || null)) return;
+  s.workdir = cwd || null;
+  if (id === activeId) { closeDiffOverlay(); refreshGit(); }
+});
+
 window.swarm.onClaudeSession(({ id, claudeSessionId }) => {
   const s = sessions.get(id);
   if (!s || (s.claudeSessionId || null) === (claudeSessionId || null)) return;
@@ -1537,12 +1547,31 @@ async function createSessionInFolder() {
 }
 
 // --- git status bar ----------------------------------------------------------
+// The folder the bar (and the diff, and the branch menu) speaks for: where the active tab's
+// agent works now — its worktree, when it went into one — else the tab's own folder.
+function gitCwd() {
+  const s = sessions.get(activeId);
+  return (s && (s.workdir || s.cwd)) || '';
+}
+
 // The bar reflects the ACTIVE tab's folder. Every refresh re-checks activeId
 // after its await so a fast tab switch mid-request can't paint stale data.
 function renderGitBar(info) {
   gitInfo = info;
-  if (!info || !info.isRepo) { gitBtn.hidden = true; gitDiffBtn.hidden = true; return; }
+  if (!info || !info.isRepo) {
+    gitBtn.hidden = true; gitDiffBtn.hidden = true; gitUnmergedBtn.hidden = true;
+    return;
+  }
   gitBtn.hidden = false;
+  // Worktree: a small WT mark, the details on hover.
+  const wt = info.worktree || null;
+  gitBtn.querySelector('.git-wt').hidden = !wt;
+  gitBtn.title = wt
+    ? `Агент работает в ворктри ${wt.root}`
+      + (wt.base ? ` — он отрезан от ${wt.base}` : '')
+      + '. Ветка и правки показаны оттуда.'
+    : 'Git — ветка активной сессии';
+  renderGitUnmerged(wt);
   gitBtn.querySelector('.git-ic').innerHTML = ICONS.branch;
   gitBtn.querySelector('.git-name').textContent = info.branch || '';
   const parts = [];
@@ -1552,6 +1581,18 @@ function renderGitBar(info) {
   // info.dirty stays in git.js' contract — it's a standalone module — we just
   // stopped drawing it.
   gitBtn.querySelector('.git-track').textContent = parts.join(' ');
+}
+
+// «3 не влиты»: commits of the worktree's branch its base doesn't have yet. Goes out once
+// the work is in the base — including a squash merge, which git.js recognises by content.
+function renderGitUnmerged(wt) {
+  const n = wt && wt.unmerged;
+  if (!n) { gitUnmergedBtn.hidden = true; return; }
+  gitUnmergedBtn.hidden = false;
+  gitUnmergedBtn.innerHTML = '<b></b> не влиты';
+  gitUnmergedBtn.querySelector('b').textContent = String(n);
+  gitUnmergedBtn.title = `${n} ${plural(n, 'коммит', 'коммита', 'коммитов')}, которых нет в ${wt.base}`
+    + ' — ветке, от которой отрезан ворктри. Клик — их общий дифф.';
 }
 
 // The counter next to the branch. Hidden when there's nothing to show, exactly
@@ -1566,7 +1607,7 @@ function renderGitDiff(stat) {
 
   // The overlay is a snapshot. When the counter drifts from what it's showing,
   // say so — but never re-render under the reader's cursor.
-  if (diffOverlay) {
+  if (diffOverlay && !diffOverlay._since) { // the branch's diff doesn't drift with local edits
     const shown = diffOverlay.dataset.sum || '';
     const now = stat ? stat.added + '/' + stat.removed : '0/0';
     diffOverlay.querySelector('.diff-stale').hidden = (shown === now);
@@ -1575,7 +1616,7 @@ function renderGitDiff(stat) {
 
 async function refreshGit() {
   const forId = activeId;
-  const cwd = sessions.get(activeId)?.cwd || '';
+  const cwd = gitCwd();
   let info = null;
   try { info = await window.swarm.git.info(cwd); } catch (_) {}
   if (forId !== activeId) return; // switched tabs during the await — drop stale
@@ -5101,12 +5142,18 @@ function closeDiffOverlay() {
   diffOverlay = null;
 }
 
-function openDiffOverlay() {
+// since: a worktree's base branch → the branch's committed work (what a merge brings in),
+// instead of the uncommitted edits.
+async function openDiffOverlay(since) {
   if (diffOverlay) return;                       // already open
-  if (!gitDiff || !gitDiff.files.length) return; // nothing to show
-  const cwd = sessions.get(activeId)?.cwd || '';
-  const name = basename(cwd) || 'проект';
-  const snapshot = gitDiff;
+  const cwd = gitCwd();
+  let snapshot = gitDiff;
+  if (since) {
+    try { snapshot = await window.swarm.git.diffstat(cwd, since); } catch (_) { snapshot = null; }
+    if (diffOverlay || cwd !== gitCwd()) return; // opened meanwhile, or the tab moved on
+  }
+  if (!snapshot || !snapshot.files.length) return; // nothing to show
+  const name = basename(sessions.get(activeId)?.cwd || cwd) || 'проект';
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -5125,9 +5172,15 @@ function openDiffOverlay() {
     </div>`;
   document.body.appendChild(overlay);
   diffOverlay = overlay;
+  overlay._snap = snapshot;
+  overlay._since = since || null;
   overlay.dataset.sum = snapshot.added + '/' + snapshot.removed;
 
-  overlay.querySelector('.diff-title').textContent = 'Изменения — ' + name;
+  const wt = gitInfo && gitInfo.worktree;
+  const n = wt && wt.unmerged;
+  overlay.querySelector('.diff-title').textContent = since
+    ? `Ветка ${gitInfo.branch}` + (n ? ` — ${n} ${plural(n, 'коммит', 'коммита', 'коммитов')}, ещё не в ${since}` : '')
+    : 'Изменения — ' + name + (wt ? ` · ворктри ${basename(wt.root)}` : '');
   const sum = window.SWARM_DIFF.formatCount(snapshot);
   overlay.querySelector('.diff-sum .d-add').textContent = sum.added;
   overlay.querySelector('.diff-sum .d-del').textContent = sum.removed;
@@ -5156,12 +5209,12 @@ async function selectDiffFile(cwd, rel) {
   const pane = diffOverlay.querySelector('.diff-pane');
   pane.textContent = '';
 
-  const meta = (gitDiff?.files || []).find((f) => f.path === rel);
+  const meta = (diffOverlay._snap?.files || []).find((f) => f.path === rel);
   if (meta?.binary) { pane.appendChild(diffNotice('Бинарный файл — показать нечего.', cwd, rel)); return; }
   if (meta?.big)    { pane.appendChild(diffNotice('Файл больше 2 МБ — не показываем.', cwd, rel)); return; }
 
   let text = '';
-  try { text = await window.swarm.git.difftext(cwd, rel); } catch (_) {}
+  try { text = await window.swarm.git.difftext(cwd, rel, diffOverlay._since || undefined); } catch (_) {}
   if (!diffOverlay) return;                                    // closed during the await
   if (pane !== diffOverlay.querySelector('.diff-pane')) return; // reopened
   const hunks = window.SWARM_DIFF.parseUnified(text);
@@ -5235,7 +5288,7 @@ function gitMenuButton(label, hint, onClick) {
 
 async function openGitMenu() {
   if (!gitInfo || !gitInfo.isRepo) return; // nothing to show for a non-repo
-  const cwd = sessions.get(activeId)?.cwd || '';
+  const cwd = gitCwd();
   gitMenu.innerHTML = '';
 
   addCmdSection(`ветка: ${gitInfo.branch}${gitInfo.behind ? ' ↓' + gitInfo.behind : ''}${gitInfo.ahead ? ' ↑' + gitInfo.ahead : ''}`, gitMenu);
@@ -5291,7 +5344,7 @@ function toggleGitMenu() {
 
 async function onGitCheckout(branch) {
   closeGitMenu();
-  const cwd = sessions.get(activeId)?.cwd;
+  const cwd = gitCwd();
   if (!cwd) return;
   const res = await window.swarm.git.checkout(cwd, branch);
   if (!res.ok) showGitMsg(res.error || 'не удалось переключиться');
@@ -5301,7 +5354,7 @@ async function onGitCheckout(branch) {
 
 async function onGitFetch() {
   closeGitMenu();
-  const cwd = sessions.get(activeId)?.cwd;
+  const cwd = gitCwd();
   if (!cwd) return;
   showGitMsg('обновляю…', 0);
   const res = await window.swarm.git.fetch(cwd);
@@ -5313,7 +5366,7 @@ async function onGitFetch() {
 
 async function onGitPull() {
   closeGitMenu();
-  const cwd = sessions.get(activeId)?.cwd;
+  const cwd = gitCwd();
   if (!cwd) return;
   showGitMsg('подтягиваю…', 0);
   const res = await window.swarm.git.pull(cwd);
@@ -6819,6 +6872,11 @@ cmdBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleCmdMenu(); 
 cmdBtn.hidden = !cmdMenuEnabled;              // Вид → Нижняя панель → Команды
 gitBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleGitMenu(); });
 gitDiffBtn.addEventListener('click', (e) => { e.stopPropagation(); openDiffOverlay(); });
+gitUnmergedBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const base = gitInfo && gitInfo.worktree && gitInfo.worktree.base;
+  if (base) openDiffOverlay(base);
+});
 
 // Set the button icons (Lucide SVGs).
 document.querySelector('#new-session-folder .ic').innerHTML = ICONS.plus;
@@ -7076,7 +7134,7 @@ setInterval(() => {
 setInterval(async () => {
   const forId = activeId;
   if (!gitInfo || !gitInfo.isRepo) return;
-  const cwd = sessions.get(activeId)?.cwd;
+  const cwd = gitCwd();
   if (!cwd) return;
   try { await window.swarm.git.fetch(cwd); } catch (_) {}
   if (forId === activeId) refreshGit();

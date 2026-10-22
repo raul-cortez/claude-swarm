@@ -1470,6 +1470,7 @@ body.no-sessions #stage::after {
    "the active session" is misleading — hide them (id beats the [hidden] rule). */
 body.pult-on #git-branch,
 body.pult-on #git-diff,
+body.pult-on #git-unmerged,
 body.pult-on #git-msg { display: none; }
 .git-branch {
   display: inline-flex;
@@ -1489,6 +1490,20 @@ body.pult-on #git-msg { display: none; }
 .git-branch .git-ic { display: inline-flex; width: 13px; height: 13px; }
 .git-branch .git-ic svg { width: 13px; height: 13px; }
 .git-branch .git-track { color: var(--accent); letter-spacing: 0.02em; }
+/* Worktree mark: small on purpose — the details are in the branch's tooltip. */
+.git-branch .git-wt {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 13px;
+  padding: 0 3px;
+  margin-right: -2px;
+  border-radius: 3px;
+  /* Neutral: every bright colour in the bar already means a status (teal — «ждёт»). */
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+.git-branch .git-wt[hidden] { display: none; }
 .git-msg { color: var(--waiting); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Diff counter — sits next to the branch, same muted bar language. */
@@ -1509,6 +1524,21 @@ body.pult-on #git-msg { display: none; }
 .git-diff .d-add { color: var(--ready); }
 .git-diff .d-del { color: var(--danger); }
 .git-diff .d-add:empty, .git-diff .d-del:empty { display: none; }
+
+/* «3 не влиты» — the worktree's commits its base doesn't have yet. */
+.git-unmerged {
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.git-unmerged b { color: var(--text); font-weight: 600; }
+.git-unmerged:hover { color: var(--text); background: var(--panel-2); }
+.git-unmerged[hidden] { display: none; }
 
 /* --- diff overlay --------------------------------------------------------- */
 .modal.diff {

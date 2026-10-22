@@ -1736,6 +1736,7 @@ setInterval(() => {
           d.trEntries = transcript.parseEntries(tailText(d.trFile, TR_TAIL_BYTES * 8));
         }
       }
+      trackWorkdir(id, d);
       // Стенограмма из прошлой жизни вкладки вердиктов не даёт — почему, см. isPastLife.
       // Статус в этот момент держит экран, где видно, что агент стоит у приглашения; как
       // только в разговоре появится новая запись, канал заработает сам.
@@ -1774,6 +1775,29 @@ setInterval(() => {
     }
   }
 }, TR_TICK_MS);
+
+// Where the agent works right now — its own folder in the conversation, which follows `cd`
+// and EnterWorktree. The git bar follows it: an agent that left for a worktree shows ITS
+// branch and changes, not the tab's folder. Sent as the repo root (a `cd` into a subfolder
+// is the same tree) or null when the agent stands outside any repo — the bar then goes back
+// to the tab's folder.
+//
+// Seeing the agent arrive in a worktree is also the moment to remember what the worktree was
+// cut from (git.worktreeBase): the main checkout still sits on that branch.
+function trackWorkdir(id, d) {
+  const wd = transcript.cwdOf(d.trEntries || []);
+  if (!wd || wd === d.trCwd) return;
+  d.trCwd = wd;
+  git.runGit(wd, ['rev-parse', '--show-toplevel']).then((r) => {
+    if (d.trCwd !== wd) return; // moved on meanwhile
+    const root = r.code === 0 && r.stdout ? r.stdout : null;
+    if (root === d.workdir) return;
+    d.workdir = root;
+    trLog(`tab=${id} агент работает в ${root || '(вне репозитория)'}`);
+    safeSend('session:workdir', { id, cwd: root });
+    if (root) git.gitInfo(root).catch(() => {});
+  }).catch(() => {});
+}
 
 // --- Telegram bridge: token, pairing, the poll loop ---------------------------
 // The bot belongs to the USER: they paste a token from their own BotFather bot, so every
@@ -6027,8 +6051,8 @@ ipcMain.handle('git:checkout', (_e, cwd, branch) => git.gitCheckout(cwd, branch)
 
 // Diff counter + viewer for the active session's folder. Same contract as the
 // rest: the renderer picks the cwd, git.js does the work, nothing throws here.
-ipcMain.handle('git:diffstat', (_e, cwd) => git.gitDiffStat(cwd));
-ipcMain.handle('git:difftext', (_e, cwd, path) => git.gitDiffText(cwd, path));
+ipcMain.handle('git:diffstat', (_e, cwd, since) => git.gitDiffStat(cwd, since));
+ipcMain.handle('git:difftext', (_e, cwd, path, since) => git.gitDiffText(cwd, path, since));
 
 // Hand a file to the OS' default editor. The overlay is read-only on purpose —
 // editing here would race the agents writing these same files — so this is the

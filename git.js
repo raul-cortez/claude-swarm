@@ -49,7 +49,7 @@ function runGit(cwd, args, timeout = 8000) {
   });
 }
 
-// { isRepo, branch, ahead, behind, dirty }. Non-repo / no git → { isRepo:false }.
+// { isRepo, branch, ahead, behind, dirty, worktree } (worktree: see worktreeInfo). Non-repo / no git → { isRepo:false }.
 async function gitInfo(cwd) {
   if (!cwd) return { isRepo: false };
   const inside = await runGit(cwd, ['rev-parse', '--is-inside-work-tree']);
@@ -73,7 +73,84 @@ async function gitInfo(cwd) {
     ahead = Number(r) || 0;  // HEAD has it, upstream doesn't → ahead
   }
 
-  return { isRepo: true, branch, ahead, behind, dirty };
+  const worktree = await worktreeInfo(cwd, head.stdout);
+  return { isRepo: true, branch, ahead, behind, dirty, worktree };
+}
+
+// --- worktrees ---------------------------------------------------------------
+// An agent often leaves the tab's folder for a worktree of its own, and the bar follows it
+// there (main.js tracks where the agent actually works). In a worktree the bar also answers
+// «is this work in yet»: how many commits of the branch the branch it was cut from doesn't
+// have.
+//
+// Git doesn't remember what a branch was cut from — the reflog only says «Created from HEAD».
+// So we remember it ourselves, as a key in the branch's own config section:
+// branch.<name>.swarmBase. It survives tabs and restarts, and git drops it together with the
+// branch. Deliberately NOT the upstream: with a local upstream a bare `git push` from the
+// worktree would rewrite that local branch.
+const BASE_KEY = 'swarmBase';
+
+// Linked worktree → { root, base, unmerged }; the main checkout or a non-repo → null.
+// unmerged is null when there's nothing to compare with (detached HEAD, no base).
+async function worktreeInfo(cwd, branch) {
+  const dirs = await runGit(cwd, ['rev-parse', '--absolute-git-dir', '--git-common-dir', '--show-toplevel']);
+  if (dirs.code !== 0) return null;
+  const [gitDir, commonRaw, root] = dirs.stdout.split(/\r?\n/);
+  if (!gitDir || !commonRaw) return null;
+  // Real paths on both sides: a cwd reached through a symlink (/tmp → /private/tmp on a Mac)
+  // would otherwise make the main checkout look like a worktree of itself.
+  if (realPath(path.resolve(cwd, commonRaw)) === realPath(gitDir)) return null; // the main checkout
+  const out = { root: root || cwd, base: null, unmerged: null };
+  if (!branch || branch === 'HEAD') return out;
+
+  out.base = await worktreeBase(cwd, branch);
+  if (out.base) out.unmerged = await unmergedCount(cwd, out.base);
+  return out;
+}
+
+function realPath(p) {
+  try { return fs.realpathSync(p); } catch (_) { return p; }
+}
+
+// The branch this one was cut from. Remembered on first sight: main.js asks as soon as it
+// sees the agent enter the worktree, and at that moment the main checkout still sits on the
+// branch the worktree was cut from. A worktree made without us gets the same guess the first
+// time the bar shows it.
+async function worktreeBase(cwd, branch) {
+  const key = `branch.${branch}.${BASE_KEY}`;
+  const saved = await runGit(cwd, ['config', '--get', key]);
+  if (saved.code === 0 && saved.stdout) return saved.stdout;
+
+  const list = await runGit(cwd, ['worktree', 'list', '--porcelain']);
+  // The first record is always the main checkout.
+  const first = list.code === 0 ? list.stdout.split(/\r?\n\r?\n/)[0] : '';
+  const m = /^branch refs\/heads\/(.+)$/m.exec(first || '');
+  if (m && m[1] !== branch) {
+    await runGit(cwd, ['config', key, m[1]]);
+    return m[1];
+  }
+  // Main checkout detached: compare with the remote's default branch, but don't remember
+  // it — a better answer may turn up once the main checkout is back on a branch.
+  const remote = await runGit(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  return remote.code === 0 && remote.stdout ? remote.stdout : null;
+}
+
+// Commits of HEAD the base doesn't have. A squash or rebase merge leaves the commits
+// themselves out of the base, so when everything they changed already reads the same in the
+// base, the work is in and the count is 0.
+async function unmergedCount(cwd, base) {
+  const ok = await runGit(cwd, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+  if (ok.code !== 0) return null;
+  const count = await runGit(cwd, ['rev-list', '--count', `${base}..HEAD`]);
+  if (count.code !== 0) return null;
+  const n = Number(count.stdout) || 0;
+  if (!n) return 0;
+  const names = await runGit(cwd, ['diff', '--name-only', '-z', `${base}...HEAD`]);
+  if (names.code !== 0) return n;
+  const files = names.stdout.split('\0').filter(Boolean);
+  if (!files.length) return 0;
+  const same = await runGit(cwd, ['diff', '--quiet', base, 'HEAD', '--', ...files]);
+  return same.code === 0 ? 0 : n;
 }
 
 // Local branch names, most-recently-committed first (--sort=-committerdate) —
@@ -191,8 +268,16 @@ async function untrackedFiles(cwd) {
 // Tracked changes come from `git diff <base> --numstat -z`; untracked ones are
 // appended as pure additions (status 'added'). Non-repo / git failure → nulls,
 // so the caller just hides the counter, matching how the branch bar stays hidden.
-async function gitDiffStat(cwd) {
+//
+// With `since` (a worktree's base branch) it's the branch's committed work instead: what
+// HEAD changed since it forked from `since` — the diff a merge would bring in.
+async function gitDiffStat(cwd, since) {
   if (!cwd) return { added: 0, removed: 0, files: [] };
+  if (since) {
+    const res = await runGit(cwd, ['diff', `${since}...HEAD`, '--numstat', '-z']);
+    if (res.code !== 0) return { added: 0, removed: 0, files: [] };
+    return sumFiles(parseNumstatZ(res.stdout));
+  }
   const base = await diffBase(cwd);
   const res = await runGit(cwd, ['diff', base, '--numstat', '-z']);
   if (res.code !== 0) return { added: 0, removed: 0, files: [] };
@@ -224,6 +309,10 @@ async function gitDiffStat(cwd) {
     if (abs.startsWith(prefix) && !seen.has(abs)) untrackedCache.delete(abs);
   }
 
+  return sumFiles(files);
+}
+
+function sumFiles(files) {
   let added = 0, removed = 0;
   for (const f of files) { added += f.added; removed += f.removed; }
   return { added, removed, files };
@@ -236,8 +325,12 @@ async function gitDiffStat(cwd) {
 // is an addition. This is also why gitDiffStat counts them with fs — the two
 // stay consistent, and `git diff --no-index /dev/null <file>` (a Windows sore
 // spot) never enters the picture.
-async function gitDiffText(cwd, rel) {
+async function gitDiffText(cwd, rel, since) {
   if (!cwd || !rel) return '';
+  if (since) {
+    const res = await runGit(cwd, ['diff', `${since}...HEAD`, '--', rel]);
+    return res.code === 0 ? res.stdout : '';
+  }
 
   const tracked = await runGit(cwd, ['ls-files', '--error-unmatch', '-z', '--', rel]);
   if (tracked.code === 0) {
