@@ -433,7 +433,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* Отдельной ленты рядом с карточкой нет: стрелка в подвале (.crew-toggle) превращает точки в
    пилюли в том же ряду, и растёт сама карточка — сверху вбок, по содержимому; слева вбок
    некуда (карточка и так во всю ширину), поэтому пилюли переносятся строкой ниже внутри неё. */
-.layout-top .tab.is-crew.crew-open { width: max-content; }
+/* min-width — пол: с одной-двумя пилюлями содержимое уже обычной карточки, и прораб сжимался. */
+.layout-top .tab.is-crew.crew-open { width: max-content; min-width: var(--tab-min-w); }
 .layout-rail .tab.is-crew.crew-open .crew-dot-list { flex-wrap: wrap; row-gap: 3px; overflow: visible; }
 .crew-chip {
   flex: none;
