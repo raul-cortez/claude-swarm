@@ -1857,7 +1857,7 @@ body.night-all .night-pill {
    рамка от 75%, красная от 90% — те же пороги, что у ворот на подагентов, чтобы панель
    и хук не спорили. Цвет не единственный признак: рядом всегда стоит само число, а время
    до сброса вылезает текстом, когда окно поджало. */
-.usage-pills { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
+.usage-pills { display: inline-flex; align-items: center; gap: 2px; margin-right: 2px; }
 .usage-pills[hidden] { display: none; }
 .geo-flag { -webkit-app-region: no-drag; flex: none; font-size: 13px; line-height: 1; margin-right: 4px; cursor: default; }
 .geo-flag[hidden] { display: none; }
@@ -1891,7 +1891,7 @@ body.night-all .night-pill {
 /* Окно, которое уже должно было сброситься, а свежего снимка так и не пришло (см. subs.js
    windowRow().stale) — число заведомо неверное, поэтому вместо него «—», приглушённая. */
 .usage-pill .u-num.stale, .usage-pill .u-lab.stale { opacity: .55; }
-/* Разделитель МЕЖДУ подписками (не между окнами одной — там по-прежнему u-sep). Отдельный
+/* Разделитель справа от каждой подписки, последней тоже (не между окнами одной — там u-sep). Отдельный
    элемент, а не border на .usage-pill: у пилюли border-radius, и одиночная граница на
    скруглённом углу визуально гнётся. */
 .u-divider { width: 1px; align-self: stretch; background: var(--border); flex: none; margin: 0 3px; }

@@ -6509,17 +6509,15 @@ function renderUsagePills() {
   const rows = SUBS_API.pills(st);
   const menu = SUBS_API.menuRows(st);
   usagePills.innerHTML = '';
-  rows.forEach((p, i) => {
-    if (i) {
-      // Между ПОДПИСКАМИ, не между окнами внутри одной — те по-прежнему разделяет «·» внутри
-      // пилюли. Отдельный элемент, а не border на .usage-pill: у неё border-radius, и одиночная
-      // граница на скруглённом углу гнётся визуально.
-      const div = document.createElement('span');
-      div.className = 'u-divider';
-      usagePills.appendChild(div);
-    }
+  rows.forEach((p) => {
     const row = menu.find((m) => m.home === p.home);
     usagePills.appendChild(pillNode(p, rows.length > 1, pillTitle(row || p), subsView.highlight));
+    // Справа от КАЖДОЙ подписки, и от последней тоже: лимиты отделены и от соседней подписки,
+    // и от кнопок панели. Между окнами внутри одной — по-прежнему «·» в самой пилюле. Отдельный
+    // элемент, а не border на .usage-pill: у неё border-radius, и одиночная граница гнётся.
+    const div = document.createElement('span');
+    div.className = 'u-divider';
+    usagePills.appendChild(div);
   });
   usagePills.hidden = !rows.length;
   // Флажки встали в пилюли — общий прячем, иначе одна страна показана дважды и не там.
