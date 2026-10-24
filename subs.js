@@ -183,6 +183,19 @@ function matchIndex(list, account) {
   return cs.findIndex((c) => stems.has(stemOf(c.line)));
 }
 
+// Аккаунт этой карточки. Папка конфига — сначала по ВСЕМ аккаунтам, строка запуска — только
+// запасным путём и только среди аккаунтов, чью папку не держит никакая карточка. Иначе карточка
+// хватала первый аккаунт, у которого среди вкладок нашлась её команда (у рабочего бывает и
+// `claude-my` — вкладки прораба), и пилюли с их числами менялись местами вслед за порядком
+// файлов снимков.
+function accountOfCard(list, card, accounts) {
+  const home = String((card && card.home) || '');
+  const byHome = home ? accounts.find((a) => String(a.home) === home) : null;
+  if (byHome) return byHome;
+  const owned = (a) => list.some((o) => o.home && o.home === String(a.home));
+  return accounts.find((a) => !owned(a) && matchIndex([card], a) === 0) || null;
+}
+
 // Запомнить папку конфига в карточке, узнав её из снимка. Возвращает НОВЫЙ список, если
 // что-то изменилось, и тот же — если нет: рендерер по этому и решает, сохранять ли.
 function learnHome(list, accounts) {
@@ -355,7 +368,7 @@ function pills(state) {
   // руками, влезал бы в середину и переставлял привычные пилюли.
   const ordered = [];
   for (const c of list) {
-    const acc = accounts.find((a) => matchIndex([c], a) === 0);
+    const acc = accountOfCard(list, c, accounts);
     if (acc && !ordered.includes(acc)) ordered.push(acc);
   }
   for (const a of accounts) if (!ordered.includes(a)) ordered.push(a);
@@ -502,7 +515,7 @@ function menuRows(state) {
   };
 
   for (const own of list) {
-    const acc = accounts.find((a) => matchIndex([own], a) === 0) || null;
+    const acc = accountOfCard(list, own, accounts);
     if (acc) seen.add(acc.home);
     rows.push(rowOf(own, acc));
   }

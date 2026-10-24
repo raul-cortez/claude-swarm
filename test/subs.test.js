@@ -352,6 +352,24 @@ test('прокси: проблемы формы называются одной 
   assert.strictEqual(subs.proxyProblem({ host: 'h' }), '');
 });
 
+test('аккаунт ищется по папке раньше, чем по строке запуска: порядок и числа не скачут', () => {
+  const cards = [
+    { line: 'claude-my --model opus', name: 'личная', home: '/h/.claude-my' },
+    { line: 'claude --model opus', name: 'рабочая', home: '/h/.claude' },
+  ].map(subs.card);
+  const now = Date.now();
+  const w = (n) => ({ spent: n, resets_at: Math.floor(now / 1000) + 3600 });
+  // У рабочего среди вкладок есть и `claude-my` (вкладки прораба) — раньше «личная» хватала его.
+  const work = { home: '/h/.claude', five: w(90), at: 1, lines: ['claude --model opus', 'claude-my --model opus'] };
+  const mine = { home: '/h/.claude-my', five: w(10), at: 2, lines: ['claude-my'] };
+  for (const accounts of [[work, mine], [mine, work]]) {
+    const p = subs.pills({ cards, accounts, now }).map((x) => x.label + ' ' + x.items[0].spent);
+    assert.deepStrictEqual(p, ['личная 10', 'рабочая 90']);
+    const m = subs.menuRows({ cards, accounts, now }).map((r) => r.label + ' ' + (r.five && r.five.spent));
+    assert.deepStrictEqual(m, ['личная 10', 'рабочая 90']);
+  }
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + (e.message || e)); process.exitCode = 1; }
