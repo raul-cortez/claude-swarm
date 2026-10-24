@@ -7101,6 +7101,10 @@ function renderCrewStrip() {
     crewStripEl.querySelector('.crew-strip-ic').innerHTML = ICONS.crew;
     crewStripEl.querySelector('.crew-strip-tx').textContent = label;
   }
+  // Плашка плавает поверх правого угла, а дайджест под ней идёт во всю ширину — без отступа
+  // она закрывала конец его строки. Ширина живая («Бригада: <имя прораба>»), поэтому меряем.
+  document.body.classList.toggle('has-crew-strip', !!label);
+  document.body.style.setProperty('--crew-strip-w', label ? (crewStripEl.offsetWidth || 150) + 'px' : '0px');   // 0 — сцена скрыта, берём с запасом
 }
 
 function renderDigestStrip() {
