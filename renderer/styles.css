@@ -151,7 +151,6 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    терялась. */
 .layout-top .tab-group { background: transparent; border: none; border-radius: 0; padding: 0 2px; }
 .layout-top .tab-group + .tab-group { border-left: 1px solid var(--border); padding-left: 14px; }
-.layout-top .tab-group .group-head { padding-left: 4px; }
 .group-tabs { display: flex; gap: 6px; }
 .layout-rail .group-tabs { flex-direction: column; }
 .layout-top  .group-tabs { flex-direction: row; align-items: stretch; }
@@ -768,6 +767,16 @@ body.tab-no-fill .tab.is-geo:not(#set-tab-preview *),
    дублируется тултипом. Оставляем иконку: ⌘O работает, у каждой группы есть
    свой «+» (.group-add). В rail текст остаётся — там она под списком, место есть. */
 .layout-top #new-session-folder { padding: 8px; align-self: stretch; width: 44px; border-radius: 14px; }
+/* Сверху у папок нет подложки, и плитка «+» во всю высоту группы была то лишней рамкой, то
+   висела в воздухе. Теперь это пунктирное место под новую папку ровно в ряду вкладок: верх
+   опущен на шапку папки (26px) и зазор под ней (5px) — 31px при любой плотности, мерено. */
+.layout-top #new-session-folder {
+  margin-top: 31px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+}
+.layout-top #new-session-folder:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--accent); }
 .layout-top #new-session-folder .tx { display: none; }
 #new-session-folder:hover { color: var(--text); border-color: var(--accent); }
 #new-session-folder .ic { color: var(--accent); display: inline-flex; align-items: center; }
