@@ -66,6 +66,13 @@ contextBridge.exposeInMainWorld('swarm', {
     return () => ipcRenderer.removeListener('session:agentGone', handler);
   },
 
+  // Окно вошло в полноэкранный режим или вышло из него (macOS прячет там светофор). cb(bool).
+  onFullscreen: (cb) => {
+    const handler = (_e, on) => cb(!!on);
+    ipcRenderer.on('window:fullscreen', handler);
+    return () => ipcRenderer.removeListener('window:fullscreen', handler);
+  },
+
   // Send user keystrokes to a session's pty.
   sendInput: (id, data) => ipcRenderer.send('session:input', { id, data }),
 

@@ -235,6 +235,8 @@ function applyTabStyle() {
 // Tag the body with the host OS so the stylesheet can drop mac-only chrome
 // (the empty gaps reserved for the traffic lights) on Windows/Linux.
 document.body.classList.add('platform-' + (window.swarm.platform || 'unknown'));
+// Полоса под светофор macOS (см. styles.css, #chrome) на весь экран не нужна: светофора там нет.
+window.swarm.onFullscreen((on) => document.body.classList.toggle('is-fullscreen', on));
 
 const tabsEl     = document.getElementById('tabs');
 const stageEl    = document.getElementById('stage');

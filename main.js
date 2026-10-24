@@ -5931,6 +5931,14 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // На весь экран macOS прячет светофор, и полоса, отложенная под него над вкладками, стоит
+  // пустой — рендерер снимает её по этому флагу. did-finish-load — на случай, если окно
+  // поднялось уже полноэкранным: событие входа тогда пришло до того, как рендерер слушал.
+  const sendFullscreen = () => safeSend('window:fullscreen', win.isFullScreen());
+  win.on('enter-full-screen', sendFullscreen);
+  win.on('leave-full-screen', sendFullscreen);
+  win.webContents.on('did-finish-load', sendFullscreen);
+
   // Confirm before the window closes — closing it kills every `claude` child
   // (see the 'closed' handler), so an accidental ⌘Q / red-button click would drop
   // live agents. Native sync dialog: simplest reliable gate in the main process.
