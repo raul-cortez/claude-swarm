@@ -145,6 +145,12 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   background: rgba(255, 255, 255, 0.025);
 }
 .layout-top .tab-group { flex: 0 0 auto; }
+/* Сверху группа — без подложки: имя папки над её плитками, между папками тонкая черта. Подложка
+   вокруг ряда плиток с собственными рамками давала рамку в рамке, и открытая вкладка в этом
+   терялась. */
+.layout-top .tab-group { background: transparent; border: none; border-radius: 0; padding: 0 2px; }
+.layout-top .tab-group + .tab-group { border-left: 1px solid var(--border); padding-left: 14px; }
+.layout-top .tab-group .group-head { padding-left: 4px; }
 .group-tabs { display: flex; gap: 6px; }
 .layout-rail .group-tabs { flex-direction: column; }
 .layout-top  .group-tabs { flex-direction: row; align-items: stretch; }
@@ -409,6 +415,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    состоянии. Кольцо цвета статуса (как было) делало открытую неотличимой от зовущей. */
 .tab.active { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 4px 14px rgba(0, 0, 0, 0.45); }
 .tab:hover  { filter: brightness(1.12); }
+/* Сверху рамка — только у открытой, и она же светлее остальных: в ряду одинаковых плиток
+   тонкое кольцо одно не читалось. Статус остальных несут точка и заливка. !important — потому
+   что ночь, регион и прораб ставят свою рамку ниже по файлу с большей специфичностью.
+   Кроме «только точкой» (tab-no-fill): там заливки нет, и рамка у зовущей и упавшей —
+   единственный их знак на плитке. */
+body.layout-top:not(.tab-no-fill) #tabs .tab:not(.active) { border-color: transparent !important; }
+.layout-top #tabs .tab.active { filter: brightness(1.3); }
 /* Спит — поверх статуса: плитка гаснет, подпись серая. Стоит здесь, после статусов, потому
    что специфичность у них одна и побеждает порядок. */
 .tab.is-sleep { background: var(--tile); }
