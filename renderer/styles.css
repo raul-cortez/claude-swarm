@@ -331,7 +331,11 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .crew-dot-list .sum-dot.status-waiting { --dot-c: var(--waiting); }
 .crew-dot-list .sum-dot.status-dead    { --dot-c: var(--danger); }
 .crew-dot-list.has-active .sum-dot:not(.active) { opacity: 0.4; }
-.crew-dot-list .sum-dot.active { margin: 0 3px; box-shadow: 0 0 5px 1px var(--dot-c); }
+/* Без отступа у светящейся: раньше она получала margin под свечение и раздвигала соседей —
+   клик по точке сдвигал весь ряд. Зазор под свечение теперь у всех точек одинаковый и постоянный,
+   так что точки не двигаются ни при каком выборе. */
+.tab:not(.crew-open) .crew-dot-list { gap: 6px; }
+.crew-dot-list .sum-dot.active { box-shadow: 0 0 5px 1px var(--dot-c); }
 /* Стрелка «развернуть/свернуть» — всегда у правого края подвала; развёрнуто смотрит назад. */
 .crew-toggle { flex: none; margin-left: auto; display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 4px; color: var(--muted); cursor: pointer; }
 .crew-toggle[hidden] { display: none; }
@@ -435,10 +439,12 @@ body.layout-top:not(.tab-no-fill) #tabs .tab:not(.active) { border-color: transp
    жёлто-бирюзовая карточка, никакого исключения: это статус, который человеку и нужен. */
 /* :not(.is-auto) — мандат «работает без меня» самостоятельная сущность и «ничем не
    заменяется» (спека): прораб, которого отдали, красится ночным, а не своим дашедом. */
+/* Пурпур — и заливкой, а не только рамкой: сверху у неоткрытых рамки сняты (layout-top, рамка
+   только у открытой), и прораб с одной розовой рамкой становился там обычной серой плиткой. */
 .tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) {
   --tab-c: var(--crew);
   border-color: color-mix(in srgb, var(--crew) 60%, transparent);
-  background: var(--tile);
+  background: color-mix(in srgb, var(--crew) 12%, var(--tile));
 }
 .tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) .dot { background: transparent; box-shadow: none; }
 
