@@ -112,6 +112,38 @@ function composeLine(ours, foreign) {
   return `${ours} │ ${f}`;
 }
 
+// Что из двух кусков показать — выбор человека (Вид → Терминал → «Строка состояния»):
+//   both  — наш, за ним его (умолчание, composeLine);
+//   swarm — только наш, его команду даже не зовём;
+//   own   — только его. Нет его строки или она не успела — показываем наш, а не пустоту.
+// Ни одно положение не трогает снимок расхода: он пишется раньше и от выбора не зависит, так
+// что полоска контекста, /usage и перезапуск живут при любом.
+//
+// Выбор лежит файлом рядом с этим скриптом, а не флагом в команде: перерисовка читает его
+// каждый раз, значит переключатель доходит и до уже открытых вкладок, а не только до новых.
+const VIEW_FILE = 'statusline-view.json';
+const VIEWS = ['both', 'swarm', 'own'];
+
+function normalizeView(v) {
+  return VIEWS.includes(v) ? v : 'both';
+}
+
+function readView(dir) {
+  try {
+    return normalizeView(JSON.parse(fs.readFileSync(path.join(dir, VIEW_FILE), 'utf8')).view);
+  } catch (_) { return 'both'; }
+}
+
+function pickLine(view, ours, foreign) {
+  const v = normalizeView(view);
+  if (v === 'swarm') return ours;
+  if (v === 'own') {
+    const f = String(foreign || '').replace(/[\r\n]+.*$/s, '').trim();
+    return f || ours;
+  }
+  return composeLine(ours, foreign);
+}
+
 // Позвать чужую команду тем же входом, каким Клод позвал нас. Никогда не бросает и никогда
 // не висит: строка перерисовывается на каждом ходе, и чужой скрипт, задумавшийся на минуту,
 // был бы виден как подтормаживающий Клод, а не как чужой скрипт.
@@ -401,7 +433,9 @@ function main() {
       const home = configRoot(data, process.env);
       const snap = usageSnapshot(data, nowSec, home);
       writeUsage(snap);
-      process.stdout.write(composeLine(renderLine(data, nowSec, subNameFor(home)), readForeign(data, input)));
+      const view = readView(__dirname);
+      const foreign = view === 'swarm' ? '' : readForeign(data, input);
+      process.stdout.write(pickLine(view, renderLine(data, nowSec, subNameFor(home)), foreign));
     } catch (_) {
       // Bad/empty stdin must never make Claude show an error line — print nothing.
     }
@@ -414,5 +448,5 @@ if (require.main === module) main();
 module.exports = {
   renderLine, usedPct, fmtEta, ctxUsed, fmtTok, usageSnapshot, usageReport, USAGE_DIR,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
-  subNameFor, subNameOf,
+  subNameFor, subNameOf, VIEW_FILE, normalizeView, readView, pickLine,
 };

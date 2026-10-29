@@ -104,6 +104,9 @@ contextBridge.exposeInMainWorld('swarm', {
   // «Новые вкладки стартуют в режиме»: main добавляет --permission-mode к команде запуска.
   // Пусто = не вмешиваться. Применяется к новым вкладкам, режим остаётся переключаемым.
   setPermissionMode: (mode) => ipcRenderer.send('settings:permissionMode', mode),
+  // «Строка состояния»: both | swarm | own — что из двух кусков печатает наша строка.
+  // Применяется на следующей перерисовке, в том числе в открытых вкладках.
+  setStatuslineView: (view) => ipcRenderer.send('settings:statuslineView', view),
   // Прокси подписок для новых вкладок агента ([{ line, proxy }] → HTTP(S)_PROXY в окружении
   // вкладки, открытой этой подпиской). Пустой прокси = не вмешиваться.
   setNetworkProxy: (list) => ipcRenderer.send('settings:networkProxy', list),

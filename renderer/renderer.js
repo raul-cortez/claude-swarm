@@ -840,6 +840,9 @@ const hooksEnabled = true;
 // Смысл настройки в том, что «разреши уже всё» — самое частое, что делают руками сразу после
 // открытия вкладки, а с телефона Shift+Tab не нажать вообще.
 let permMode = localStorage.getItem('swarm.permMode') || '';
+// «Строка состояния Клода» (Settings → Вид): both | swarm | own. Только что ПОКАЗАТЬ — числа
+// для полоски контекста строка отдаёт при любом выборе (swarm-statusline.js, pickLine).
+let statuslineView = localStorage.getItem('swarm.statuslineView') || 'both';
 // «Перезапускать агента, когда контекст заполнится» (Settings → Запуск). Выключено по
 // умолчанию: функция сама решает, когда стереть разговор, и включать такое за человека нельзя.
 // Порог — в процентах с полоски контекста, то есть отмеренных от точки автосжатия. Логика вся
@@ -2063,6 +2066,24 @@ function showSettingsModal(tab) {
           <div class="term-preview" id="set-term-preview"></div>
         </section>
         <section class="set-group">
+          <div class="set-group-h">Строка состояния Клода</div>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Показывать</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Строка под полем ввода: модель, подписка, заполнение контекста. Если
+                у вас настроена своя строка статуса Клода, Swarm может печатать её следом, вместо своей или не
+                печатать вовсе. Полоска контекста на карточке, перезапуск и расход подписок работают при любом
+                выборе. Меняется и в открытых вкладках — со следующего ответа агента.</span>
+            </div>
+            <select class="set-input set-select" id="set-statusline-view">
+              <option value="both">Swarm и мою</option>
+              <option value="swarm">Только Swarm</option>
+              <option value="own">Только мою</option>
+            </select>
+          </div>
+        </section>
+        <section class="set-group">
           <div class="set-group-h">Окно</div>
           <div class="set-row">
             <label class="set-check">
@@ -2577,6 +2598,9 @@ function showSettingsModal(tab) {
   const pickFieldEl = overlay.querySelector('#set-pick-field');
   // Режим для новых вкладок. Список приходит из main: подписи режимов живут в screen.js,
   // рядом с их распознаванием на экране, и второй список здесь разошёлся бы с ним молча.
+  const statuslineViewI = overlay.querySelector('#set-statusline-view');
+  statuslineViewI.value = statuslineView;
+  if (!statuslineViewI.value) statuslineViewI.value = 'both';   // чужое из старой версии
   const permI = overlay.querySelector('#set-perm-mode');
   const permNoteEl = overlay.querySelector('#set-perm-mode-note');
   const permTitles = new Map();
@@ -3831,6 +3855,11 @@ function showSettingsModal(tab) {
       permMode = permI.value;
       localStorage.setItem('swarm.permMode', permMode);
       window.swarm.setPermissionMode(permMode);  // main adds/drops --permission-mode
+    }
+    if (statuslineViewI.value !== statuslineView) {
+      statuslineView = statuslineViewI.value;
+      localStorage.setItem('swarm.statuslineView', statuslineView);
+      window.swarm.setStatuslineView(statuslineView);
     }
     const nextRestartPct = RESTART_API.clampPct(restartPctI.value);
     if (restartI.checked !== restartOn || nextRestartPct !== restartPct) {
@@ -6964,6 +6993,7 @@ applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notificatio
 // carries (or omits) the hooks block before the first claude spawn.
 window.swarm.setHooksEnabled(hooksEnabled);
 window.swarm.setPermissionMode(permMode); // тем же порядком: режим должен быть до первой вкладки
+window.swarm.setStatuslineView(statuslineView); // файл рядом со строкой — до её первой перерисовки
 window.swarm.setNetworkProxy(proxyList()); // прокси подписок — до первой вкладки
 window.swarm.setRestart({ enabled: restartOn, threshold: restartPct }); // порог самоперезапуска
 window.swarm.setSleep({ enabled: sleepOn, minutes: sleepMin });          // сон простаивающих вкладок

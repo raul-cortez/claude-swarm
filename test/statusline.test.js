@@ -12,7 +12,7 @@ const { execFileSync } = require('child_process');
 const {
   renderLine, usedPct, fmtEta, ctxUsed, usageSnapshot, usageReport,
   configRoot, settingsLayers, foreignCommandFrom, isOwnCommand, composeLine, readForeign,
-  subNameOf,
+  subNameOf, VIEW_FILE, normalizeView, readView, pickLine,
 } = require('../swarm-statusline');
 
 let passed = 0;
@@ -362,6 +362,29 @@ test('чужая команда получает тот же вход и не м
   const t0 = Date.now();
   assert.strictEqual(readForeign(data, input).trim(), '');
   assert.ok(Date.now() - t0 < 5000, 'ждали не дольше таймаута');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('«Строка состояния»: три положения, и ни в одном не пусто', () => {
+  const ours = 'Opus 5 │ repo ███ 24% 1M';
+  assert.strictEqual(pickLine('both', ours, 'моя'), ours + ' │ моя');
+  assert.strictEqual(pickLine('swarm', ours, 'моя'), ours);
+  assert.strictEqual(pickLine('own', ours, 'моя\nвторая'), 'моя');
+  // Своей строки нет или она не успела — показываем нашу, а не пустую строку.
+  assert.strictEqual(pickLine('own', ours, ''), ours);
+  assert.strictEqual(pickLine('own', ours, '  \n '), ours);
+  // Неизвестное (старая версия, ручная правка) — умолчание.
+  assert.strictEqual(normalizeView('чушь'), 'both');
+  assert.strictEqual(pickLine(undefined, ours, 'моя'), ours + ' │ моя');
+});
+
+test('выбор строки читается файлом рядом со скриптом, без файла — умолчание', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-view-'));
+  assert.strictEqual(readView(dir), 'both');
+  fs.writeFileSync(path.join(dir, VIEW_FILE), JSON.stringify({ view: 'own' }));
+  assert.strictEqual(readView(dir), 'own');
+  fs.writeFileSync(path.join(dir, VIEW_FILE), '{битый');
+  assert.strictEqual(readView(dir), 'both');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
