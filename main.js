@@ -8192,6 +8192,19 @@ ipcMain.on('clipboard:write', (_event, text) => {
   try { clipboard.writeText(String(text == null ? '' : text)); } catch (_) {}
 });
 
+// ⌘F во вкладке агента: поиск по всей стенограмме разговора (см. transcript.searchEntries).
+// Файл читаем целиком и заново на каждый запрос — поиск редкий, а держать копию в памяти на
+// каждую вкладку ради него незачем. Нет стенограммы (не Claude, чистый терминал, ещё не
+// привязались) — { ok:false }, и окно ищет по самому терминалу.
+ipcMain.handle('tab:search', async (_e, { id, query } = {}) => {
+  const d = det.get(String(id == null ? '' : id));
+  if (!d || !d.trFile) return { ok: false };
+  try {
+    const text = await fs.promises.readFile(d.trFile, 'utf8');
+    return { ok: true, ...transcript.searchEntries(transcript.parseEntries(text), query) };
+  } catch (_) { return { ok: false }; }
+});
+
 // Context menu of a terminal (agent tab or the ⌘J panel). Built here because only main
 // can show a native menu; the click goes back as a push, the renderer knows which
 // terminal asked. Paste carries the clipboard text so the renderer can feed it through
@@ -8347,6 +8360,10 @@ function buildMenu() {
         { label: 'Копировать', accelerator: 'CmdOrCtrl+C', click: () => safeSend('menu:copy') },
         { role: 'paste' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        // На маке ⌘F свободен; на винде и линуксе Ctrl+F — клавиша самой оболочки (шаг
+        // вперёд в readline), её у терминала не отнимаем.
+        { label: 'Найти…', accelerator: process.platform === 'darwin' ? 'Cmd+F' : 'Ctrl+Shift+F', click: () => safeSend('menu:find') },
       ],
     },
     { role: 'viewMenu' },

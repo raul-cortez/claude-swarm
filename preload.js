@@ -357,6 +357,15 @@ contextBridge.exposeInMainWorld('swarm', {
   // scheme (http/https only) before handing it to the OS.
   openExternal: (url) => ipcRenderer.send('shell:openExternal', url),
 
+  // ⌘F: search the tab's whole conversation (Claude's transcript). { ok:false } when the
+  // tab has none — the renderer then searches the terminal buffer itself.
+  tabSearch: (id, query) => ipcRenderer.invoke('tab:search', { id, query }),
+  onMenuFind: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('menu:find', handler);
+    return () => ipcRenderer.removeListener('menu:find', handler);
+  },
+
   // Right-click on a terminal: main pops the native menu and pushes the chosen item
   // back as { action, text } (text = clipboard contents, for paste only).
   termMenu: (hasSelection) => ipcRenderer.send('term:menu', { hasSelection: !!hasSelection }),

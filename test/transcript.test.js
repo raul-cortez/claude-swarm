@@ -501,6 +501,37 @@ test('старый вызов с булевым `asks` продолжает ра
   assert.strictEqual(v.kind, 'question');
 });
 
+test('поиск: реплики человека и агента, свежие первыми, без регистра', () => {
+  const text = [
+    user('Почини КНОПКУ входа', 5000),
+    assistant([{ type: 'text', text: 'Кнопку починил, проверь' }], 4000),
+    assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'кнопку' } }], 3000),
+    user([{ type: 'tool_result', content: 'кнопку' }], 2000),
+    user('<command-name>/кнопку</command-name>', 1000),
+    assistant([{ type: 'text', text: 'кнопку из сабагента' }], 500, { isSidechain: true }),
+    NOISE,
+  ].join('\n');
+  const r = T.searchEntries(T.parseEntries(text), 'кнопку');
+  assert.strictEqual(r.total, 2);
+  assert.deepStrictEqual(r.hits.map((h) => h.role), ['assistant', 'user']);
+  assert.deepStrictEqual(r.hits[0].at, [0]);
+  assert.deepStrictEqual(r.hits[1].at, [7]);
+  assert.strictEqual(r.hits[1].len, 6);
+});
+
+test('поиск: все совпадения в реплике, пустой запрос — ничего', () => {
+  const r = T.searchEntries(T.parseEntries(user('да да нет да', 0)), 'да');
+  assert.deepStrictEqual(r.hits[0].at, [0, 3, 10]);
+  assert.strictEqual(T.searchEntries(T.parseEntries(user('да', 0)), '  ').total, 0);
+});
+
+test('поиск: потолок по числу реплик, счёт — по всем', () => {
+  const many = Array.from({ length: 5 }, (_, i) => user('слово ' + i, i * 10)).join('\n');
+  const r = T.searchEntries(T.parseEntries(many), 'слово', 2);
+  assert.strictEqual(r.total, 5);
+  assert.strictEqual(r.hits.length, 2);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }

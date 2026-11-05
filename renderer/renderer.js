@@ -820,6 +820,8 @@ function makeXterm() {
 // ответ приходит пушем, а не возвратом invoke — у родного меню клик может прийти позже,
 // чем оно закроется.
 let termMenuTarget = null;
+// Поле поиска ⌘F (см. «⌘F: поиск по вкладке» ниже).
+const find = { el: null, target: null, mode: '', items: [], cur: -1, seq: 0, timer: null };
 function attachTermMenu(term, holder) {
   holder.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -4029,6 +4031,7 @@ function showSettingsModal(tab) {
 function activate(id, opts) {
   const s = sessions.get(id);
   if (!s) return;
+  closeFind();   // поле поиска искало по прежней вкладке
   // A link tooltip lives on document.body, not the terminal holder, so a
   // keyboard tab-switch with the mouse still over a link never fires the addon's
   // `leave` — drop any stale tip so it doesn't float over the new terminal.
@@ -4331,6 +4334,7 @@ function refitActive() {
 }
 
 function setPult(on) {
+  closeFind();
   const next = on && pultEnabled;
   pultOn = next;
   document.body.classList.toggle('pult-on', next);
@@ -4728,6 +4732,7 @@ function renderTermTabs() {
 function activateTermTab(id) {
   const s = termPanel.sessions.get(id);
   if (!s) return;
+  if (find.target && find.target.kind === 'panel' && find.target.s.id !== id) closeFind();
   termPanel.activeId = id;
   termTabsEl.querySelectorAll('.tp-tab').forEach((el) => el.classList.toggle('active', el.dataset.id === id));
   for (const t of termPanel.sessions.values()) t.holder.classList.toggle('active', t.id === id);
@@ -4783,6 +4788,7 @@ async function createTermTab(opts = {}) {
 function closeTermTab(id) {
   const s = termPanel.sessions.get(id);
   if (!s) return;
+  if (find.target && find.target.s === s) closeFind();
   window.swarm.killSession(id);
   s.term.dispose(); // as closeSession does — otherwise the xterm buffers/canvas outlive the tab
   s.holder.remove();
@@ -4805,6 +4811,7 @@ function closeTermTab(id) {
 // восстановление списка вкладок, а не разрыв работающей сессии каждым скрытием панели.
 function closeTermPanel() {
   if (!termPanel.open) return;
+  if (find.target && find.target.kind === 'panel') closeFind();
   termPanel.open = false;
   renderTermChrome();
   persistTermPanel();
@@ -4830,6 +4837,7 @@ function toggleTermPanel() {
 function setTermDock(dock) {
   const next = dock === 'side' ? 'side' : 'bottom';
   if (next === termPanel.dock) return;
+  closeFind();
   termPanel.dock = next;
   if (termPanel.open) applyTermSize(loadTermSize());
   renderTermChrome();
@@ -4980,6 +4988,7 @@ function applyLayout(name) {
 }
 
 function toggleLayout() {
+  closeFind();
   applyLayout(currentLayout() === 'layout-top' ? 'layout-rail' : 'layout-top');
 }
 
@@ -5929,12 +5938,237 @@ function openHelp() {
 // Opened from the native "Справка" app-menu item (⌘/), handled in main.
 window.swarm.onOpenHelp(openHelp);
 
+// --- ⌘F: поиск по вкладке ------------------------------------------------------------------
+// Во вкладке агента — по ВСЕМУ разговору: Claude рисует себя в альт-экране, где у терминала
+// нет прокрутки, так что поиск по терминалу нашёл бы только текущий экран. Переписку main
+// читает из стенограммы Claude (tab:search), а здесь — список найденных реплик: кто, когда,
+// отрывок с подсветкой; щелчок разворачивает реплику целиком, текст можно выделить и
+// скопировать. Нет стенограммы (не Claude, чистый терминал) и в панели ⌘J — ищем по истории
+// самого терминала: найденные строки, щелчок прокручивает к строке и выделяет совпадение.
+// Enter / ⇧Enter — следующее / предыдущее, Esc — закрыть и вернуться в терминал.
+// Состояние поля ⌘F объявлено наверху (find), рядом с меню терминала: closeFind() зовут
+// activate() и прочие переключения, а они срабатывают ещё при восстановлении вкладок.
+
+function findEsc(t) {
+  return String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+// Отрезок текста [from, to) с подсветкой всех совпадений, попавших в него.
+function findMarked(text, at, len, from, to) {
+  let html = '';
+  let p = from;
+  for (const k of at) {
+    if (k + len <= from || k >= to) continue;
+    const a = Math.max(k, from);
+    const b = Math.min(k + len, to);
+    html += findEsc(text.slice(p, a)) + '<mark>' + findEsc(text.slice(a, b)) + '</mark>';
+    p = b;
+  }
+  return html + findEsc(text.slice(p, to));
+}
+function findWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? hm : d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ', ' + hm;
+}
+
+function findBuild() {
+  if (find.el) return find.el;
+  const el = document.createElement('div');
+  el.id = 'find';
+  el.hidden = true;
+  el.innerHTML = '<div class="find-row">'
+    + '<input class="find-input" type="text" spellcheck="false">'
+    + '<span class="find-count"></span>'
+    + `<button class="find-close" type="button" title="Закрыть (Esc)">${ICONS.close}</button>`
+    + '</div><div class="find-list"></div>';
+  const input = el.querySelector('.find-input');
+  input.addEventListener('input', () => {
+    clearTimeout(find.timer);
+    find.timer = setTimeout(findRun, 180);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+    else if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    e.stopPropagation();   // ⌘T/⌘W и прочие сочетания не срабатывают поверх поля
+  });
+  el.querySelector('.find-close').addEventListener('click', closeFind);
+  el.querySelector('.find-list').addEventListener('click', (e) => {
+    const it = e.target.closest('.find-item');
+    if (!it || e.target.closest('.find-full')) return;  // по развёрнутому тексту — выделение, не клик
+    findPick(Number(it.dataset.i), true);
+  });
+  document.body.appendChild(el);
+  find.el = el;
+  return el;
+}
+
+// Что искать: терминал в фокусе панели ⌘J — его историю; иначе открытую вкладку агента.
+function findTargetNow() {
+  const panel = termPanel.open && termPanel.sessions.get(termPanel.activeId);
+  if (panel && panel.holder.contains(document.activeElement)) return { kind: 'panel', s: panel };
+  const s = sessions.get(activeId);
+  if (s && !pultOn) return { kind: 'agent', s };
+  return panel ? { kind: 'panel', s: panel } : null;
+}
+
+function openFind() {
+  const t = findTargetNow();
+  if (!t) return;
+  const el = findBuild();
+  find.target = t;
+  // Поле висит в правом верхнем углу того терминала, по которому ищет. Окно не двигается,
+  // пока поле открыто, а ресайз его просто закрывает (см. ниже) — следить за размером незачем.
+  const box = (t.kind === 'panel' ? termPanelBodyEl : stageAgentsEl).getBoundingClientRect();
+  el.style.top = (box.top + 8) + 'px';
+  el.style.right = (window.innerWidth - box.right + 14) + 'px';
+  el.style.maxHeight = Math.max(160, box.height - 16) + 'px';
+  const input = el.querySelector('.find-input');
+  input.placeholder = t.kind === 'agent' ? 'Найти в разговоре' : 'Найти в терминале';
+  el.hidden = false;
+  input.focus();
+  input.select();
+  findRun();
+}
+
+function closeFind() {
+  if (!find.el || find.el.hidden) return;
+  clearTimeout(find.timer);
+  find.seq++;   // ответ, ещё летящий из main, больше ничего не рисует
+  find.el.hidden = true;
+  const t = find.target;
+  find.target = null;
+  if (t && t.s.term) t.s.term.focus();
+}
+
+async function findRun() {
+  const t = find.target;
+  if (!t || !find.el) return;
+  const q = find.el.querySelector('.find-input').value;
+  const seq = ++find.seq;
+  find.items = [];
+  find.cur = -1;
+  if (!q.trim()) { findRender(q, 0); return; }
+  if (t.kind === 'agent') {
+    const r = await window.swarm.tabSearch(t.s.id, q).catch(() => null);
+    if (seq !== find.seq) return;   // пока шёл ответ, запрос уже поменяли
+    if (r && r.ok) {
+      find.mode = 'talk';
+      find.items = r.hits;
+      findRender(q, r.total);
+      return;
+    }
+  }
+  // История самого терминала: строки буфера, свежие снизу — как и читаются в терминале,
+  // поэтому первым идёт последнее совпадение.
+  find.mode = 'buffer';
+  const buf = t.s.term.buffer.active;
+  const low = q.trim().toLowerCase();
+  const out = [];
+  for (let row = buf.length - 1; row >= 0 && out.length < 500; row--) {
+    const line = buf.getLine(row);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    const l = text.toLowerCase();
+    const at = [];
+    for (let k = l.indexOf(low); k >= 0; k = l.indexOf(low, k + low.length)) at.push(k);
+    if (at.length) out.push({ row, text, at, len: low.length });
+  }
+  find.items = out;
+  findRender(q, out.length);
+}
+
+function findRender(q, total) {
+  const list = find.el.querySelector('.find-list');
+  const count = find.el.querySelector('.find-count');
+  list.innerHTML = '';
+  if (!q.trim()) { count.textContent = ''; return; }
+  count.textContent = total ? (total > find.items.length ? `${find.items.length} из ${total}` : String(total)) : 'нет';
+  find.items.forEach((h, i) => {
+    const it = document.createElement('div');
+    it.className = 'find-item';
+    it.dataset.i = i;
+    const first = h.at[0];
+    let from;
+    let to;
+    if (find.mode === 'talk') {
+      from = Math.max(0, first - 50);
+      to = Math.min(h.text.length, first + h.len + 140);
+      // Начинаем с начала слова, а не с его середины.
+      if (from > 0) { const sp = h.text.lastIndexOf(' ', first); if (sp > from) from = sp + 1; }
+    } else {
+      from = h.text.length - h.text.trimStart().length;
+      to = h.text.length;
+    }
+    const meta = find.mode === 'talk'
+      ? `<span class="find-who ${h.role === 'user' ? 'is-me' : ''}">${h.role === 'user' ? 'Вы' : 'Агент'}</span>`
+        + `<span class="find-when">${findEsc(findWhen(h.ts))}</span>`
+      : `<span class="find-when">строка ${h.row + 1}</span>`;
+    it.innerHTML = `<div class="find-meta">${meta}</div>`
+      + `<div class="find-snip">${from > 0 && find.mode === 'talk' ? '…' : ''}`
+      + findMarked(h.text, h.at, h.len, from, to)
+      + `${to < h.text.length ? '…' : ''}</div>`;
+    list.appendChild(it);
+  });
+}
+
+function findStep(dir) {
+  const n = find.items.length;
+  if (!n) return;
+  findPick(find.cur < 0 ? (dir > 0 ? 0 : n - 1) : (find.cur + dir + n) % n, false);
+}
+
+// Выбрать найденное: реплика разворачивается целиком (повторный щелчок — сворачивает),
+// строка терминала прокручивается в середину экрана и выделяется.
+function findPick(i, byClick) {
+  const h = find.items[i];
+  if (!h || !find.target) return;
+  const list = find.el.querySelector('.find-list');
+  const prev = list.querySelector('.find-item.cur');
+  const again = byClick && find.cur === i;
+  if (prev) { prev.classList.remove('cur'); const f = prev.querySelector('.find-full'); if (f) f.remove(); }
+  if (again && find.mode === 'talk' && prev && prev.dataset.i === String(i)) { find.cur = -1; return; }
+  find.cur = i;
+  const it = list.querySelector(`.find-item[data-i="${i}"]`);
+  if (!it) return;
+  it.classList.add('cur');
+  if (find.mode === 'talk') {
+    const full = document.createElement('div');
+    full.className = 'find-full';
+    full.innerHTML = findMarked(h.text, h.at, h.len, 0, h.text.length);
+    it.appendChild(full);
+    const m = full.querySelector('mark');
+    if (m) full.scrollTop = Math.max(0, m.offsetTop - full.clientHeight / 3);
+  } else {
+    const term = find.target.s.term;
+    term.scrollToLine(Math.max(0, h.row - Math.floor(term.rows / 2)));
+    term.select(h.at[0], h.row, h.len);
+  }
+  it.scrollIntoView({ block: 'nearest' });
+}
+
+window.swarm.onMenuFind(() => {
+  if (find.el && !find.el.hidden) { const i = find.el.querySelector('.find-input'); i.focus(); i.select(); return; }
+  openFind();
+});
+// Поле привязано к месту на экране: сменили вкладку, раскладку, размер окна — закрываем,
+// а не оставляем висеть над чужим терминалом.
+window.addEventListener('resize', () => closeFind());
+
 // ⌘C (native Edit → Copy) routes here instead of the stock `copy` role, whose
 // native path mangled the xterm selection's encoding (Cyrillic → MacRoman
 // mojibake). We read the selection as a proper JS string and write it via
 // Electron's clipboard (correct UTF-8): the active terminal's selection if it has
 // one, otherwise the page's DOM selection (a modal, the branch bar, etc.).
 window.swarm.onMenuCopy(() => {
+  // Выделение в развёрнутой реплике поиска ⌘F — первым: иначе старое выделение в терминале
+  // агента перебило бы то, что человек только что выделил в поле поиска.
+  const sel = window.getSelection ? window.getSelection() : null;
+  if (find.el && !find.el.hidden && sel && String(sel) && find.el.contains(sel.anchorNode)) {
+    window.swarm.clipboardWrite(String(sel));
+    return;
+  }
   // Терминал в фокусе — первым: раньше смотрели только агентскую вкладку, и выделение в
   // панели терминала (⌘J) ⌘C не копировал вовсе, а то и копировал старое выделение агента.
   const agent = sessions.get(activeId);

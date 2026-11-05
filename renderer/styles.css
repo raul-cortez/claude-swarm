@@ -2459,3 +2459,56 @@ body.has-digest #gate-strip { top: var(--digest-h, 58px); }
 body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
 
 /* Регион: заглушка поверх всего окна, выше модалок — под ней ничего нажать нельзя. */
+
+/* --- ⌘F: поиск по вкладке ---------------------------------------------------
+   Плавающее поле в правом верхнем углу терминала, по которому ищет (координаты ставит
+   openFind). Под полем — найденные реплики разговора или строки терминала. */
+#find {
+  position: fixed;
+  z-index: 40;
+  width: min(460px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-size: 12px;
+}
+#find[hidden] { display: none; }
+.find-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; }
+.find-input {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 13px; padding: 3px 0;
+}
+.find-input::placeholder { color: var(--muted); }
+.find-count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.find-close {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.find-close:hover { color: var(--text); background: var(--panel-2); }
+.find-close svg { width: 12px; height: 12px; }
+.find-list { overflow-y: auto; min-height: 0; }
+.find-list:not(:empty) { border-top: 1px solid var(--border); }
+.find-item { padding: 7px 10px; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.find-item:last-child { border-bottom: none; }
+.find-item:hover { background: var(--panel-2); }
+.find-item.cur { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+.find-meta { display: flex; gap: 8px; margin-bottom: 3px; color: var(--muted); font-size: 11px; }
+.find-who { color: var(--text); }
+.find-who.is-me { color: var(--accent); }
+.find-snip {
+  color: var(--text); line-height: 1.4; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.find-item.cur .find-snip { display: none; }   /* развёрнута — отрывок дублировал бы начало */
+.find-full {
+  margin-top: 2px; max-height: 320px; overflow-y: auto;
+  color: var(--text); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; cursor: text;
+}
+#find mark { background: color-mix(in srgb, var(--permission) 40%, transparent); color: inherit; border-radius: 2px; }

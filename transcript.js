@@ -394,7 +394,44 @@ function pickByScreen(cands, snapshot) {
   return hit;
 }
 
+// Поиск по разговору (⌘F во вкладке агента). Claude живёт в альт-экране, где у эмулятора
+// нет прокрутки, так что искать по терминалу — искать по одному экрану. Вся переписка лежит
+// здесь, в стенограмме: ищем по ней — что сказал человек и что ответил агент, без
+// инструментов, размышлений и сабагентов (их человек в разговоре не видел).
+//
+// Регистр не важен. Свежие реплики — первыми: обычно ищут недавнее. В ответе — полный текст
+// реплики (обрезанный до SEARCH_TEXT_MAX) и места совпадений в нём, чтобы окно могло и
+// показать отрывок, и развернуть реплику целиком с подсветкой.
+const SEARCH_MAX = 200;
+const SEARCH_TEXT_MAX = 20000;
+// Обёртки, которые Claude Code пишет в стенограмму от имени человека, хотя тот их не печатал:
+// вывод слэш-команд, напоминания системы, оповещения о фоновых задачах.
+const RE_WRAPPER = /^\s*<(command-|local-command-|system-reminder|task-notification|bash-|user-memory-input)/;
+
+function searchEntries(entries, query, max = SEARCH_MAX) {
+  const q = String(query == null ? '' : query).trim().toLowerCase();
+  const out = [];
+  let total = 0;
+  if (!q) return { total, hits: out };
+  for (let i = (entries || []).length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (!e || e.isSidechain || e.isMeta) continue;
+    if (e.type !== 'user' && e.type !== 'assistant') continue;
+    const full = entryText(e);
+    if (!full || RE_WRAPPER.test(full) || isInterrupt(e)) continue;
+    const text = full.length > SEARCH_TEXT_MAX ? full.slice(0, SEARCH_TEXT_MAX) : full;
+    const low = text.toLowerCase();
+    const at = [];
+    for (let k = low.indexOf(q); k >= 0; k = low.indexOf(q, k + q.length)) at.push(k);
+    if (!at.length) continue;
+    total++;
+    if (out.length < max) out.push({ role: e.type, ts: tsOf(e), text, at, len: q.length });
+  }
+  return { total, hits: out };
+}
+
 module.exports = {
+  searchEntries, SEARCH_MAX,
   READY_DEBOUNCE_MS, BIND_MTIME_SLACK_MS, SCREEN_KEY_LEN, INJECTED_MIN, screenKey, pickByScreen,
   projectSlug, homeOfTranscript, parseEntries, blockTypes, entryText, lastMain, tsOf, isPastLife, classify, cwdOf, pickBinding, isInterrupt,
   belongsToTurn, turnText, currentTool, turnTokens,
