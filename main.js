@@ -8192,6 +8192,21 @@ ipcMain.on('clipboard:write', (_event, text) => {
   try { clipboard.writeText(String(text == null ? '' : text)); } catch (_) {}
 });
 
+// Context menu of a terminal (agent tab or the ⌘J panel). Built here because only main
+// can show a native menu; the click goes back as a push, the renderer knows which
+// terminal asked. Paste carries the clipboard text so the renderer can feed it through
+// xterm's paste() (bracketed paste, same input path as typing).
+ipcMain.on('term:menu', (_event, { hasSelection } = {}) => {
+  if (!win || win.isDestroyed()) return;
+  const send = (action, extra) => () => safeSend('term:menuAction', { action, ...extra });
+  Menu.buildFromTemplate([
+    { label: 'Копировать', enabled: !!hasSelection, click: send('copy') },
+    { label: 'Вставить', click: () => safeSend('term:menuAction', { action: 'paste', text: clipboard.readText() }) },
+    { type: 'separator' },
+    { label: 'Выделить всё', click: send('selectAll') },
+  ]).popup({ window: win });
+});
+
 // Open a URL in the user's default browser (terminal link clicks). We only hand
 // http(s) to the OS — anything else (file:, javascript:, custom schemes) is
 // dropped so a rogue link in pty output can't launch arbitrary handlers.

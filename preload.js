@@ -357,6 +357,15 @@ contextBridge.exposeInMainWorld('swarm', {
   // scheme (http/https only) before handing it to the OS.
   openExternal: (url) => ipcRenderer.send('shell:openExternal', url),
 
+  // Right-click on a terminal: main pops the native menu and pushes the chosen item
+  // back as { action, text } (text = clipboard contents, for paste only).
+  termMenu: (hasSelection) => ipcRenderer.send('term:menu', { hasSelection: !!hasSelection }),
+  onTermMenuAction: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('term:menuAction', handler);
+    return () => ipcRenderer.removeListener('term:menuAction', handler);
+  },
+
   // Native Edit → Copy (⌘C) asks the renderer to copy the current selection.
   onMenuCopy: (cb) => {
     const handler = () => cb();

@@ -121,8 +121,10 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   flex-direction: column;
   gap: 10px; /* gap between tabs / groups */
 }
-/* Логотипа больше нет: светофор macOS лежит прямо над списком, и список отступает под него. */
-.platform-darwin.layout-rail:not(.is-fullscreen) #tabs { padding-top: 40px; }
+/* Логотипа больше нет: светофор macOS лежит прямо над списком. Полоса под ним — отступ
+   самого #chrome, а не #tabs: #chrome тащит окно, а #tabs помечен no-drag, и отступ внутри
+   списка оставил левую раскладку без единого места, за которое можно взять окно. */
+.platform-darwin.layout-rail:not(.is-fullscreen) #chrome { padding-top: 32px; }
 .layout-top #tabs {
   display: flex;
   flex-direction: row;
@@ -1388,8 +1390,12 @@ textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
 .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #2f3742; }
 
 /* Was #stage:empty — the pult strip lives inside the stage now, so :empty never
-   matches. relayoutTabs() toggles .no-sessions instead. */
-body.no-sessions #stage::after {
+   matches. relayoutTabs() toggles .no-sessions instead. Hangs on #stage-agents, not
+   #stage: on #stage the inset:0 layer also lay over the docked terminal panel and ate
+   its clicks — with no agent tabs left, the last terminal tab's × couldn't be pressed.
+   pointer-events:none so a hint never swallows a click again. */
+body.no-sessions #stage-agents::after {
+  pointer-events: none;
   content: "Сессий нет — нажмите ＋, чтобы начать";
   position: absolute;
   inset: 0;

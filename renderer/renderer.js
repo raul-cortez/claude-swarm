@@ -771,9 +771,30 @@ function makeXterm() {
     lineHeight: 1.15,
     scrollback: 10000,
     theme: APPEARANCE.getTheme(appearance.theme).xterm,
+    // Claude включает отслеживание мыши, и простое протягивание уходит ЕМУ, а не эмулятору —
+    // выделения у xterm нет, ⌘C копировать нечего. С ⌥ протягивание выделяет как в обычном
+    // терминале (так же, как в iTerm/Terminal.app); на Windows/Linux это Shift, он есть всегда.
+    macOptionClickForcesSelection: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  // OSC 52 — «положи в буфер обмена». Так копирует сам Claude, выделяя мышью в своём окне
+  // (и tmux, и vim): без обработчика последовательность молча терялась, и копирование
+  // срабатывало «через раз» — только когда выделял сам эмулятор. Только запись: запрос
+  // содержимого буфера («?») программам в терминале не отдаём.
+  try {
+    term.parser.registerOscHandler(52, (data) => {
+      const i = data.indexOf(';');
+      const b64 = i >= 0 ? data.slice(i + 1) : '';
+      if (!b64 || b64 === '?') return true;
+      try {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const text = new TextDecoder().decode(bytes);
+        if (text) window.swarm.clipboardWrite(text);
+      } catch (_) {}
+      return true;
+    });
+  } catch (_) {}
   // Make http(s) links in the pty output open in the default browser — but only
   // on modifier-click (⌘ / Ctrl), with a hover tooltip explaining the shortcut.
   // Main validates the scheme before handing it to the OS. Guarded so a missing
@@ -793,6 +814,28 @@ function makeXterm() {
   }
   return { term, fit };
 }
+
+// Правый клик по терминалу — родное меню системы (собирает main, как у карточки):
+// Копировать / Вставить / Выделить всё. Какой терминал спрашивал, помним здесь:
+// ответ приходит пушем, а не возвратом invoke — у родного меню клик может прийти позже,
+// чем оно закроется.
+let termMenuTarget = null;
+function attachTermMenu(term, holder) {
+  holder.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    termMenuTarget = term;
+    window.swarm.termMenu(term.hasSelection());
+  });
+}
+window.swarm.onTermMenuAction(({ action, text } = {}) => {
+  const term = termMenuTarget;
+  termMenuTarget = null;
+  if (!term || !term.element || !term.element.isConnected) return; // вкладку успели закрыть
+  if (action === 'copy') { if (term.hasSelection()) window.swarm.clipboardWrite(term.getSelection()); }
+  else if (action === 'paste') { if (text) term.paste(text); }   // через onData — тот же путь, что печать
+  else if (action === 'selectAll') term.selectAll();
+  term.focus();
+});
 
 // Launch config for NEW tabs. Two top-level modes (launchMode):
 //   'agent' — auto-run an agent CLI. launchList holds the saved agents (each a
@@ -1280,6 +1323,7 @@ async function createSession(opts = {}) {
   holder.className = 'term-holder';
   stageAgentsEl.appendChild(holder);
   term.open(holder);
+  attachTermMenu(term, holder);
   // xterm reserves space for a scrollbar via `viewport.offsetWidth - scrollArea || 15`.
   // On macOS the scrollbar is overlay (0 layout width), so that measures 0 and the
   // `|| 15` fallback reserves a phantom 15px strip on the right that's just empty —
@@ -4705,6 +4749,7 @@ async function createTermTab(opts = {}) {
   holder.className = 'term-holder';
   termPanelBodyEl.appendChild(holder);
   term.open(holder);
+  attachTermMenu(term, holder);
   if (term._core && term._core.viewport) term._core.viewport.scrollBarWidth = 0; // см. createSession
   fit.fit();
 
@@ -5890,10 +5935,14 @@ window.swarm.onOpenHelp(openHelp);
 // Electron's clipboard (correct UTF-8): the active terminal's selection if it has
 // one, otherwise the page's DOM selection (a modal, the branch bar, etc.).
 window.swarm.onMenuCopy(() => {
-  const s = sessions.get(activeId);
-  if (s && s.term && s.term.hasSelection()) {
-    window.swarm.clipboardWrite(s.term.getSelection());
-    return;
+  // Терминал в фокусе — первым: раньше смотрели только агентскую вкладку, и выделение в
+  // панели терминала (⌘J) ⌘C не копировал вовсе, а то и копировал старое выделение агента.
+  const agent = sessions.get(activeId);
+  const panel = termPanel.sessions.get(termPanel.activeId);
+  const terms = [agent, panel].filter((x) => x && x.term);
+  const focused = terms.find((x) => x.holder.contains(document.activeElement));
+  for (const x of focused ? [focused, ...terms.filter((t) => t !== focused)] : terms) {
+    if (x.term.hasSelection()) { window.swarm.clipboardWrite(x.term.getSelection()); return; }
   }
   // Form fields: window.getSelection() is empty inside <input>/<textarea>, so read
   // the field's own selection range (e.g. the launch cmd/flags in Settings).
