@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.80.1 — 2026-11-08
+
+- fix(proxy): local relay keeps VPN sniffers off a subscription's proxy
+
 ## 0.80.0 — 2026-11-05
 
 - feat(find): ⌘F — поиск по всему разговору вкладки
