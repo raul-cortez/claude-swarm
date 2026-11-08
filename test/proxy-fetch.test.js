@@ -21,7 +21,7 @@ async function stand(needAuth) {
   const seen = [];
   const proxy = http.createServer();
   proxy.on('connect', (req, client) => {
-    seen.push({ path: req.url, auth: req.headers['proxy-authorization'] || '' });
+    seen.push({ path: req.url, host: req.headers.host, auth: req.headers['proxy-authorization'] || '' });
     if (needAuth && req.headers['proxy-authorization'] !== needAuth) {
       client.end('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n');
       return;
@@ -46,6 +46,8 @@ test('ходит туннелем через прокси и отдаёт отв
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.text, 'loc=FR\n');
     assert.strictEqual(s.seen[0].path, `geo.invalid:${s.targetPort}`);
+    // Host names the proxy: a VPN sniffer must not read the target out of it (proxy-relay.js).
+    assert.strictEqual(s.seen[0].host, `127.0.0.1:${s.proxyPort}`);
   } finally { s.close(); }
 });
 

@@ -19,7 +19,10 @@ function fetchViaProxy(proxyUrl, targetUrl, timeoutMs) {
     const secureTarget = t.protocol === 'https:';
     const targetPort = Number(t.port) || (secureTarget ? 443 : 80);
     const authority = `${t.hostname}:${targetPort}`;
-    const headers = { Host: authority };
+    // Host names the proxy, not the target: a VPN client that sniffs plain-text CONNECT would
+    // otherwise send the tunnel straight to the target (see proxy-relay.js).
+    const proxyAuthority = `${p.hostname}:${Number(p.port) || (p.protocol === 'https:' ? 443 : 80)}`;
+    const headers = { Host: proxyAuthority };
     if (p.username) {
       const dec = (v) => { try { return decodeURIComponent(v); } catch (_) { return v; } };
       headers['Proxy-Authorization'] = 'Basic '
