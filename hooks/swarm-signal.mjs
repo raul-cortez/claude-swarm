@@ -11,7 +11,7 @@
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { realpathSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { realpathSync, readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs';
 
 // --- «агент зовёт тебя»: теги и фразы ----------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
@@ -1095,6 +1095,20 @@ function allSubsNote(cards, snaps, nowSec) {
   return `Подписки для найма исполнителей ("sub" в заявке): ${parts.join('; ')}.`;
 }
 
+// Прокси подписки — только для самого Клода. Сворм кладёт вкладке с прокси SWARM_PROXY_DIRECT=1
+// (если в карточке не отмечено «весь трафик через прокси»), и на старте сессии мы дописываем в
+// CLAUDE_ENV_FILE снятие прокси-переменных. Этот файл Клод исполняет перед каждой своей
+// bash-командой: git, npm, curl идут напрямую с мака, а сам Клод остаётся на прокси.
+// Сломается механизм — команды просто снова пойдут через прокси, как раньше; мимо прокси сам Клод
+// не уйдёт ни при каком сбое здесь. Проверено живьём на Claude Code 2.1.319, в том числе для
+// переменных из env в settings.json подписки.
+export const PROXY_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+export function proxyDirectLine(env, payload) {
+  if (!payload || payload.hook_event_name !== 'SessionStart') return '';
+  if (!env || env.SWARM_PROXY_DIRECT !== '1' || !env.CLAUDE_ENV_FILE) return '';
+  return `unset ${PROXY_VARS.join(' ')}\n`;
+}
+
 // The files the app writes beside this script (all three live in userData).
 async function readJsonBeside(name) {
   const { readFileSync } = await import('node:fs');
@@ -1153,6 +1167,8 @@ async function main() {
   process.stdin.on('end', () => {
     try {
       const payload = JSON.parse(input || '{}');
+      const direct = proxyDirectLine(process.env, payload);
+      if (direct) { try { appendFileSync(process.env.CLAUDE_ENV_FILE, direct); } catch (_) { /* команды останутся на прокси */ } }
       // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале
       // хода. На каждом PostToolUse обходить папку значило бы читать диск десятки раз за ход.
       const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'

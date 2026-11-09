@@ -3269,7 +3269,7 @@ function showSettingsModal(tab) {
           <input type="checkbox" class="sub-proxy-all" />
           <span class="set-check-tx">весь трафик через прокси, не только Claude</span>
         </label>
-        <span class="sub-proxy-hint">Без галочки через прокси ходит только Claude, а GitHub, npm и сайты, которые он открывает, — напрямую, как из обычного терминала.</span>
+        <span class="sub-proxy-hint">Без галочки через прокси ходит только сам Claude, а команды, которые он запускает, — git, npm, curl — напрямую, как из обычного терминала.</span>
       </div>`;
     const lineI = row.querySelector('.sub-line');
     const nameI = row.querySelector('.sub-name');

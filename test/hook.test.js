@@ -1108,6 +1108,27 @@ test('allSubsNote: нет карточек с именами — молчит', 
   assert.strictEqual(H.allSubsNote([{ name: '', home: '/h' }], [], 0), '');
 });
 
+test('proxyDirectLine: только на старте сессии, только с меткой сворма и файлом окружения', () => {
+  const env = { SWARM_PROXY_DIRECT: '1', CLAUDE_ENV_FILE: '/x' };
+  const line = H.proxyDirectLine(env, { hook_event_name: 'SessionStart' });
+  assert.match(line, /^unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy ALL_PROXY all_proxy\n$/);
+  assert.strictEqual(H.proxyDirectLine(env, { hook_event_name: 'UserPromptSubmit' }), '');
+  assert.strictEqual(H.proxyDirectLine({ CLAUDE_ENV_FILE: '/x' }, { hook_event_name: 'SessionStart' }), '');
+  assert.strictEqual(H.proxyDirectLine({ SWARM_PROXY_DIRECT: '1' }, { hook_event_name: 'SessionStart' }), '');
+});
+
+test('хук сам дописывает снятие прокси в CLAUDE_ENV_FILE на SessionStart', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-envfile-'));
+  const file = path.join(dir, 'sessionstart-hook-0.sh');
+  execFileSync(process.execPath, [SCRIPT], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's1', source: 'startup' }),
+    env: Object.assign({}, process.env, { SWARM_PROXY_DIRECT: '1', CLAUDE_ENV_FILE: file }),
+    encoding: 'utf8',
+  });
+  assert.match(fs.readFileSync(file, 'utf8'), /^unset HTTPS_PROXY /);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

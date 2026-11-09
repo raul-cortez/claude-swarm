@@ -489,7 +489,7 @@ function subProxySyncNow() {
   let owned = {};
   try { owned = JSON.parse(fs.readFileSync(subProxyOwnedFile(), 'utf8')) || {}; } catch (_) { owned = {}; }
   const ownedWas = JSON.stringify(owned);
-  const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, (x, c) => relayUrl(normalizeProxy(x), !!(c && c.proxyAll)));
+  const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, (x) => relayUrl(normalizeProxy(x)));
   const homes = new Set([...want.keys(), ...Object.keys(owned)]);
   for (const home of homes) {
     const file = path.join(home, 'settings.json');
@@ -519,43 +519,34 @@ function subProxySyncNow() {
   }
 }
 
-// Local relays in front of subscription proxies (see proxy-relay.js for why). One per proxy and
-// mode: «only Claude through the proxy» (the default) and «all tab traffic» are different relays,
-// two subscriptions may share a proxy and differ in that.
-// Key -> { url, close } once listening, {} while starting. Tabs and the subscription's
+// Local relays in front of subscription proxies (see proxy-relay.js for why).
+// Real proxy URL -> { url, close } once listening, {} while starting. Tabs and the subscription's
 // settings.json get the relay address; geo and the tab's own record keep the real one.
 const proxyRelays = new Map();
 let proxyRelaysOff = false;
-function relayKey(real, all) { return all ? real + '|all' : real; }
-function relayUrl(real, all) {
-  const r = real ? proxyRelays.get(relayKey(real, all)) : null;
+function relayUrl(real) {
+  const r = real ? proxyRelays.get(real) : null;
   return (!proxyRelaysOff && r && r.url) || real;
 }
 function proxyRelaySync() {
-  const want = new Map();
-  for (const c of NETWORK_PROXIES) {
-    const u = normalizeProxy(c && c.proxy);
-    if (!proxyRelay.upstreamOf(u)) continue;
-    const all = !!(c && c.proxyAll);
-    want.set(relayKey(u, all), { u, all });
-  }
-  for (const [k, r] of proxyRelays) {
-    if (want.has(k)) continue;
-    proxyRelays.delete(k);
+  const want = new Set(NETWORK_PROXIES.map((c) => normalizeProxy(c && c.proxy)).filter((u) => proxyRelay.upstreamOf(u)));
+  for (const [u, r] of proxyRelays) {
+    if (want.has(u)) continue;
+    proxyRelays.delete(u);
     if (r.close) r.close();
   }
-  for (const [k, { u, all }] of want) {
-    if (proxyRelays.has(k)) continue;
+  for (const u of want) {
+    if (proxyRelays.has(u)) continue;
     const slot = {};
-    proxyRelays.set(k, slot);
-    proxyRelay.startRelay(u, proxyRelay.stablePort(k), { all }).then((r) => {
-      if (proxyRelays.get(k) !== slot) { r.close(); return; }
-      proxyRelays.set(k, r);
-      tgLog(`прокси подписки: посредник на ${r.url} (${all ? 'весь трафик' : 'только Claude'})`);
+    proxyRelays.set(u, slot);
+    proxyRelay.startRelay(u, proxyRelay.stablePort(u)).then((r) => {
+      if (proxyRelays.get(u) !== slot) { r.close(); return; }
+      proxyRelays.set(u, r);
+      tgLog(`прокси подписки: посредник на ${r.url}`);
       subProxySync();
     }).catch((e) => {
-      // Without a relay the tab simply talks to the proxy directly, as before — all of its traffic.
-      if (proxyRelays.get(k) === slot) proxyRelays.delete(k);
+      // Without a relay the tab simply talks to the proxy directly, as before.
+      if (proxyRelays.get(u) === slot) proxyRelays.delete(u);
       tgLog(`прокси подписки: посредник не поднялся (${e.message}) — вкладки ходят к прокси напрямую`);
     });
   }
@@ -7828,7 +7819,10 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   // не Клода, ей прокси не положен. Запоминаем во вкладке: по нему решается, замерзает ли она
   // (страна её выхода — страна прокси, см. geo.tabBlocked).
   const tabProxy = isPanel ? '' : normalizeProxy(subs.proxyFor(NETWORK_PROXIES, opts.command));
-  const tabProxyAll = !isPanel && subs.proxyAllFor(NETWORK_PROXIES, opts.command);
+  // Прокси — только самому Клоду: хук на старте сессии снимет прокси-переменные с его команд
+  // (git, npm, curl), см. proxyDirectLine в hooks/swarm-signal.mjs. Галка «весь трафик через
+  // прокси» в карточке подписки это отключает.
+  const tabProxyDirect = !!tabProxy && !subs.proxyAllFor(NETWORK_PROXIES, opts.command);
   const child = pty.spawn(shell, isWin ? [] : ['-l'], {
     name: 'xterm-256color',
     cols: opts.cols || 80,
@@ -7837,7 +7831,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy, tabProxyAll)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
+    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }), ...(tabProxyDirect ? { SWARM_PROXY_DIRECT: '1' } : {}) },
     // SWARM_TAB_ID — по нему хук находит свою вкладку в реестре соседей (peers.viewFor). Id
     // разговора для этого не годится: /clear и самоперезапуск меняют его, а pty — нет.
   });
