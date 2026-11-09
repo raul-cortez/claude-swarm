@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.80.2 — 2026-11-09
+
+- fix(transcript): stop the Telegram file hunt from stalling the whole app
+
 ## 0.80.1 — 2026-11-08
 
 - fix(proxy): local relay keeps VPN sniffers off a subscription's proxy
