@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.81.0 — 2026-11-09
+
+- feat(proxy): only Claude goes through a subscription's proxy, the rest goes direct
+
 ## 0.80.2 — 2026-11-09
 
 - fix(transcript): stop the Telegram file hunt from stalling the whole app
