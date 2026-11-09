@@ -1134,12 +1134,16 @@ test('хук сам дописывает посредника для коман�
   fs.copyFileSync(SCRIPT, staged);
   fs.writeFileSync(path.join(dir, 'swarm-proxy-split.json'), JSON.stringify({ 'http://127.0.0.1:21000': 'http://127.0.0.1:22000' }));
   const file = path.join(dir, 'sessionstart-hook-0.sh');
-  execFileSync(process.execPath, [staged], {
-    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's1', source: 'startup' }),
+  const fire = (source) => execFileSync(process.execPath, [staged], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's1', source }),
     env: Object.assign({}, process.env, { HTTPS_PROXY: 'http://127.0.0.1:21000', CLAUDE_ENV_FILE: file }),
     encoding: 'utf8',
   });
-  assert.match(fs.readFileSync(file, 'utf8'), /^export HTTPS_PROXY=http:\/\/127\.0\.0\.1:22000 /);
+  fire('startup');
+  fire('compact');
+  const body = fs.readFileSync(file, 'utf8');
+  assert.match(body, /^export HTTPS_PROXY=http:\/\/127\.0\.0\.1:22000 /);
+  assert.strictEqual(body.split('\n').filter(Boolean).length, 1, 'compact does not add the line again');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -489,7 +489,7 @@ function subProxySyncNow() {
   let owned = {};
   try { owned = JSON.parse(fs.readFileSync(subProxyOwnedFile(), 'utf8')) || {}; } catch (_) { owned = {}; }
   const ownedWas = JSON.stringify(owned);
-  const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, (x) => relayUrl(normalizeProxy(x)));
+  const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, (x, c) => relayUrl(normalizeProxy(x), !!(c && c.proxyAll)));
   const homes = new Set([...want.keys(), ...Object.keys(owned)]);
   for (const home of homes) {
     const file = path.join(home, 'settings.json');
@@ -519,17 +519,21 @@ function subProxySyncNow() {
   }
 }
 
-// Local relays in front of subscription proxies (see proxy-relay.js for why). Per http:// proxy:
-// the main relay (key = the real URL) for Claude itself — everything to the proxy; and, unless every
-// card with that proxy asks for «all traffic through the proxy», a split relay (key = URL + '|split')
-// for the commands Claude runs. Value: { url, close } once listening, {} while starting.
-// Tabs and the subscription's settings.json get the main relay address; geo and the tab's own
-// record keep the real one. Which commands use the split relay is decided by the hook, from
-// swarm-proxy-split.json: main relay address -> split relay address.
+// Local relays in front of subscription proxies (see proxy-relay.js for why). Per http:// proxy
+// three listeners, alive as long as the proxy is in the settings, whatever the cards' checkboxes say:
+// a running tab keeps the address it was given, and closing it under the tab would cut it off.
+//   key = real URL           — for Claude in a card with only Claude through the proxy (the default);
+//   key = real URL + '|all'  — for Claude in a card with «all traffic through the proxy»;
+//   key = real URL + '|split'— for the commands Claude runs: Anthropic to the proxy, the rest direct.
+// The first two are the same relay in behaviour (everything to the proxy); two addresses only so the
+// hook can tell them apart: swarm-proxy-split.json maps the first to the third, and the hook points
+// commands at it (proxyEnvLine in hooks/swarm-signal.mjs). Value: { url, close } once listening, {}
+// while starting. Tabs and the subscription's settings.json get the Claude relay; geo and the tab's
+// own record keep the real URL.
 const proxyRelays = new Map();
 let proxyRelaysOff = false;
-function relayUrl(real) {
-  const r = real ? proxyRelays.get(real) : null;
+function relayUrl(real, all) {
+  const r = real ? proxyRelays.get(all ? real + '|all' : real) : null;
   return (!proxyRelaysOff && r && r.url) || real;
 }
 function proxySplitFile() { return path.join(app.getPath('userData'), 'swarm-proxy-split.json'); }
@@ -537,45 +541,48 @@ function proxySplitWrite() {
   const map = {};
   if (!proxyRelaysOff) {
     for (const [k, r] of proxyRelays) {
-      if (!k.endsWith('|split') || !r.url) continue;
-      const main = proxyRelays.get(k.slice(0, -'|split'.length));
-      if (main && main.url) map[main.url] = r.url;
+      if (k.includes('|') || !r.url) continue;
+      const split = proxyRelays.get(k + '|split');
+      if (split && split.url) map[r.url] = split.url;
     }
   }
   try { fs.writeFileSync(proxySplitFile(), JSON.stringify(map)); } catch (e) { reportMainError(e); }
 }
+function proxyRelayStart(k, u, split) {
+  const slot = {};
+  proxyRelays.set(k, slot);
+  return proxyRelay.startRelay(u, proxyRelay.stablePort(k), { split }).then((r) => {
+    if (proxyRelays.get(k) !== slot) { r.close(); return false; }
+    proxyRelays.set(k, r);
+    tgLog(`прокси подписки: посредник ${split ? 'для команд Claude' : k.endsWith('|all') ? 'для Claude (весь трафик)' : 'для Claude'} на ${r.url}`);
+    return true;
+  }).catch((e) => {
+    if (proxyRelays.get(k) === slot) proxyRelays.delete(k);
+    tgLog(`прокси подписки: посредник ${split ? 'для команд Claude' : 'для Claude'} не поднялся (${e.message})`);
+    return false;
+  });
+}
 function proxyRelaySync() {
-  const want = new Map();   // key -> { u, split }
-  const allOf = new Map();  // real URL -> some card with it wants all traffic through the proxy
-  for (const c of NETWORK_PROXIES) {
-    const u = normalizeProxy(c && c.proxy);
-    if (!proxyRelay.upstreamOf(u)) continue;
-    want.set(u, { u, split: false });
-    allOf.set(u, allOf.get(u) || !!(c && c.proxyAll));
-  }
-  // Two cards on one proxy that disagree: the safer «all» wins.
-  for (const [u, all] of allOf) if (!all) want.set(u + '|split', { u, split: true });
+  const want = new Set(NETWORK_PROXIES.map((c) => normalizeProxy(c && c.proxy)).filter((u) => proxyRelay.upstreamOf(u)));
   for (const [k, r] of proxyRelays) {
-    if (want.has(k)) continue;
+    if (want.has(k.split('|')[0])) continue;
     proxyRelays.delete(k);
     if (r.close) r.close();
   }
-  for (const [k, { u, split }] of want) {
-    if (proxyRelays.has(k)) continue;
-    const slot = {};
-    proxyRelays.set(k, slot);
-    proxyRelay.startRelay(u, proxyRelay.stablePort(k), { split }).then((r) => {
-      if (proxyRelays.get(k) !== slot) { r.close(); return; }
-      proxyRelays.set(k, r);
-      tgLog(`прокси подписки: посредник ${split ? 'для команд (только Anthropic через прокси)' : 'для Claude'} на ${r.url}`);
-      proxySplitWrite();
-      if (!split) subProxySync();
-    }).catch((e) => {
-      // No main relay: the tab talks to the proxy directly, as before. No split relay: commands
-      // stay on the main one — everything through the proxy.
-      if (proxyRelays.get(k) === slot) proxyRelays.delete(k);
-      tgLog(`прокси подписки: посредник ${split ? 'для команд' : 'для Claude'} не поднялся (${e.message})`);
-    });
+  for (const u of want) {
+    if (proxyRelays.has(u)) continue;
+    // The command relay first, the Claude relay after it: a tab gets the Claude relay's address
+    // only once the map already points it at a live command relay, so no tab starts in between
+    // with its commands stuck on the proxy. No command relay — the Claude relay comes up anyway,
+    // and commands simply stay on the proxy.
+    const hold = {};
+    proxyRelays.set(u, hold);
+    proxyRelayStart(u + '|split', u, true)
+      .then(() => {
+        if (proxyRelays.get(u) !== hold) return null;   // the proxy left the settings meanwhile
+        return Promise.all([proxyRelayStart(u, u, false), proxyRelayStart(u + '|all', u, false)]);
+      })
+      .then(() => { proxySplitWrite(); subProxySync(); });
   }
   proxySplitWrite();
 }
@@ -7846,7 +7853,8 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   // Прокси подписки, чьей командой открыта вкладка. Панель терминала ⌘J — оболочка человека, а
   // не Клода, ей прокси не положен. Запоминаем во вкладке: по нему решается, замерзает ли она
   // (страна её выхода — страна прокси, см. geo.tabBlocked).
-  const tabProxy = isPanel ? '' : normalizeProxy(subs.proxyFor(NETWORK_PROXIES, opts.command));
+  const tabCard = isPanel ? null : subs.proxyCardFor(NETWORK_PROXIES, opts.command);
+  const tabProxy = tabCard ? normalizeProxy(tabCard.proxy) : '';
   const child = pty.spawn(shell, isWin ? [] : ['-l'], {
     name: 'xterm-256color',
     cols: opts.cols || 80,
@@ -7855,7 +7863,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
+    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy, !!(tabCard && tabCard.proxyAll))), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
     // SWARM_TAB_ID — по нему хук находит свою вкладку в реестре соседей (peers.viewFor). Id
     // разговора для этого не годится: /clear и самоперезапуск меняют его, а pty — нет.
   });

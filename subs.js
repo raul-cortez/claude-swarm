@@ -545,7 +545,6 @@ function proxyFor(list, command) {
   return found ? found.proxy : '';
 }
 
-
 function nameForHome(list, home) {
   const h = String(home || '').trim();
   if (!h) return '';
@@ -557,7 +556,7 @@ return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
-  pills, previewPills, menuRows, nameForHome, proxyFor,
+  pills, previewPills, menuRows, nameForHome, proxyFor, proxyCardFor,
   PROXY_TYPES, proxyParts, proxyUrl, proxyProblem,
 };
 

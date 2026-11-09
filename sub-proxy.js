@@ -30,12 +30,13 @@ function stemOf(text) {
 // Чего хотим для каждой папки конфига: адрес прокси, '' — явно напрямую. Папки, которых в
 // ответе нет, — «не наше дело» (своё в них снимается).
 // cards — [{ line, home }], proxies — [{ line, proxy }] (только включённые), normalize —
-// launch-line.normalizeProxy: неразборчивый адрес — то же, что его нет.
+// launch-line.normalizeProxy: неразборчивый адрес — то же, что его нет. normalize получает
+// вторым аргументом саму запись: main по ней выбирает посредника («весь трафик» или только Клод).
 function wanted(cards, proxies, normalize) {
   const norm = typeof normalize === 'function' ? normalize : (x) => String(x || '').trim();
   const byStem = new Map();
   for (const p of Array.isArray(proxies) ? proxies : []) {
-    const url = norm(p && p.proxy);
+    const url = norm(p && p.proxy, p);
     const stem = stemOf(p && p.line);
     if (url && stem && !byStem.has(stem)) byStem.set(stem, url);
   }

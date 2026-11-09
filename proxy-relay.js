@@ -66,8 +66,11 @@ function routeOf(target, split, blocked, now) {
   if (!split) return 'proxy';
   const a = splitAuthority(target);
   if (!a || isClaudeHost(a.host)) return 'proxy';
-  const until = blocked && blocked.get(a.host.toLowerCase());
-  return until && until > (now || Date.now()) ? 'proxy' : 'direct';
+  const key = a.host.toLowerCase();
+  const until = blocked && blocked.get(key);
+  if (until && until > (now || Date.now())) return 'proxy';
+  if (until) blocked.delete(key);   // expired: forget it, the map stays as small as the trouble
+  return 'direct';
 }
 
 function decode(v) { try { return decodeURIComponent(v); } catch (_) { return v; } }
@@ -151,8 +154,8 @@ function handle(client, up, opts) {
     const head = buf.slice(0, end).toString('latin1');
     const rest = buf.slice(end + 4);
     const route = planRequest(head);
-    const plan = route && rewriteHead(head, up);
-    if (!plan) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
+    if (!route) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
+    const plan = { connect: connectHead(route.target, up), then: route.request };
     let answered = false;
     const splice = () => { upstream.pipe(client); client.pipe(upstream); client.resume(); };
     // Before an answer the tab hears an honest 502. After it, a broken far side cuts the tab off,
@@ -235,6 +238,11 @@ function handle(client, up, opts) {
         if (route.request == null) client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         else s.write(route.request + '\r\n\r\n', 'latin1');
         if (rest.length) s.write(rest);
+        // A firewall or DPI box that lets TCP open and then resets it can't be undone here: the
+        // tab already has its tunnel. But the host is remembered, so the retry goes via the proxy.
+        let heard = false;
+        s.once('data', () => { heard = true; });
+        s.on('error', () => { if (!heard) blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS); });
         watch();
         splice();
       });

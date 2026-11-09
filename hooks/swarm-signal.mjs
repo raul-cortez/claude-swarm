@@ -1182,7 +1182,10 @@ async function main() {
         try {
           const map = JSON.parse(readFileSync(new URL('./swarm-proxy-split.json', import.meta.url), 'utf8'));
           const line = proxyEnvLine(process.env, payload, map);
-          if (line) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
+          // SessionStart приходит и на resume, /clear, compact — строку пишем один раз.
+          let had = '';
+          try { had = readFileSync(process.env.CLAUDE_ENV_FILE, 'utf8'); } catch (_) { had = ''; }
+          if (line && !had.includes(line)) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
         } catch (_) { /* нет карты или файла — команды остаются на прокси целиком */ }
       }
       // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале
