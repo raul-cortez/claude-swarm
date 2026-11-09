@@ -1467,8 +1467,18 @@ function rebindTarget(d, taken) {
 // Право сильнее прикреплённого id ровно одно: текст, который мост НАПЕЧАТАЛ сам. Метку
 // [тлг] с этой формулировкой никто в другой сессии не набирал, поэтому файл, где она лежит,
 // принадлежит этой вкладке — даже если его кто-то занял.
+//
+// Cost matters here: this runs on the main thread, and a folder like fastio holds a thousand
+// conversations across the configs. Reading every tail took ~300 ms, and with no throttle it ran
+// on every 500 ms tick for as long as the tab stayed unbound — the whole app stuttered (typing,
+// scroll, tab switches). So: at most once per TR_BIND_EVERY_MS, and only files written after the
+// text was typed — the text can't be in a file older than that.
 function stealByInjected(id, d, taken) {
   if (!d.tgLastSent || d.trFile) return null;
+  const now = Date.now();
+  if (now - (d.trStealAt || 0) < TR_BIND_EVERY_MS) return null;
+  d.trStealAt = now;
+  const since = (d.tgLastSentAt || 0) - transcript.BIND_MTIME_SLACK_MS;
   const names = [];
   for (const dir of projectDirs(d.cwd, d.claudeHome)) {
     try {
@@ -1480,6 +1490,7 @@ function stealByInjected(id, d, taken) {
   for (const file of names) {
     let userText = '';
     try {
+      if (fs.statSync(file).mtimeMs < since) continue;
       const entries = transcript.parseEntries(tailText(file, TR_TAIL_BYTES));
       if (transcript.cwdOf(entries) !== d.cwd) continue;
       userText = entries.filter((e) => e.type === 'user').map((e) => transcript.entryText(e)).join('\n');
@@ -3121,7 +3132,10 @@ function tgAnswer(id, text) {
   // ключ — вкладка отвечала из телеги, а найти свой файл ей было уже нечем.
   const dd = det.get(id);
   const typed = String(text).replace(/\r\n?/g, '\n');
-  if (dd && typed.trim().length >= transcript.INJECTED_MIN) dd.tgLastSent = typed.slice(0, 200);
+  if (dd && typed.trim().length >= transcript.INJECTED_MIN) {
+    dd.tgLastSent = typed.slice(0, 200);
+    dd.tgLastSentAt = Date.now();   // the text lands in the file after this — see stealByInjected
+  }
   typeAndSubmit(id, text, body, enter);
   const d = det.get(id);
   if (d) {
