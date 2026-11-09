@@ -125,6 +125,13 @@ test('proxyEnv ставит все четыре переменные и не т�
   assert.strictEqual(env.NO_PROXY, 'localhost,127.0.0.1,::1');
 });
 
+test('proxyEnv: метка «весь трафик» — 1 с галкой, пусто без неё, без прокси не трогается', () => {
+  assert.strictEqual(LL.proxyEnv({}, 'h:1', true).SWARM_PROXY_ALL, '1');
+  assert.strictEqual(LL.proxyEnv({ SWARM_PROXY_ALL: '1' }, 'h:1', false).SWARM_PROXY_ALL, '');
+  assert.ok(!('SWARM_PROXY_ALL' in LL.proxyEnv({}, '', true)));
+  assert.ok(!('SWARM_PROXY_ALL' in LL.tabEnv({ SWARM_PROXY_ALL: '1' })), 'чужая метка не наследуется');
+});
+
 test('proxyEnv дополняет свой NO_PROXY человека, а не затирает', () => {
   const env = LL.proxyEnv({ NO_PROXY: 'git.corp, localhost' }, 'h:1');
   assert.strictEqual(env.NO_PROXY, 'git.corp,localhost,127.0.0.1,::1');

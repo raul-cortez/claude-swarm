@@ -1099,7 +1099,7 @@ function allSubsNote(cards, snaps, nowSec) {
 // посредников (proxy-relay.js): основной — всё через прокси, на нём сам Клод; и «для команд» —
 // через прокси только хосты Anthropic, остальное напрямую. Рядом с этим скриптом лежит
 // swarm-proxy-split.json: адрес основного -> адрес посредника для команд (только у подписок без
-// галки «весь трафик через прокси»).
+// галки «весь трафик через прокси»: та ставит SWARM_PROXY_ALL=1 вкладке и в settings.json подписки).
 // На старте сессии смотрим, на каком прокси Клод НА САМОМ ДЕЛЕ (в env хука уже применён env из
 // settings.json подписки, проверено живьём), и если это основной посредник из карты — дописываем в
 // CLAUDE_ENV_FILE переключение на посредника для команд. Этот файл Клод исполняет перед каждой
@@ -1112,6 +1112,7 @@ const LOCAL_RELAY = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
 export function proxyEnvLine(env, payload, map) {
   if (!payload || payload.hook_event_name !== 'SessionStart') return '';
   if (!env || !env.CLAUDE_ENV_FILE || !map || typeof map !== 'object') return '';
+  if (env.SWARM_PROXY_ALL === '1') return '';   // галка «весь трафик через прокси»
   const cur = String(env.HTTPS_PROXY || env.https_proxy || '');
   if (!LOCAL_RELAY.test(cur) || !Object.prototype.hasOwnProperty.call(map, cur)) return '';
   const split = String(map[cur] || '');
@@ -1182,10 +1183,14 @@ async function main() {
         try {
           const map = JSON.parse(readFileSync(new URL('./swarm-proxy-split.json', import.meta.url), 'utf8'));
           const line = proxyEnvLine(process.env, payload, map);
-          // SessionStart приходит и на resume, /clear, compact — строку пишем один раз.
-          let had = '';
-          try { had = readFileSync(process.env.CLAUDE_ENV_FILE, 'utf8'); } catch (_) { had = ''; }
-          if (line && !had.includes(line)) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
+          // SessionStart приходит и на resume, /clear, compact. Дописываем, только если последняя
+          // строка файла не эта же: побеждает последний export, и устаревший адрес выше по файлу
+          // не должен остаться последним.
+          if (line) {
+            let had = '';
+            try { had = readFileSync(process.env.CLAUDE_ENV_FILE, 'utf8'); } catch (_) { had = ''; }
+            if (!had.endsWith(line)) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
+          }
         } catch (_) { /* нет карты или файла — команды остаются на прокси целиком */ }
       }
       // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале

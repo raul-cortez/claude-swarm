@@ -126,14 +126,6 @@ function planRequest(head) {
   return { target: authority, request };
 }
 
-function rewriteHead(head, up) {
-  const plan = planRequest(head);
-  if (!plan) return null;
-  return plan.request == null
-    ? { connect: connectHead(plan.target, up) }
-    : { connect: connectHead(plan.target, up), then: plan.request };
-}
-
 function handle(client, up, opts) {
   const split = !!(opts && opts.split);
   const blocked = (opts && opts.blocked) || new Map();
@@ -240,9 +232,16 @@ function handle(client, up, opts) {
         if (rest.length) s.write(rest);
         // A firewall or DPI box that lets TCP open and then resets it can't be undone here: the
         // tab already has its tunnel. But the host is remembered, so the retry goes via the proxy.
+        // Only the DPI pattern counts: a reset, before any byte back, within seconds of opening. A
+        // long-poll dropped later, or a Wi-Fi switch, must not send a host to the paid proxy.
         let heard = false;
+        const opened = Date.now();
         s.once('data', () => { heard = true; });
-        s.on('error', () => { if (!heard) blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS); });
+        s.on('error', (err) => {
+          if (!heard && err && err.code === 'ECONNRESET' && Date.now() - opened < DIRECT_TIMEOUT_MS) {
+            blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS);
+          }
+        });
         watch();
         splice();
       });
@@ -296,4 +295,4 @@ function stablePort(proxyUrl) {
   return 20000 + (h % 20000);
 }
 
-module.exports = { upstreamOf, planRequest, rewriteHead, routeOf, isClaudeHost, splitAuthority, startRelay, stablePort, CLAUDE_DOMAINS };
+module.exports = { upstreamOf, planRequest, connectHead, routeOf, isClaudeHost, splitAuthority, startRelay, stablePort, CLAUDE_DOMAINS };

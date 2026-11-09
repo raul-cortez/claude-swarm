@@ -1119,6 +1119,9 @@ test('proxyEnvLine: команды — на посредника для кома
   assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: '', CLAUDE_ENV_FILE: '/x' }, start, map), '');
   assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:23000', CLAUDE_ENV_FILE: '/x' }, start, map), '');
   assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:21000' }, start, map), '');
+  // Галка «весь трафик через прокси» — командам ничего не меняем.
+  assert.strictEqual(H.proxyEnvLine(Object.assign({ SWARM_PROXY_ALL: '1' }, env), start, map), '');
+  assert.notStrictEqual(H.proxyEnvLine(Object.assign({ SWARM_PROXY_ALL: '' }, env), start, map), '');
   // В строку для оболочки не попадает ничего, кроме адреса локального посредника.
   assert.strictEqual(H.proxyEnvLine(env, start, { 'http://127.0.0.1:21000': 'http://x; echo pwned' }), '');
 });

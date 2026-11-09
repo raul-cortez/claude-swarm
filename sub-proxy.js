@@ -20,6 +20,7 @@
 
 const PROXY_KEYS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'];
 const NO_PROXY_KEYS = ['NO_PROXY', 'no_proxy'];
+const ALL_KEY = 'SWARM_PROXY_ALL';
 const LOCAL_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
 
 function stemOf(text) {
@@ -30,13 +31,12 @@ function stemOf(text) {
 // Чего хотим для каждой папки конфига: адрес прокси, '' — явно напрямую. Папки, которых в
 // ответе нет, — «не наше дело» (своё в них снимается).
 // cards — [{ line, home }], proxies — [{ line, proxy }] (только включённые), normalize —
-// launch-line.normalizeProxy: неразборчивый адрес — то же, что его нет. normalize получает
-// вторым аргументом саму запись: main по ней выбирает посредника («весь трафик» или только Клод).
+// launch-line.normalizeProxy: неразборчивый адрес — то же, что его нет.
 function wanted(cards, proxies, normalize) {
   const norm = typeof normalize === 'function' ? normalize : (x) => String(x || '').trim();
   const byStem = new Map();
   for (const p of Array.isArray(proxies) ? proxies : []) {
-    const url = norm(p && p.proxy, p);
+    const url = norm(p && p.proxy);
     const stem = stemOf(p && p.line);
     if (url && stem && !byStem.has(stem)) byStem.set(stem, url);
   }
@@ -53,15 +53,32 @@ function wanted(cards, proxies, normalize) {
   return out;
 }
 
+// Папки, чья подписка просит «весь трафик через прокси» (галка в карточке). Рядом с адресом прокси
+// в их settings.json пишется SWARM_PROXY_ALL=1 — хук видит его, как бы Клода ни запустили.
+function wantedAll(cards, proxies) {
+  const allStems = new Set();
+  for (const p of Array.isArray(proxies) ? proxies : []) {
+    const stem = stemOf(p && p.line);
+    if (stem && p && p.proxyAll) allStems.add(stem);
+  }
+  const out = new Set();
+  for (const c of Array.isArray(cards) ? cards : []) {
+    const home = String((c && c.home) || '').trim();
+    if (home && allStems.has(stemOf(c.line))) out.add(home);
+  }
+  return out;
+}
+
 function mergeNoProxy(have) {
   const list = String(have || '').split(',').map((s) => s.trim()).filter(Boolean);
   return list.concat(LOCAL_NO_PROXY.filter((h) => !list.includes(h))).join(',');
 }
 
-// Новые настройки папки. want: адрес | '' (напрямую) | null (снять своё).
+// Новые настройки папки. want: адрес | '' (напрямую) | null (снять своё). all — у подписки галка
+// «весь трафик через прокси» (имеет смысл только вместе с адресом).
 // owned — { KEY: { set, prev } }: что мы записали и что стояло до нас (prev === undefined —
 // ключа не было). Возвращает { settings, owned, changed }; исходные объекты не меняет.
-function apply(settings, want, owned) {
+function apply(settings, want, owned, all) {
   const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
   const env0 = s.env && typeof s.env === 'object' && !Array.isArray(s.env) ? s.env : {};
   const env = Object.assign({}, env0);
@@ -84,6 +101,7 @@ function apply(settings, want, owned) {
     for (const k of Object.keys(mine)) restore(k);
   } else if (want) {
     for (const k of PROXY_KEYS) put(k, want);
+    put(ALL_KEY, all ? '1' : '');
     for (const k of NO_PROXY_KEYS) {
       const o = mine[k];
       const base = o && env[k] === o.set ? o.prev : env[k];
@@ -99,6 +117,7 @@ function apply(settings, want, owned) {
       put(k, '');
     }
     for (const k of NO_PROXY_KEYS) restore(k);
+    restore(ALL_KEY);
   }
 
   const next = Object.assign({}, s);
@@ -107,4 +126,4 @@ function apply(settings, want, owned) {
   return { settings: next, owned: mine, changed };
 }
 
-module.exports = { PROXY_KEYS, NO_PROXY_KEYS, wanted, apply, stemOf };
+module.exports = { PROXY_KEYS, NO_PROXY_KEYS, ALL_KEY, wanted, wantedAll, apply, stemOf };

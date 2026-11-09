@@ -67,12 +67,11 @@ test('planRequest: CONNECT keeps the target, plain HTTP becomes a tunnel + origi
   assert.strictEqual(relay.planRequest('GET /local HTTP/1.1\r\nHost: x'), null);
 });
 
-test('rewriteHead: Host names the proxy, auth comes from the real URL, the tab\'s auth is dropped', () => {
+test('connectHead: Host names the proxy, auth comes from the real URL (the tab\'s own is never forwarded)', () => {
   const up = relay.upstreamOf('http://e.n:p%40ss%3Aw@51.146.72.104:47897');
-  const r = relay.rewriteHead('CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\nProxy-Authorization: Basic bad', up);
-  assert.strictEqual(r.connect,
+  assert.strictEqual(relay.connectHead('api.anthropic.com:443', up),
     `CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: 51.146.72.104:47897\r\nProxy-Authorization: ${AUTH}`);
-  assert.strictEqual(r.then, undefined);
+  assert.strictEqual(relay.connectHead('h:1', relay.upstreamOf('http://p:2')), 'CONNECT h:1 HTTP/1.1\r\nHost: p:2');
 });
 
 test('upstreamOf: only http:// proxies are relayed', () => {

@@ -84,6 +84,9 @@ const INHERITED_SESSION_VARS = [
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_PID',
   'CLAUDE_EFFORT',
+  // Метка «весь трафик через прокси» вкладки, из которой запустили сам сворм: своя ставится
+  // вкладке заново (proxyEnv), чужая не должна доставаться вкладкам без прокси.
+  'SWARM_PROXY_ALL',
 ];
 
 function tabEnv(parentEnv) {
@@ -117,11 +120,15 @@ function normalizeProxy(raw) {
 // которые Клод зовёт по localhost. Через корпоративный прокси они бы просто пропали.
 const LOCAL_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
 
-function proxyEnv(env, proxy) {
+// all — у карточки галка «весь трафик через прокси»: SWARM_PROXY_ALL=1 говорит хуку не уводить
+// команды Клода на посредника для команд (см. proxyEnvLine в hooks/swarm-signal.mjs). Без галки
+// метка явно пустая — чтобы не досталась от чужой оболочки.
+function proxyEnv(env, proxy, all) {
   const out = Object.assign({}, env || {});
   const url = normalizeProxy(proxy);
   if (!url) return out;
   for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) out[name] = url;
+  out.SWARM_PROXY_ALL = all ? '1' : '';
   // Свой NO_PROXY человека дополняем, а не затираем: в нём могут быть внутренние хосты.
   const have = String(out.NO_PROXY || out.no_proxy || '').split(',').map((s) => s.trim()).filter(Boolean);
   const noProxy = have.concat(LOCAL_NO_PROXY.filter((h) => !have.includes(h))).join(',');

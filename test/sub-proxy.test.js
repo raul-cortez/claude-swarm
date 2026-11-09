@@ -24,6 +24,19 @@ test('a subscription with a proxy gets its address, the others go direct explici
   assert.ok(!w.has(''), 'a card whose folder is unknown is left alone');
 });
 
+test('«all traffic» marker: written next to the proxy, emptied without the box, removed when direct', () => {
+  assert.deepStrictEqual([...SP.wantedAll(CARDS, [{ line: 'claude-my', proxy: PX, proxyAll: true }])], ['/h/.claude-my']);
+  assert.strictEqual(SP.wantedAll(CARDS, [{ line: 'claude-my', proxy: PX }]).size, 0);
+  const a = SP.apply({}, PX, {}, true);
+  assert.strictEqual(a.settings.env.SWARM_PROXY_ALL, '1');
+  const b = SP.apply(a.settings, PX, a.owned, false);
+  assert.strictEqual(b.settings.env.SWARM_PROXY_ALL, '');
+  const c = SP.apply(b.settings, '', b.owned);
+  assert.ok(!('SWARM_PROXY_ALL' in c.settings.env));
+  const d = SP.apply(b.settings, null, b.owned);
+  assert.deepStrictEqual(d.settings, {});
+});
+
 test('nobody has a proxy — nothing to enforce', () => {
   assert.strictEqual(SP.wanted(CARDS, [], normalizeProxy).size, 0);
   assert.strictEqual(SP.wanted(CARDS, [{ line: 'claude-my', proxy: 'socks5://x:1' }], normalizeProxy).size, 0);
