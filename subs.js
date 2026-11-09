@@ -544,11 +544,7 @@ function proxyFor(list, command) {
   const found = proxyCardFor(list, command);
   return found ? found.proxy : '';
 }
-// Весь ли трафик вкладки этой командой идёт через прокси (а не только Клод).
-function proxyAllFor(list, command) {
-  const found = proxyCardFor(list, command);
-  return !!(found && found.proxyAll);
-}
+
 
 function nameForHome(list, home) {
   const h = String(home || '').trim();
@@ -561,7 +557,7 @@ return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
-  pills, previewPills, menuRows, nameForHome, proxyFor, proxyAllFor,
+  pills, previewPills, menuRows, nameForHome, proxyFor,
   PROXY_TYPES, proxyParts, proxyUrl, proxyProblem,
 };
 

@@ -1095,18 +1095,29 @@ function allSubsNote(cards, snaps, nowSec) {
   return `Подписки для найма исполнителей ("sub" в заявке): ${parts.join('; ')}.`;
 }
 
-// Прокси подписки — только для самого Клода. Сворм кладёт вкладке с прокси SWARM_PROXY_DIRECT=1
-// (если в карточке не отмечено «весь трафик через прокси»), и на старте сессии мы дописываем в
-// CLAUDE_ENV_FILE снятие прокси-переменных. Этот файл Клод исполняет перед каждой своей
-// bash-командой: git, npm, curl идут напрямую с мака, а сам Клод остаётся на прокси.
-// Сломается механизм — команды просто снова пойдут через прокси, как раньше; мимо прокси сам Клод
-// не уйдёт ни при каком сбое здесь. Проверено живьём на Claude Code 2.1.319, в том числе для
-// переменных из env в settings.json подписки.
-export const PROXY_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
-export function proxyDirectLine(env, payload) {
+// Прокси подписки — только для самого Клода. У каждого http-прокси подписки сворм держит двух
+// посредников (proxy-relay.js): основной — всё через прокси, на нём сам Клод; и «для команд» —
+// через прокси только хосты Anthropic, остальное напрямую. Рядом с этим скриптом лежит
+// swarm-proxy-split.json: адрес основного -> адрес посредника для команд (только у подписок без
+// галки «весь трафик через прокси»).
+// На старте сессии смотрим, на каком прокси Клод НА САМОМ ДЕЛЕ (в env хука уже применён env из
+// settings.json подписки, проверено живьём), и если это основной посредник из карты — дописываем в
+// CLAUDE_ENV_FILE переключение на посредника для команд. Этот файл Клод исполняет перед каждой
+// своей bash-командой: git, npm, curl идут через второго посредника, сам Клод остаётся на первом.
+// Решаем по прокси самого Клода, а не по тому, чем открыта вкладка: подписку, запущенную в чужой
+// вкладке стрелкой вверх, это не путает. Любой сбой здесь — команды остаются на основном
+// посреднике, то есть целиком на прокси; мимо прокси сам Клод не уходит никогда.
+export const PROXY_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'];
+const LOCAL_RELAY = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
+export function proxyEnvLine(env, payload, map) {
   if (!payload || payload.hook_event_name !== 'SessionStart') return '';
-  if (!env || env.SWARM_PROXY_DIRECT !== '1' || !env.CLAUDE_ENV_FILE) return '';
-  return `unset ${PROXY_VARS.join(' ')}\n`;
+  if (!env || !env.CLAUDE_ENV_FILE || !map || typeof map !== 'object') return '';
+  const cur = String(env.HTTPS_PROXY || env.https_proxy || '');
+  if (!LOCAL_RELAY.test(cur) || !Object.prototype.hasOwnProperty.call(map, cur)) return '';
+  const split = String(map[cur] || '');
+  // В файл уходит строка для оболочки: ничего, кроме адреса нашего посредника, туда не пускаем.
+  if (!LOCAL_RELAY.test(split)) return '';
+  return `export ${PROXY_VARS.map((k) => `${k}=${split}`).join(' ')}\n`;
 }
 
 // The files the app writes beside this script (all three live in userData).
@@ -1167,8 +1178,13 @@ async function main() {
   process.stdin.on('end', () => {
     try {
       const payload = JSON.parse(input || '{}');
-      const direct = proxyDirectLine(process.env, payload);
-      if (direct) { try { appendFileSync(process.env.CLAUDE_ENV_FILE, direct); } catch (_) { /* команды останутся на прокси */ } }
+      if (payload && payload.hook_event_name === 'SessionStart' && process.env.CLAUDE_ENV_FILE) {
+        try {
+          const map = JSON.parse(readFileSync(new URL('./swarm-proxy-split.json', import.meta.url), 'utf8'));
+          const line = proxyEnvLine(process.env, payload, map);
+          if (line) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
+        } catch (_) { /* нет карты или файла — команды остаются на прокси целиком */ }
+      }
       // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале
       // хода. На каждом PostToolUse обходить папку значило бы читать диск десятки раз за ход.
       const wantsUsage = payload && (payload.hook_event_name === 'UserPromptSubmit'

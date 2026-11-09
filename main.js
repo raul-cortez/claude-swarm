@@ -519,37 +519,65 @@ function subProxySyncNow() {
   }
 }
 
-// Local relays in front of subscription proxies (see proxy-relay.js for why).
-// Real proxy URL -> { url, close } once listening, {} while starting. Tabs and the subscription's
-// settings.json get the relay address; geo and the tab's own record keep the real one.
+// Local relays in front of subscription proxies (see proxy-relay.js for why). Per http:// proxy:
+// the main relay (key = the real URL) for Claude itself — everything to the proxy; and, unless every
+// card with that proxy asks for «all traffic through the proxy», a split relay (key = URL + '|split')
+// for the commands Claude runs. Value: { url, close } once listening, {} while starting.
+// Tabs and the subscription's settings.json get the main relay address; geo and the tab's own
+// record keep the real one. Which commands use the split relay is decided by the hook, from
+// swarm-proxy-split.json: main relay address -> split relay address.
 const proxyRelays = new Map();
 let proxyRelaysOff = false;
 function relayUrl(real) {
   const r = real ? proxyRelays.get(real) : null;
   return (!proxyRelaysOff && r && r.url) || real;
 }
+function proxySplitFile() { return path.join(app.getPath('userData'), 'swarm-proxy-split.json'); }
+function proxySplitWrite() {
+  const map = {};
+  if (!proxyRelaysOff) {
+    for (const [k, r] of proxyRelays) {
+      if (!k.endsWith('|split') || !r.url) continue;
+      const main = proxyRelays.get(k.slice(0, -'|split'.length));
+      if (main && main.url) map[main.url] = r.url;
+    }
+  }
+  try { fs.writeFileSync(proxySplitFile(), JSON.stringify(map)); } catch (e) { reportMainError(e); }
+}
 function proxyRelaySync() {
-  const want = new Set(NETWORK_PROXIES.map((c) => normalizeProxy(c && c.proxy)).filter((u) => proxyRelay.upstreamOf(u)));
-  for (const [u, r] of proxyRelays) {
-    if (want.has(u)) continue;
-    proxyRelays.delete(u);
+  const want = new Map();   // key -> { u, split }
+  const allOf = new Map();  // real URL -> some card with it wants all traffic through the proxy
+  for (const c of NETWORK_PROXIES) {
+    const u = normalizeProxy(c && c.proxy);
+    if (!proxyRelay.upstreamOf(u)) continue;
+    want.set(u, { u, split: false });
+    allOf.set(u, allOf.get(u) || !!(c && c.proxyAll));
+  }
+  // Two cards on one proxy that disagree: the safer «all» wins.
+  for (const [u, all] of allOf) if (!all) want.set(u + '|split', { u, split: true });
+  for (const [k, r] of proxyRelays) {
+    if (want.has(k)) continue;
+    proxyRelays.delete(k);
     if (r.close) r.close();
   }
-  for (const u of want) {
-    if (proxyRelays.has(u)) continue;
+  for (const [k, { u, split }] of want) {
+    if (proxyRelays.has(k)) continue;
     const slot = {};
-    proxyRelays.set(u, slot);
-    proxyRelay.startRelay(u, proxyRelay.stablePort(u)).then((r) => {
-      if (proxyRelays.get(u) !== slot) { r.close(); return; }
-      proxyRelays.set(u, r);
-      tgLog(`прокси подписки: посредник на ${r.url}`);
-      subProxySync();
+    proxyRelays.set(k, slot);
+    proxyRelay.startRelay(u, proxyRelay.stablePort(k), { split }).then((r) => {
+      if (proxyRelays.get(k) !== slot) { r.close(); return; }
+      proxyRelays.set(k, r);
+      tgLog(`прокси подписки: посредник ${split ? 'для команд (только Anthropic через прокси)' : 'для Claude'} на ${r.url}`);
+      proxySplitWrite();
+      if (!split) subProxySync();
     }).catch((e) => {
-      // Without a relay the tab simply talks to the proxy directly, as before.
-      if (proxyRelays.get(u) === slot) proxyRelays.delete(u);
-      tgLog(`прокси подписки: посредник не поднялся (${e.message}) — вкладки ходят к прокси напрямую`);
+      // No main relay: the tab talks to the proxy directly, as before. No split relay: commands
+      // stay on the main one — everything through the proxy.
+      if (proxyRelays.get(k) === slot) proxyRelays.delete(k);
+      tgLog(`прокси подписки: посредник ${split ? 'для команд' : 'для Claude'} не поднялся (${e.message})`);
     });
   }
+  proxySplitWrite();
 }
 
 // The launcher of a command line — first real token, skipping `VAR=value` prefixes.
@@ -7819,10 +7847,6 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
   // не Клода, ей прокси не положен. Запоминаем во вкладке: по нему решается, замерзает ли она
   // (страна её выхода — страна прокси, см. geo.tabBlocked).
   const tabProxy = isPanel ? '' : normalizeProxy(subs.proxyFor(NETWORK_PROXIES, opts.command));
-  // Прокси — только самому Клоду: хук на старте сессии снимет прокси-переменные с его команд
-  // (git, npm, curl), см. proxyDirectLine в hooks/swarm-signal.mjs. Галка «весь трафик через
-  // прокси» в карточке подписки это отключает.
-  const tabProxyDirect = !!tabProxy && !subs.proxyAllFor(NETWORK_PROXIES, opts.command);
   const child = pty.spawn(shell, isWin ? [] : ['-l'], {
     name: 'xterm-256color',
     cols: opts.cols || 80,
@@ -7831,7 +7855,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }), ...(tabProxyDirect ? { SWARM_PROXY_DIRECT: '1' } : {}) },
+    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
     // SWARM_TAB_ID — по нему хук находит свою вкладку в реестре соседей (peers.viewFor). Id
     // разговора для этого не годится: /clear и самоперезапуск меняют его, а pty — нет.
   });
@@ -8675,6 +8699,7 @@ app.on('will-quit', () => {
   // a Claude started by hand while Swarm is closed still has a way out.
   proxyRelaysOff = true;
   try { subProxySyncNow(); } catch (e) { reportMainError(e); }
+  proxySplitWrite();
   for (const r of proxyRelays.values()) if (r.close) r.close();
   geoThaw(true);   // остановленные агенты иначе пережили бы приложение; ждать таймера на выходе некогда
   for (const [id, d] of det) restartSweepCwd(id, d);

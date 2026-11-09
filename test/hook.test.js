@@ -1108,24 +1108,38 @@ test('allSubsNote: нет карточек с именами — молчит', 
   assert.strictEqual(H.allSubsNote([{ name: '', home: '/h' }], [], 0), '');
 });
 
-test('proxyDirectLine: только на старте сессии, только с меткой сворма и файлом окружения', () => {
-  const env = { SWARM_PROXY_DIRECT: '1', CLAUDE_ENV_FILE: '/x' };
-  const line = H.proxyDirectLine(env, { hook_event_name: 'SessionStart' });
-  assert.match(line, /^unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy ALL_PROXY all_proxy\n$/);
-  assert.strictEqual(H.proxyDirectLine(env, { hook_event_name: 'UserPromptSubmit' }), '');
-  assert.strictEqual(H.proxyDirectLine({ CLAUDE_ENV_FILE: '/x' }, { hook_event_name: 'SessionStart' }), '');
-  assert.strictEqual(H.proxyDirectLine({ SWARM_PROXY_DIRECT: '1' }, { hook_event_name: 'SessionStart' }), '');
+test('proxyEnvLine: команды — на посредника для команд, только если сам Клод на основном', () => {
+  const map = { 'http://127.0.0.1:21000': 'http://127.0.0.1:22000' };
+  const env = { HTTPS_PROXY: 'http://127.0.0.1:21000', CLAUDE_ENV_FILE: '/x' };
+  const start = { hook_event_name: 'SessionStart' };
+  assert.strictEqual(H.proxyEnvLine(env, start, map),
+    'export HTTPS_PROXY=http://127.0.0.1:22000 HTTP_PROXY=http://127.0.0.1:22000 https_proxy=http://127.0.0.1:22000 http_proxy=http://127.0.0.1:22000\n');
+  assert.strictEqual(H.proxyEnvLine(env, { hook_event_name: 'UserPromptSubmit' }, map), '');
+  // Подписка без прокси (в её settings.json пусто) или с «весь трафик» (её нет в карте) — молчим.
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: '', CLAUDE_ENV_FILE: '/x' }, start, map), '');
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:23000', CLAUDE_ENV_FILE: '/x' }, start, map), '');
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:21000' }, start, map), '');
+  // В строку для оболочки не попадает ничего, кроме адреса локального посредника.
+  assert.strictEqual(H.proxyEnvLine(env, start, { 'http://127.0.0.1:21000': 'http://x; echo pwned' }), '');
 });
 
-test('хук сам дописывает снятие прокси в CLAUDE_ENV_FILE на SessionStart', () => {
+test('PROXY_VARS хука совпадают с переменными, которые сворм ставит вкладке и подписке', () => {
+  const SP = require('../sub-proxy');
+  assert.deepStrictEqual([...H.PROXY_VARS].sort(), [...SP.PROXY_KEYS].sort());
+});
+
+test('хук сам дописывает посредника для команд в CLAUDE_ENV_FILE на SessionStart', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-envfile-'));
+  const staged = path.join(dir, 'swarm-signal.mjs');
+  fs.copyFileSync(SCRIPT, staged);
+  fs.writeFileSync(path.join(dir, 'swarm-proxy-split.json'), JSON.stringify({ 'http://127.0.0.1:21000': 'http://127.0.0.1:22000' }));
   const file = path.join(dir, 'sessionstart-hook-0.sh');
-  execFileSync(process.execPath, [SCRIPT], {
+  execFileSync(process.execPath, [staged], {
     input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's1', source: 'startup' }),
-    env: Object.assign({}, process.env, { SWARM_PROXY_DIRECT: '1', CLAUDE_ENV_FILE: file }),
+    env: Object.assign({}, process.env, { HTTPS_PROXY: 'http://127.0.0.1:21000', CLAUDE_ENV_FILE: file }),
     encoding: 'utf8',
   });
-  assert.match(fs.readFileSync(file, 'utf8'), /^unset HTTPS_PROXY /);
+  assert.match(fs.readFileSync(file, 'utf8'), /^export HTTPS_PROXY=http:\/\/127\.0\.0\.1:22000 /);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

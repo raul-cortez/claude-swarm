@@ -21,18 +21,54 @@
 // The bytes after the head (TLS to Anthropic) pass through as they are: Swarm can't read them.
 //
 // For a proxy nobody sniffs (no VPN, VPN in plain tunnel mode) the edits change nothing: a proxy
-// ignores Host on CONNECT. An https:// proxy hides the CONNECT inside TLS, so there is nothing
-// to sniff, but it gets a relay too: the same address scheme for every subscription, and the
-// login stays out of the tab's environment.
+// ignores Host on CONNECT. Only http:// proxies get a relay — an https:// proxy hides the CONNECT
+// inside TLS, there is nothing to sniff. (Relaying one would also mean Swarm's own TLS to the
+// proxy, with Node's CA list instead of the one Claude trusts — a corporate CA would break.)
 //
-// Everything that reaches the relay goes to the proxy. Which traffic reaches it is decided
-// elsewhere: commands Claude runs (git, npm, curl) have the proxy variables removed by the Swarm
-// hook (SWARM_PROXY_DIRECT in hooks/swarm-signal.mjs), so only Claude itself comes here.
+// Two relays per proxy:
+//  - the main one (split off) sends everything to the proxy. Claude itself talks to it: whatever
+//    host Claude calls, it never leaves the proxy.
+//  - the split one is for the commands Claude runs — git, gh, npm, curl. The Swarm hook points
+//    their proxy variables here (hooks/swarm-signal.mjs, proxyEnvLine). Anthropic's hosts still go
+//    to the proxy (a nested `claude -p`, curl to the API); everything else goes straight from the
+//    Mac. If the direct way fails (a corporate firewall that only lets the proxy out, a name only
+//    the proxy can resolve), the connection quietly goes through the proxy after all, and that
+//    host goes through the proxy for a while without trying again.
+// If the hook never runs, commands keep the main relay: slower, never Claude off the proxy.
 
 const net = require('net');
-const tls = require('tls');
 
 const MAX_HEAD = 64 * 1024;
+const DIRECT_TIMEOUT_MS = 4000;          // a firewall that drops instead of refusing
+const DIRECT_BLOCKED_MS = 10 * 60 * 1000; // how long a host that failed direct skips the attempt
+
+// Anthropic's hosts: in split mode they still ride the proxy. A domain matches itself and every
+// subdomain. A host missing here only means a command reaches it directly — Claude itself is on
+// the main relay and never depends on this list.
+const CLAUDE_DOMAINS = ['anthropic.com', 'claude.ai', 'claude.com'];
+
+function isClaudeHost(host) {
+  const h = String(host || '').toLowerCase().replace(/\.$/, '');
+  return CLAUDE_DOMAINS.some((d) => h === d || h.endsWith('.' + d));
+}
+
+// "host:port" / "[v6]:port" -> { host, port }. null — not an authority.
+function splitAuthority(target) {
+  const m = /^\[([^\]]+)\]:(\d+)$/.exec(target) || /^([^:\s]+):(\d+)$/.exec(target);
+  if (!m) return null;
+  const port = Number(m[2]);
+  return port > 0 && port < 65536 ? { host: m[1], port } : null;
+}
+
+// Which way a request goes first: 'proxy' or 'direct'. Pure, for tests. blocked — host -> time
+// until which direct is not tried.
+function routeOf(target, split, blocked, now) {
+  if (!split) return 'proxy';
+  const a = splitAuthority(target);
+  if (!a || isClaudeHost(a.host)) return 'proxy';
+  const until = blocked && blocked.get(a.host.toLowerCase());
+  return until && until > (now || Date.now()) ? 'proxy' : 'direct';
+}
 
 function decode(v) { try { return decodeURIComponent(v); } catch (_) { return v; } }
 
@@ -40,14 +76,12 @@ function decode(v) { try { return decodeURIComponent(v); } catch (_) { return v;
 function upstreamOf(proxyUrl) {
   let u;
   try { u = new URL(String(proxyUrl || '')); } catch (_) { return null; }
-  if (!/^https?:$/.test(u.protocol) || !u.hostname) return null;
-  const secure = u.protocol === 'https:';
-  const port = Number(u.port) || (secure ? 443 : 80);
+  if (u.protocol !== 'http:' || !u.hostname) return null;
+  const port = Number(u.port) || 80;
   const host = u.hostname;   // IPv6 stays bracketed in URL.hostname
   return {
     host: host.replace(/^\[|\]$/g, ''),
     port,
-    secure,
     authority: `${host}:${port}`,
     auth: u.username ? 'Basic ' + Buffer.from(`${decode(u.username)}:${decode(u.password)}`).toString('base64') : '',
   };
@@ -97,14 +131,9 @@ function rewriteHead(head, up) {
     : { connect: connectHead(plan.target, up), then: plan.request };
 }
 
-function connectUpstream(up, onReady) {
-  if (!up.secure) return net.connect(up.port, up.host, onReady);
-  const opts = { host: up.host, port: up.port };
-  if (!net.isIP(up.host)) opts.servername = up.host;
-  return tls.connect(opts, onReady);
-}
-
-function handle(client, up) {
+function handle(client, up, opts) {
+  const split = !!(opts && opts.split);
+  const blocked = (opts && opts.blocked) || new Map();
   client.setNoDelay(true);
   let buf = Buffer.alloc(0);
   let upstream = null;
@@ -119,60 +148,116 @@ function handle(client, up) {
     }
     client.removeListener('data', onData);
     client.pause();
-    const plan = rewriteHead(buf.slice(0, end).toString('latin1'), up);
+    const head = buf.slice(0, end).toString('latin1');
     const rest = buf.slice(end + 4);
+    const route = planRequest(head);
+    const plan = route && rewriteHead(head, up);
     if (!plan) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
     let answered = false;
     const splice = () => { upstream.pipe(client); client.pipe(upstream); client.resume(); };
-    upstream = connectUpstream(up, () => {
-      upstream.setNoDelay(true);
-      if (plan.then == null) {
-        // A tunnel: the proxy's answer and everything after it are the tab's business.
-        upstream.write(Buffer.concat([Buffer.from(plan.connect + '\r\n\r\n', 'latin1'), rest]));
-        upstream.once('data', () => { answered = true; });
-        splice();
-        return;
-      }
-      // Plain HTTP inside a tunnel: wait for the proxy's 200, swallow it, then send the request.
-      upstream.write(plan.connect + '\r\n\r\n', 'latin1');
-      let got = Buffer.alloc(0);
-      const onReply = (c) => {
-        got = Buffer.concat([got, c]);
-        const e = got.indexOf('\r\n\r\n');
-        if (e === -1) { if (got.length > MAX_HEAD) upstream.destroy(); return; }
-        upstream.removeListener('data', onReply);
-        answered = true;
-        if (!/^HTTP\/\d(?:\.\d)?\s+200\b/.test(got.slice(0, e).toString('latin1'))) {
-          client.end(got);   // 407, 403, 502 … — the proxy's own answer is the most honest one
-          upstream.destroy();
+    // Before an answer the tab hears an honest 502. After it, a broken far side cuts the tab off,
+    // a closed one ends it gently — destroy() could drop the last bytes still in the buffer.
+    const watch = () => {
+      upstream.on('error', () => {
+        if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        else client.destroy();
+      });
+      upstream.on('close', () => {
+        if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        else client.end();
+      });
+    };
+
+    const viaProxy = () => {
+      if (client.destroyed) return;
+      upstream = net.connect(up.port, up.host, () => {
+        upstream.setNoDelay(true);
+        if (plan.then == null) {
+          // A tunnel: the proxy's answer and everything after it are the tab's business.
+          upstream.write(Buffer.concat([Buffer.from(plan.connect + '\r\n\r\n', 'latin1'), rest]));
+          upstream.once('data', () => { answered = true; });
+          splice();
           return;
         }
-        const after = got.slice(e + 4);
-        if (after.length) client.write(after);
-        upstream.write(Buffer.concat([Buffer.from(plan.then + '\r\n\r\n', 'latin1'), rest]));
-        splice();
+        // Plain HTTP inside a tunnel: wait for the proxy's 200, swallow it, then send the request.
+        upstream.write(plan.connect + '\r\n\r\n', 'latin1');
+        let got = Buffer.alloc(0);
+        const onReply = (c) => {
+          got = Buffer.concat([got, c]);
+          const e = got.indexOf('\r\n\r\n');
+          if (e === -1) { if (got.length > MAX_HEAD) upstream.destroy(); return; }
+          upstream.removeListener('data', onReply);
+          answered = true;
+          if (!/^HTTP\/\d(?:\.\d)?\s+200\b/.test(got.slice(0, e).toString('latin1'))) {
+            client.end(got);   // 407, 403, 502 … — the proxy's own answer is the most honest one
+            upstream.destroy();
+            return;
+          }
+          const after = got.slice(e + 4);
+          if (after.length) client.write(after);
+          upstream.write(Buffer.concat([Buffer.from(plan.then + '\r\n\r\n', 'latin1'), rest]));
+          splice();
+        };
+        upstream.on('data', onReply);
+      });
+      watch();
+    };
+
+    // Straight from the Mac. Nothing has been said to the tab until the socket is up, so a failure
+    // here can still turn into the proxy way without the tab noticing anything but a delay.
+    const viaDirect = () => {
+      const a = splitAuthority(route.target);
+      let settled = false;
+      const s = net.connect(a.port, a.host);
+      upstream = s;
+      const giveUp = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        s.removeAllListeners('error');
+        s.on('error', () => {});
+        s.destroy();
+        // The tab hung up while we were trying: nothing failed, nothing to remember.
+        if (client.destroyed) return;
+        blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS);
+        viaProxy();
       };
-      upstream.on('data', onReply);
-    });
-    upstream.on('error', () => {
-      if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-      else client.destroy();
-    });
-    upstream.on('close', () => { if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); else client.destroy(); });
+      const timer = setTimeout(giveUp, DIRECT_TIMEOUT_MS);
+      client.once('close', () => { if (!settled) giveUp(); });
+      s.once('error', giveUp);
+      s.once('connect', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        s.removeListener('error', giveUp);
+        s.setNoDelay(true);
+        answered = true;
+        if (route.request == null) client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        else s.write(route.request + '\r\n\r\n', 'latin1');
+        if (rest.length) s.write(rest);
+        watch();
+        splice();
+      });
+    };
+
+    if (routeOf(route.target, split, blocked) === 'direct') viaDirect(); else viaProxy();
   };
   client.on('data', onData);
 }
 
 // Listen on 127.0.0.1:port (0 — any free port; a taken port falls back to any). Resolves with
-// { url, port, close }; rejects if the proxy URL isn't one we relay.
-function startRelay(proxyUrl, port) {
+// { url, port, close }; rejects if the proxy URL isn't one we relay. opts.split — the relay for
+// commands (see the top of the file).
+function startRelay(proxyUrl, port, opts) {
+  const split = !!(opts && opts.split);
+  const blocked = new Map();
   const up = upstreamOf(proxyUrl);
   if (!up) return Promise.reject(new Error('not an http proxy'));
   const open = new Set();
   const server = net.createServer((c) => {
     open.add(c);
     c.on('close', () => open.delete(c));
-    handle(c, up);
+    handle(c, up, { split, blocked });
   });
   const listen = (p) => new Promise((resolve, reject) => {
     const onErr = (e) => { server.removeListener('listening', onOk); reject(e); };
@@ -203,4 +288,4 @@ function stablePort(proxyUrl) {
   return 20000 + (h % 20000);
 }
 
-module.exports = { upstreamOf, planRequest, rewriteHead, startRelay, stablePort };
+module.exports = { upstreamOf, planRequest, rewriteHead, routeOf, isClaudeHost, splitAuthority, startRelay, stablePort, CLAUDE_DOMAINS };

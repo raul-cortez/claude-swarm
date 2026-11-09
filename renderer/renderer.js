@@ -3269,7 +3269,7 @@ function showSettingsModal(tab) {
           <input type="checkbox" class="sub-proxy-all" />
           <span class="set-check-tx">весь трафик через прокси, не только Claude</span>
         </label>
-        <span class="sub-proxy-hint">Без галочки через прокси ходит только сам Claude, а команды, которые он запускает, — git, npm, curl — напрямую, как из обычного терминала.</span>
+        <span class="sub-proxy-hint"></span>
       </div>`;
     const lineI = row.querySelector('.sub-line');
     const nameI = row.querySelector('.sub-name');
@@ -3293,8 +3293,17 @@ function showSettingsModal(tab) {
     row.querySelector('.sub-proxy-pass').value = px.pass;
     row.querySelector('.sub-proxy-all').checked = !!c.proxyAll;
     proxyOnI.checked = !!c.proxyOn;
+    const proxyAllRow = row.querySelector('.sub-proxy-all-row');
+    const proxyHintEl = row.querySelector('.sub-proxy-hint');
     const syncProxy = () => {
       proxyBox.hidden = !proxyOnI.checked;
+      // Делить трафик умеет только посредник сворма, а он стоит лишь перед HTTP-прокси (см.
+      // proxy-relay.js): у HTTPS-прокси выбора нет, и галочка, которая ничего не меняет, врала бы.
+      const https = row.querySelector('.sub-proxy-type').value === 'https';
+      proxyAllRow.hidden = https;
+      proxyHintEl.textContent = https
+        ? 'Через HTTPS-прокси идёт весь трафик вкладки: и Claude, и команды, которые он запускает.'
+        : 'Без галочки через прокси ходит только сам Claude, а команды, которые он запускает, — git, npm, curl — напрямую, как из обычного терминала. Если напрямую куда-то не пускает, команда сама пойдёт через прокси. Действует на вкладки, открытые после сохранения.';
       const problem = proxyOnI.checked ? SUBS_API.proxyProblem(proxyPartsOf(row)) : '';
       proxyNoteEl.textContent = problem;
       proxyNoteEl.hidden = !problem;

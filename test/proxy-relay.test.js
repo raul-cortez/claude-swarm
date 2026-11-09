@@ -34,6 +34,7 @@ async function stand() {
       up.pipe(client); client.pipe(up);
     });
     up.on('error', () => client.destroy());
+    client.on('close', () => up.destroy());   // a tunnel the test leaves open must not keep node alive
   });
   const open = new Set();
   proxy.on('connection', (c) => { open.add(c); c.on('close', () => open.delete(c)); });
@@ -74,14 +75,91 @@ test('rewriteHead: Host names the proxy, auth comes from the real URL, the tab\'
   assert.strictEqual(r.then, undefined);
 });
 
-test('upstreamOf: http:// and https:// proxies are relayed, nothing else', () => {
-  assert.strictEqual(relay.upstreamOf('https://h:1').secure, true);
-  assert.strictEqual(relay.upstreamOf('https://h').authority, 'h:443');
-  assert.strictEqual(relay.upstreamOf('http://h:1').secure, false);
+test('upstreamOf: only http:// proxies are relayed', () => {
+  assert.strictEqual(relay.upstreamOf('https://h:1'), null);
   assert.strictEqual(relay.upstreamOf('socks5://h:1'), null);
   assert.strictEqual(relay.upstreamOf('nonsense'), null);
   assert.strictEqual(relay.upstreamOf('http://h').authority, 'h:80');
   assert.strictEqual(relay.upstreamOf('http://h:8').auth, '');
+});
+
+test('isClaudeHost / routeOf: split sends Anthropic to the proxy, the rest direct; main relay — all to the proxy', () => {
+  for (const h of ['api.anthropic.com', 'anthropic.com', 'claude.ai', 'CLAUDE.AI.', 'claude.com']) assert.ok(relay.isClaudeHost(h), h);
+  for (const h of ['github.com', 'notanthropic.com', 'anthropic.com.evil.io', '']) assert.ok(!relay.isClaudeHost(h), h);
+  assert.strictEqual(relay.routeOf('api.anthropic.com:443', true), 'proxy');
+  assert.strictEqual(relay.routeOf('github.com:443', true), 'direct');
+  assert.strictEqual(relay.routeOf('github.com:443', false), 'proxy');
+  const blocked = new Map([['github.com', 2000]]);
+  assert.strictEqual(relay.routeOf('GitHub.com:443', true, new Map([['github.com', Infinity]])), 'proxy');
+  assert.strictEqual(relay.routeOf('github.com:443', true, blocked, 1000), 'proxy');
+  assert.strictEqual(relay.routeOf('github.com:443', true, blocked, 3000), 'direct');
+  assert.deepStrictEqual(relay.splitAuthority('[::1]:8080'), { host: '::1', port: 8080 });
+  assert.strictEqual(relay.splitAuthority('nohost'), null);
+});
+
+test('split: a non-Anthropic CONNECT goes straight to the target, the proxy never hears of it', async () => {
+  const s = await stand();
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    const got = await talk(r.port,
+      `CONNECT 127.0.0.1:${s.targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${s.targetPort}\r\n\r\n`
+      + `GET /gh HTTP/1.1\r\nHost: github.test\r\nConnection: close\r\n\r\n`);
+    assert.match(got, /^HTTP\/1\.1 200 Connection Established/);
+    assert.match(got, /path=\/gh host=github\.test/);
+    assert.strictEqual(s.seen.length, 0);
+  } finally { r.close(); s.close(); }
+});
+
+test('split: plain HTTP to a non-Anthropic host goes direct as an origin-form request', async () => {
+  const s = await stand();
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    const got = await talk(r.port, `GET http://127.0.0.1:${s.targetPort}/p?q=1 HTTP/1.1\r\nHost: 127.0.0.1:${s.targetPort}\r\n\r\n`);
+    assert.match(got, /^HTTP\/1\.1 200 OK/);
+    assert.match(got, /path=\/p\?q=1 /);
+    assert.strictEqual(s.seen.length, 0);
+  } finally { r.close(); s.close(); }
+});
+
+test('split: Anthropic still goes through the proxy with its credentials', async () => {
+  const s = await stand();
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    const got = await talk(r.port,
+      `CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\n\r\n`
+      + `GET /v1 HTTP/1.1\r\nHost: api.anthropic.com\r\nConnection: close\r\n\r\n`);
+    assert.match(got, /^HTTP\/1\.1 200 Connection Established/);
+    assert.match(got, /path=\/v1 host=api\.anthropic\.com/);
+    assert.deepStrictEqual(s.seen[0], { path: 'api.anthropic.com:443', host: `127.0.0.1:${s.proxyPort}`, auth: AUTH });
+  } finally { r.close(); s.close(); }
+});
+
+test('split: direct refused (corporate firewall) — the same request quietly goes through the proxy', async () => {
+  const s = await stand();
+  const dead = net.createServer();
+  const deadPort = await listen(dead);
+  dead.close();
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    // The stand's proxy sends every tunnel to its local service, so a reply proves the proxy way.
+    const got = await talk(r.port,
+      `CONNECT 127.0.0.1:${deadPort} HTTP/1.1\r\n\r\n`
+      + `GET /fallback HTTP/1.1\r\nHost: inner.corp\r\nConnection: close\r\n\r\n`);
+    assert.match(got, /^HTTP\/1\.1 200 Connection Established/);
+    assert.match(got, /path=\/fallback host=inner\.corp/);
+    assert.strictEqual(s.seen.length, 1);
+    assert.strictEqual(s.seen[0].path, `127.0.0.1:${deadPort}`);
+  } finally { r.close(); s.close(); }
+});
+
+test('split: an unresolvable name goes through the proxy too', async () => {
+  const s = await stand();
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    const got = await talk(r.port, `CONNECT only-the-proxy-knows.invalid:443 HTTP/1.1\r\n\r\n`);
+    assert.match(got, /^HTTP\/1\.1 200 Connection Established/);
+    assert.strictEqual(s.seen[0].path, 'only-the-proxy-knows.invalid:443');
+  } finally { r.close(); s.close(); }
 });
 
 test('stablePort: same proxy, same port, inside 20000–39999', () => {

@@ -84,9 +84,6 @@ const INHERITED_SESSION_VARS = [
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_PID',
   'CLAUDE_EFFORT',
-  // Метка «прокси — только Клоду» вкладки, из которой запустили сам сворм: вкладке без прокси
-  // она бы сняла прокси человека с команд. Свою сворм ставит заново, когда она нужна.
-  'SWARM_PROXY_DIRECT',
 ];
 
 function tabEnv(parentEnv) {
