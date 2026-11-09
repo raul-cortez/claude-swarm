@@ -1980,6 +1980,8 @@ body.night-all .night-pill {
 .sub-row .sub-proxy-port { width: 6rem; flex: none; }
 .sub-row .sub-proxy-note { grid-column: 1 / -1; font-size: 11px; color: var(--danger); }
 .sub-row .sub-proxy-note[hidden] { display: none; }
+.sub-row .sub-proxy-all-row { grid-column: 1 / -1; margin-top: 2px; }
+.sub-row .sub-proxy-hint { grid-column: 1 / -1; margin: -4px 0 0 26px; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .sub-row .sub-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .sub-row .sub-note[hidden] { display: none; }
 .subs-preview {

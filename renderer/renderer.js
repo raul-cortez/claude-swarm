@@ -968,14 +968,14 @@ function saveLaunch() {
 // Прокси подписок для main: только те, где он задан. Разбор и проверка строки — в main
 // (launch-line.normalizeProxy), здесь только выбор человека.
 function proxyList() {
-  return launchList.filter((a) => a.proxyOn && a.proxy).map((a) => ({ line: a.line, proxy: a.proxy, proxyOn: true }));
+  return launchList.filter((a) => a.proxyOn && a.proxy).map((a) => ({ line: a.line, proxy: a.proxy, proxyOn: true, proxyAll: !!a.proxyAll }));
 }
 
 function saveLaunchList() {
   const plain = launchList.map((a) => ({ line: a.line, name: a.name, bar: a.bar, home: a.home }));
   // Прокси хранится в той же записи, но в main уходит отдельно (setNetworkProxy), а не с
   // карточками: те пишутся в файл для хука, а в строке прокси бывает пароль.
-  localStorage.setItem('swarm.launchList', JSON.stringify(launchList.map((a, i) => Object.assign({}, plain[i], { proxy: a.proxy || '', proxyOn: !!a.proxyOn }))));
+  localStorage.setItem('swarm.launchList', JSON.stringify(launchList.map((a, i) => Object.assign({}, plain[i], { proxy: a.proxy || '', proxyOn: !!a.proxyOn, proxyAll: !!a.proxyAll }))));
   try { window.swarm.setNetworkProxy(proxyList()); } catch (_) {}
   // Keep the single-agent fallback + legacy keys in sync with the first entry.
   launch = launchList[0];
@@ -3265,6 +3265,11 @@ function showSettingsModal(tab) {
         <input class="set-input set-code sub-proxy-pass" type="password" autocomplete="new-password"
                placeholder="необязательно" />
         <span class="sub-proxy-note" hidden></span>
+        <label class="set-check sub-proxy-all-row">
+          <input type="checkbox" class="sub-proxy-all" />
+          <span class="set-check-tx">весь трафик через прокси, не только Claude</span>
+        </label>
+        <span class="sub-proxy-hint">Без галочки через прокси ходит только Claude, а GitHub, npm и сайты, которые он открывает, — напрямую, как из обычного терминала.</span>
       </div>`;
     const lineI = row.querySelector('.sub-line');
     const nameI = row.querySelector('.sub-name');
@@ -3286,6 +3291,7 @@ function showSettingsModal(tab) {
     row.querySelector('.sub-proxy-port').value = px.port;
     row.querySelector('.sub-proxy-user').value = px.user;
     row.querySelector('.sub-proxy-pass').value = px.pass;
+    row.querySelector('.sub-proxy-all').checked = !!c.proxyAll;
     proxyOnI.checked = !!c.proxyOn;
     const syncProxy = () => {
       proxyBox.hidden = !proxyOnI.checked;
@@ -3331,6 +3337,7 @@ function showSettingsModal(tab) {
     home: r.dataset.home || '',
     proxy: SUBS_API.proxyUrl(proxyPartsOf(r)),
     proxyOn: r.querySelector('.sub-proxy-on').checked,
+    proxyAll: r.querySelector('.sub-proxy-all').checked,
   })).filter((c) => c.line);
 
   const subsPreviewEl = overlay.querySelector('#set-subs-preview');

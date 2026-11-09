@@ -21,10 +21,35 @@
 // The bytes after the head (TLS to Anthropic) pass through as they are: Swarm can't read them.
 //
 // For a proxy nobody sniffs (no VPN, VPN in plain tunnel mode) the edits change nothing: a proxy
-// ignores Host on CONNECT. Only http:// proxies get a relay — an https:// proxy hides the CONNECT
-// inside TLS, there is nothing to sniff.
+// ignores Host on CONNECT. An https:// proxy hides the CONNECT inside TLS — nothing to sniff
+// there, but it still gets a relay for the split below.
+//
+// Split (the default): only Claude's own hosts go through the proxy. The proxy is there to give
+// Claude an exit Anthropic accepts; everything else a tab runs — git, gh, npm, curl, MCP servers —
+// inherits the proxy variables and used to crawl through the proxy too (slow GitHub, paid
+// traffic). The relay sees each target in the request line, so anything that isn't Claude's
+// goes straight out from the Mac, the way it would from a plain terminal. `all` — the old way,
+// every connection through the proxy (Settings → Subscriptions → "all tab traffic via proxy").
 
 const net = require('net');
+const tls = require('tls');
+
+// Hosts that ride the proxy in split mode: the API, sign-in, MCP proxy and the telemetry Claude
+// Code sends (Statsig, Sentry, Datadog). A domain matches itself and every subdomain.
+const CLAUDE_DOMAINS = ['anthropic.com', 'claude.ai', 'claude.com', 'statsig.com', 'statsigapi.net', 'sentry.io', 'datadoghq.com'];
+
+function isClaudeHost(host) {
+  const h = String(host || '').toLowerCase().replace(/\.$/, '');
+  return CLAUDE_DOMAINS.some((d) => h === d || h.endsWith('.' + d));
+}
+
+// "host:port" / "[v6]:port" -> { host, port }. null — not an authority.
+function splitAuthority(target) {
+  const m = /^\[([^\]]+)\]:(\d+)$/.exec(target) || /^([^:\s]+):(\d+)$/.exec(target);
+  if (!m) return null;
+  const port = Number(m[2]);
+  return port > 0 && port < 65536 ? { host: m[1], port } : null;
+}
 
 const MAX_HEAD = 64 * 1024;
 
@@ -34,12 +59,14 @@ function decode(v) { try { return decodeURIComponent(v); } catch (_) { return v;
 function upstreamOf(proxyUrl) {
   let u;
   try { u = new URL(String(proxyUrl || '')); } catch (_) { return null; }
-  if (u.protocol !== 'http:' || !u.hostname) return null;
-  const port = Number(u.port) || 80;
+  if (!/^https?:$/.test(u.protocol) || !u.hostname) return null;
+  const secure = u.protocol === 'https:';
+  const port = Number(u.port) || (secure ? 443 : 80);
   const host = u.hostname;   // IPv6 stays bracketed in URL.hostname
   return {
     host: host.replace(/^\[|\]$/g, ''),
     port,
+    secure,
     authority: `${host}:${port}`,
     auth: u.username ? 'Basic ' + Buffer.from(`${decode(u.username)}:${decode(u.password)}`).toString('base64') : '',
   };
@@ -89,7 +116,21 @@ function rewriteHead(head, up) {
     : { connect: connectHead(plan.target, up), then: plan.request };
 }
 
-function handle(client, up) {
+// Which way one request goes: 'proxy' or 'direct'. Pure, for tests.
+function routeOf(plan, all) {
+  if (all) return 'proxy';
+  const a = splitAuthority(plan.target);
+  return a && isClaudeHost(a.host) ? 'proxy' : 'direct';
+}
+
+function connectUpstream(up, onReady) {
+  if (!up.secure) return net.connect(up.port, up.host, onReady);
+  const opts = { host: up.host, port: up.port };
+  if (!net.isIP(up.host)) opts.servername = up.host;
+  return tls.connect(opts, onReady);
+}
+
+function handle(client, up, all) {
   client.setNoDelay(true);
   let buf = Buffer.alloc(0);
   let upstream = null;
@@ -104,12 +145,39 @@ function handle(client, up) {
     }
     client.removeListener('data', onData);
     client.pause();
-    const plan = rewriteHead(buf.slice(0, end).toString('latin1'), up);
+    const head = buf.slice(0, end).toString('latin1');
     const rest = buf.slice(end + 4);
+    const route = planRequest(head);
+    const plan = route && rewriteHead(head, up);
     if (!plan) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
     let answered = false;
     const splice = () => { upstream.pipe(client); client.pipe(upstream); client.resume(); };
-    upstream = net.connect(up.port, up.host, () => {
+    // Before an answer the tab hears an honest 502. After it, a broken far side cuts the tab off,
+    // a closed one ends it gently — destroy() could drop the last bytes still in the buffer.
+    const fail = () => {
+      if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      else client.destroy();
+    };
+    const closed = () => {
+      if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      else client.end();
+    };
+    if (routeOf(route, all) === 'direct') {
+      const a = splitAuthority(route.target);
+      if (!a) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
+      upstream = net.connect(a.port, a.host, () => {
+        upstream.setNoDelay(true);
+        answered = true;
+        if (route.request == null) client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        else upstream.write(route.request + '\r\n\r\n', 'latin1');
+        if (rest.length) upstream.write(rest);
+        splice();
+      });
+      upstream.on('error', fail);
+      upstream.on('close', closed);
+      return;
+    }
+    upstream = connectUpstream(up, () => {
       upstream.setNoDelay(true);
       if (plan.then == null) {
         // A tunnel: the proxy's answer and everything after it are the tab's business.
@@ -139,25 +207,24 @@ function handle(client, up) {
       };
       upstream.on('data', onReply);
     });
-    upstream.on('error', () => {
-      if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-      else client.destroy();
-    });
-    upstream.on('close', () => { if (!answered && client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); else client.destroy(); });
+    upstream.on('error', fail);
+    upstream.on('close', closed);
   };
   client.on('data', onData);
 }
 
 // Listen on 127.0.0.1:port (0 — any free port; a taken port falls back to any). Resolves with
-// { url, port, close }; rejects if the proxy URL isn't one we relay.
-function startRelay(proxyUrl, port) {
+// { url, port, close }; rejects if the proxy URL isn't one we relay. opts.all — every connection
+// through the proxy, not only Claude's.
+function startRelay(proxyUrl, port, opts) {
+  const all = !!(opts && opts.all);
   const up = upstreamOf(proxyUrl);
   if (!up) return Promise.reject(new Error('not an http proxy'));
   const open = new Set();
   const server = net.createServer((c) => {
     open.add(c);
     c.on('close', () => open.delete(c));
-    handle(c, up);
+    handle(c, up, all);
   });
   const listen = (p) => new Promise((resolve, reject) => {
     const onErr = (e) => { server.removeListener('listening', onOk); reject(e); };
@@ -188,4 +255,4 @@ function stablePort(proxyUrl) {
   return 20000 + (h % 20000);
 }
 
-module.exports = { upstreamOf, planRequest, rewriteHead, startRelay, stablePort };
+module.exports = { upstreamOf, planRequest, rewriteHead, routeOf, isClaudeHost, splitAuthority, startRelay, stablePort, CLAUDE_DOMAINS };

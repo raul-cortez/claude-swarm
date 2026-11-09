@@ -24,6 +24,12 @@ test('a subscription with a proxy gets its address, the others go direct explici
   assert.ok(!w.has(''), 'a card whose folder is unknown is left alone');
 });
 
+test('normalize sees the whole entry: main picks the relay by «all traffic»', () => {
+  const w = SP.wanted(CARDS, [{ line: 'claude-my', proxy: PX, proxyAll: true }],
+    (x, p) => normalizeProxy(x) && (p && p.proxyAll ? 'http://127.0.0.1:2' : 'http://127.0.0.1:1'));
+  assert.strictEqual(w.get('/h/.claude-my'), 'http://127.0.0.1:2');
+});
+
 test('nobody has a proxy — nothing to enforce', () => {
   assert.strictEqual(SP.wanted(CARDS, [], normalizeProxy).size, 0);
   assert.strictEqual(SP.wanted(CARDS, [{ line: 'claude-my', proxy: 'socks5://x:1' }], normalizeProxy).size, 0);

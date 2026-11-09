@@ -112,6 +112,9 @@ function card(raw) {
     // только адрес, и для них «включено» — это «адрес задан».
     proxy: String(r.proxy || '').trim(),
     proxyOn: r.proxyOn === undefined ? !!String(r.proxy || '').trim() : !!r.proxyOn,
+    // Весь трафик вкладки через прокси. По умолчанию нет: через прокси идёт только сам Клод,
+    // а git, npm, сайты — напрямую с мака (см. proxy-relay.js).
+    proxyAll: !!r.proxyAll,
   };
 }
 
@@ -532,11 +535,19 @@ function menuRows(state) {
 // Прокси для вкладки, открытой этой командой. Ищем по стему, как и аккаунт (matchIndex):
 // карточки с одним стемом — одна подписка в одном конфиге, и `claude --model opus` должен
 // идти тем же путём, что и `claude`. Из них берём первый заданный прокси.
-function proxyFor(list, command) {
+function proxyCardFor(list, command) {
   const stem = stemOf(command);
-  if (!stem) return '';
-  const found = cards(list).find((c) => c.proxyOn && c.proxy && stemOf(c.line) === stem);
+  if (!stem) return null;
+  return cards(list).find((c) => c.proxyOn && c.proxy && stemOf(c.line) === stem) || null;
+}
+function proxyFor(list, command) {
+  const found = proxyCardFor(list, command);
   return found ? found.proxy : '';
+}
+// Весь ли трафик вкладки этой командой идёт через прокси (а не только Клод).
+function proxyAllFor(list, command) {
+  const found = proxyCardFor(list, command);
+  return !!(found && found.proxyAll);
 }
 
 function nameForHome(list, home) {
@@ -550,7 +561,7 @@ return {
   TIGHT, CRIT, WINDOWS, ETAS, HIGHLIGHT, VIEW,
   view, card, cards, line, label, stemOf, aliasOfHome,
   matchIndex, learnHome, levelOf, fmtEta, fmtWhen, fmtRel, fmtResetWhen, fmtStaleSince, pluralRu, windowRow,
-  pills, previewPills, menuRows, nameForHome, proxyFor,
+  pills, previewPills, menuRows, nameForHome, proxyFor, proxyAllFor,
   PROXY_TYPES, proxyParts, proxyUrl, proxyProblem,
 };
 

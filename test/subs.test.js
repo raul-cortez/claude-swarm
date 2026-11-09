@@ -333,6 +333,13 @@ test('прокси: галочка отдельно от адреса, снят�
   assert.strictEqual(subs.proxyFor([{ line: 'claude', proxy: 'h:1', proxyOn: false }], 'claude'), '');
 });
 
+test('прокси: «весь трафик» по умолчанию выключен, без прокси ничего не значит', () => {
+  assert.strictEqual(subs.card({ line: 'claude', proxy: 'h:1' }).proxyAll, false);
+  assert.strictEqual(subs.proxyAllFor([{ line: 'claude', proxy: 'h:1', proxyOn: true }], 'claude --x'), false);
+  assert.strictEqual(subs.proxyAllFor([{ line: 'claude', proxy: 'h:1', proxyOn: true, proxyAll: true }], 'claude --x'), true);
+  assert.strictEqual(subs.proxyAllFor([{ line: 'claude', proxy: 'h:1', proxyOn: false, proxyAll: true }], 'claude'), false);
+});
+
 test('прокси: поля формы ↔ адрес, пароль с @ и : переживает круг', () => {
   const url = subs.proxyUrl({ type: 'https', host: 'proxy.corp', port: '3128', user: 'e.n', pass: 'p@ss:w' });
   assert.strictEqual(url, 'https://e.n:p%40ss%3Aw@proxy.corp:3128');
