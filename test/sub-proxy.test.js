@@ -27,6 +27,8 @@ test('a subscription with a proxy gets its address, the others go direct explici
 test('«all traffic» marker: written next to the proxy, emptied without the box, removed when direct', () => {
   assert.deepStrictEqual([...SP.wantedAll(CARDS, [{ line: 'claude-my', proxy: PX, proxyAll: true }])], ['/h/.claude-my']);
   assert.strictEqual(SP.wantedAll(CARDS, [{ line: 'claude-my', proxy: PX }]).size, 0);
+  // Решает первая карточка стема — та же, что у вкладки и в wanted().
+  assert.strictEqual(SP.wantedAll(CARDS, [{ line: 'claude-my', proxy: PX }, { line: 'claude-my --x', proxy: PX, proxyAll: true }]).size, 0);
   const a = SP.apply({}, PX, {}, true);
   assert.strictEqual(a.settings.env.SWARM_PROXY_ALL, '1');
   const b = SP.apply(a.settings, PX, a.owned, false);

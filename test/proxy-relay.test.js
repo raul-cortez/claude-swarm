@@ -166,6 +166,20 @@ test('split: direct opens and then resets — the host is remembered, the retry 
   } finally { r.close(); s.close(); rude.close(); }
 });
 
+test('split: direct opens and then goes silent — once the tab gives up, the retry goes via the proxy', async () => {
+  const s = await stand();
+  const mute = net.createServer(() => {});   // accepts, never answers
+  const mutePort = await listen(mute);
+  const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });
+  try {
+    await talk(r.port, `CONNECT 127.0.0.1:${mutePort} HTTP/1.1\r\n\r\nclienthello`);   // talk gives up after 1.5 s
+    await new Promise((res) => setTimeout(res, 100));
+    assert.strictEqual(s.seen.length, 0, 'the first try was direct');
+    await talk(r.port, `CONNECT 127.0.0.1:${mutePort} HTTP/1.1\r\n\r\n`);
+    assert.strictEqual(s.seen.length, 1, 'the retry went through the proxy');
+  } finally { r.close(); s.close(); mute.close(); }
+});
+
 test('split: an unresolvable name goes through the proxy too', async () => {
   const s = await stand();
   const r = await relay.startRelay(`http://e.n:p%40ss%3Aw@127.0.0.1:${s.proxyPort}`, 0, { split: true });

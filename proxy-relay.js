@@ -232,15 +232,16 @@ function handle(client, up, opts) {
         if (rest.length) s.write(rest);
         // A firewall or DPI box that lets TCP open and then resets it can't be undone here: the
         // tab already has its tunnel. But the host is remembered, so the retry goes via the proxy.
-        // Only the DPI pattern counts: a reset, before any byte back, within seconds of opening. A
-        // long-poll dropped later, or a Wi-Fi switch, must not send a host to the paid proxy.
+        // A tunnel that ends without a single byte back from the target, after the tab had sent
+        // something, is what a firewall or DPI box looks like: reset, EPIPE or a silent drop the tab
+        // gave up on. It can't be undone here — the tab already has its tunnel — but the host is
+        // remembered, so the retry goes through the proxy.
         let heard = false;
-        const opened = Date.now();
+        let spoke = rest.length > 0 || route.request != null;
         s.once('data', () => { heard = true; });
-        s.on('error', (err) => {
-          if (!heard && err && err.code === 'ECONNRESET' && Date.now() - opened < DIRECT_TIMEOUT_MS) {
-            blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS);
-          }
+        client.on('data', () => { spoke = true; });
+        s.once('close', () => {
+          if (!heard && spoke) blocked.set(a.host.toLowerCase(), Date.now() + DIRECT_BLOCKED_MS);
         });
         watch();
         splice();

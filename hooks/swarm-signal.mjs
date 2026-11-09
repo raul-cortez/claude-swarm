@@ -1109,16 +1109,27 @@ function allSubsNote(cards, snaps, nowSec) {
 // посреднике, то есть целиком на прокси; мимо прокси сам Клод не уходит никогда.
 export const PROXY_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'];
 const LOCAL_RELAY = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
-export function proxyEnvLine(env, payload, map) {
+const OUR_TAG = ' # swarm-proxy';
+const exportLine = (v) => `export ${PROXY_VARS.map((k) => `${k}=${v}`).join(' ')}${OUR_TAG}\n`;
+// Что дописать в CLAUDE_ENV_FILE (fileText — его нынешнее содержимое). '' — ничего.
+//  - Клод на основном посреднике из карты и без галки «весь трафик» — команды на посредника для команд;
+//  - иначе, если раньше в этой сессии мы уже уводили команды (галку поставили, посредника для команд
+//    нет), — возвращаем командам прокси самого Клода: побеждает последний export.
+// Наша строка помечена OUR_TAG; повторно ту же не пишем (SessionStart приходит и на resume, /clear,
+// compact), сравнивая с последней НАШЕЙ строкой, а не с концом файла — туда пишут и чужие хуки.
+// В файл уходит строка для оболочки: ничего, кроме адреса локального посредника или пустоты.
+export function proxyEnvLine(env, payload, map, fileText) {
   if (!payload || payload.hook_event_name !== 'SessionStart') return '';
-  if (!env || !env.CLAUDE_ENV_FILE || !map || typeof map !== 'object') return '';
-  if (env.SWARM_PROXY_ALL === '1') return '';   // галка «весь трафик через прокси»
+  if (!env || !env.CLAUDE_ENV_FILE) return '';
   const cur = String(env.HTTPS_PROXY || env.https_proxy || '');
-  if (!LOCAL_RELAY.test(cur) || !Object.prototype.hasOwnProperty.call(map, cur)) return '';
-  const split = String(map[cur] || '');
-  // В файл уходит строка для оболочки: ничего, кроме адреса нашего посредника, туда не пускаем.
-  if (!LOCAL_RELAY.test(split)) return '';
-  return `export ${PROXY_VARS.map((k) => `${k}=${split}`).join(' ')}\n`;
+  const ours = String(fileText || '').split('\n').filter((l) => l.endsWith(OUR_TAG));
+  const last = ours.length ? ours[ours.length - 1] + '\n' : '';
+  let want = '';
+  const m = map && typeof map === 'object' ? map : {};
+  const split = LOCAL_RELAY.test(cur) && Object.prototype.hasOwnProperty.call(m, cur) ? String(m[cur] || '') : '';
+  if (env.SWARM_PROXY_ALL !== '1' && LOCAL_RELAY.test(split)) want = exportLine(split);
+  else if (last && (cur === '' || LOCAL_RELAY.test(cur))) want = exportLine(cur);
+  return want && want !== last ? want : '';
 }
 
 // The files the app writes beside this script (all three live in userData).
@@ -1181,16 +1192,12 @@ async function main() {
       const payload = JSON.parse(input || '{}');
       if (payload && payload.hook_event_name === 'SessionStart' && process.env.CLAUDE_ENV_FILE) {
         try {
-          const map = JSON.parse(readFileSync(new URL('./swarm-proxy-split.json', import.meta.url), 'utf8'));
-          const line = proxyEnvLine(process.env, payload, map);
-          // SessionStart приходит и на resume, /clear, compact. Дописываем, только если последняя
-          // строка файла не эта же: побеждает последний export, и устаревший адрес выше по файлу
-          // не должен остаться последним.
-          if (line) {
-            let had = '';
-            try { had = readFileSync(process.env.CLAUDE_ENV_FILE, 'utf8'); } catch (_) { had = ''; }
-            if (!had.endsWith(line)) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
-          }
+          let map = {};
+          try { map = JSON.parse(readFileSync(new URL('./swarm-proxy-split.json', import.meta.url), 'utf8')); } catch (_) { map = {}; }
+          let had = '';
+          try { had = readFileSync(process.env.CLAUDE_ENV_FILE, 'utf8'); } catch (_) { had = ''; }
+          const line = proxyEnvLine(process.env, payload, map, had);
+          if (line) appendFileSync(process.env.CLAUDE_ENV_FILE, line);
         } catch (_) { /* нет карты или файла — команды остаются на прокси целиком */ }
       }
       // Снимки расхода читаем только там, где они нужны: перед запуском подагента и в начале

@@ -1112,18 +1112,32 @@ test('proxyEnvLine: команды — на посредника для кома
   const map = { 'http://127.0.0.1:21000': 'http://127.0.0.1:22000' };
   const env = { HTTPS_PROXY: 'http://127.0.0.1:21000', CLAUDE_ENV_FILE: '/x' };
   const start = { hook_event_name: 'SessionStart' };
-  assert.strictEqual(H.proxyEnvLine(env, start, map),
-    'export HTTPS_PROXY=http://127.0.0.1:22000 HTTP_PROXY=http://127.0.0.1:22000 https_proxy=http://127.0.0.1:22000 http_proxy=http://127.0.0.1:22000\n');
-  assert.strictEqual(H.proxyEnvLine(env, { hook_event_name: 'UserPromptSubmit' }, map), '');
-  // Подписка без прокси (в её settings.json пусто) или с «весь трафик» (её нет в карте) — молчим.
-  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: '', CLAUDE_ENV_FILE: '/x' }, start, map), '');
-  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:23000', CLAUDE_ENV_FILE: '/x' }, start, map), '');
-  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:21000' }, start, map), '');
+  const SPLIT = 'export HTTPS_PROXY=http://127.0.0.1:22000 HTTP_PROXY=http://127.0.0.1:22000 https_proxy=http://127.0.0.1:22000 http_proxy=http://127.0.0.1:22000 # swarm-proxy\n';
+  assert.strictEqual(H.proxyEnvLine(env, start, map, ''), SPLIT);
+  assert.strictEqual(H.proxyEnvLine(env, { hook_event_name: 'UserPromptSubmit' }, map, ''), '');
+  // Подписка без прокси (в её settings.json пусто) или Клод не на нашем посреднике — молчим.
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: '', CLAUDE_ENV_FILE: '/x' }, start, map, ''), '');
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:23000', CLAUDE_ENV_FILE: '/x' }, start, map, ''), '');
+  assert.strictEqual(H.proxyEnvLine({ HTTPS_PROXY: 'http://127.0.0.1:21000' }, start, map, ''), '');
   // Галка «весь трафик через прокси» — командам ничего не меняем.
-  assert.strictEqual(H.proxyEnvLine(Object.assign({ SWARM_PROXY_ALL: '1' }, env), start, map), '');
-  assert.notStrictEqual(H.proxyEnvLine(Object.assign({ SWARM_PROXY_ALL: '' }, env), start, map), '');
+  assert.strictEqual(H.proxyEnvLine(Object.assign({}, env, { SWARM_PROXY_ALL: '1' }), start, map, ''), '');
   // В строку для оболочки не попадает ничего, кроме адреса локального посредника.
-  assert.strictEqual(H.proxyEnvLine(env, start, { 'http://127.0.0.1:21000': 'http://x; echo pwned' }), '');
+  assert.strictEqual(H.proxyEnvLine(env, start, { 'http://127.0.0.1:21000': 'http://x; echo pwned' }, ''), '');
+  // Та же строка уже последняя наша — второй раз не пишем, даже если после неё писали чужие хуки.
+  assert.strictEqual(H.proxyEnvLine(env, start, map, SPLIT + 'export OTHER=1\n'), '');
+});
+
+test('proxyEnvLine: галку поставили посреди сессии — командам возвращается прокси самого Клода', () => {
+  const map = { 'http://127.0.0.1:21000': 'http://127.0.0.1:22000' };
+  const env = { HTTPS_PROXY: 'http://127.0.0.1:21000', CLAUDE_ENV_FILE: '/x', SWARM_PROXY_ALL: '1' };
+  const before = H.proxyEnvLine(Object.assign({}, env, { SWARM_PROXY_ALL: '' }), { hook_event_name: 'SessionStart' }, map, '');
+  const back = H.proxyEnvLine(env, { hook_event_name: 'SessionStart' }, map, before);
+  assert.match(back, /^export HTTPS_PROXY=http:\/\/127\.0\.0\.1:21000 .* # swarm-proxy\n$/);
+  // Посредника для команд больше нет в карте (не поднялся после перезапуска) — тоже назад.
+  assert.match(H.proxyEnvLine(Object.assign({}, env, { SWARM_PROXY_ALL: '' }), { hook_event_name: 'SessionStart' }, {}, before),
+    /^export HTTPS_PROXY=http:\/\/127\.0\.0\.1:21000 /);
+  // Своего ничего не писали — и возвращать нечего.
+  assert.strictEqual(H.proxyEnvLine(env, { hook_event_name: 'SessionStart' }, map, ''), '');
 });
 
 test('PROXY_VARS хука совпадают с переменными, которые сворм ставит вкладке и подписке', () => {

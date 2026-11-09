@@ -490,7 +490,7 @@ function subProxySyncNow() {
   try { owned = JSON.parse(fs.readFileSync(subProxyOwnedFile(), 'utf8')) || {}; } catch (_) { owned = {}; }
   const ownedWas = JSON.stringify(owned);
   const want = subProxy.wanted(subsCardsNow, NETWORK_PROXIES, (x) => relayUrl(normalizeProxy(x)));
-  const wantAll = subProxy.wantedAll(subsCardsNow, NETWORK_PROXIES);
+  const wantAll = subProxy.wantedAll(subsCardsNow, NETWORK_PROXIES, normalizeProxy);
   const homes = new Set([...want.keys(), ...Object.keys(owned)]);
   for (const home of homes) {
     const file = path.join(home, 'settings.json');
@@ -571,6 +571,11 @@ function proxyRelaySync() {
         e.ready = !!cl;
         proxySplitWrite();
         subProxySync();
+        // Something didn't come up: try again in a minute rather than wait for the settings to be
+        // saved. A new tab gets the relay as soon as it is up.
+        // Five tries, then the next settings save starts over — a port that never opens must not
+        // fill the log forever.
+        if ((!cl || !e.split) && (e.tries = (e.tries || 0) + 1) < 5) setTimeout(proxyRelaySync, 60 * 1000).unref?.();
       });
   }
   proxySplitWrite();
@@ -7852,7 +7857,7 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     // <-- inherits your Claude Code auth. Do not strip. Our own SWARM_* additions carry
     // the flag values that would otherwise be echoed across half the screen. Вычищаются
     // только метки Клод-сессии, из которой запустили сам сворм: см. tabEnv.
-    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy), tabProxy ? !!tabCard.proxyAll : null), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
+    env: { ...proxyEnv(tabEnv(process.env), relayUrl(tabProxy), !!(tabCard && tabCard.proxyAll)), ...pass.env, ...(isPanel ? {} : { SWARM_TAB_ID: id }) },
     // SWARM_TAB_ID — по нему хук находит свою вкладку в реестре соседей (peers.viewFor). Id
     // разговора для этого не годится: /clear и самоперезапуск меняют его, а pty — нет.
   });
@@ -8365,6 +8370,7 @@ ipcMain.on('settings:statuslineView', (_e, view) => {
 // при запуске, и подменить его живому Клоду нельзя.
 ipcMain.on('settings:networkProxy', (_e, list) => {
   NETWORK_PROXIES = Array.isArray(list) ? list : [];
+  for (const e of proxyRelays.values()) e.tries = 0;
   proxyRelaySync();
   subProxySync();
   // Новый прокси — сразу узнать его страну: вкладка подписки ждёт этого, прежде чем запустить агента.

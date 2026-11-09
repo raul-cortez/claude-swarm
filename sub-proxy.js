@@ -55,11 +55,16 @@ function wanted(cards, proxies, normalize) {
 
 // Папки, чья подписка просит «весь трафик через прокси» (галка в карточке). Рядом с адресом прокси
 // в их settings.json пишется SWARM_PROXY_ALL=1 — хук видит его, как бы Клода ни запустили.
-function wantedAll(cards, proxies) {
+// Решает та же карточка, что и в wanted() и у вкладки (subs.proxyCardFor): первая со своим стемом.
+function wantedAll(cards, proxies, normalize) {
+  const norm = typeof normalize === 'function' ? normalize : (x) => String(x || '').trim();
+  const seen = new Set();
   const allStems = new Set();
   for (const p of Array.isArray(proxies) ? proxies : []) {
     const stem = stemOf(p && p.line);
-    if (stem && p && p.proxyAll) allStems.add(stem);
+    if (!stem || seen.has(stem) || !norm(p && p.proxy)) continue;
+    seen.add(stem);
+    if (p.proxyAll) allStems.add(stem);
   }
   const out = new Set();
   for (const c of Array.isArray(cards) ? cards : []) {
