@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.81.1 — 2026-11-10
+
+- fix(proxy): undo the command split mid-session, remember silent drops, retry relays
+- refactor(proxy): two relays per proxy that live until quit, «all» as a marker
+- fix(proxy): relays outlive checkbox changes, no startup race, remember resets
+- fix(proxy): commands go through a split relay that falls back to the proxy
+- fix(proxy): strip the proxy from Claude's commands instead of guessing Claude's hosts
+
 ## 0.81.0 — 2026-11-09
 
 - feat(proxy): only Claude goes through a subscription's proxy, the rest goes direct
