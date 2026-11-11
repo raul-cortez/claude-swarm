@@ -202,6 +202,7 @@ const subs = require('./subs');                     // подписки: кар�
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
+const dossier = require('./dossier');                // досье вкладки: шаблоны, очередь из лога, наследство
 const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
 const sleep = require('./sleep');                    // сон простаивающей вкладки: когда можно и жив ли сабагент
@@ -298,6 +299,13 @@ function writeSwarmSettings() {
     settings.statusLine = { type: 'command', command: STATUSLINE_COMMAND, padding: 0 };
   }
   if (HOOKS_ENABLED && HOOK_COMMAND) settings.hooks = hookSettings(HOOK_COMMAND);
+  // The tab dossier lives in our own folder, outside the agent's project. Claude asks for a
+  // separate permission to touch a path outside the working dir — even to READ it — so a night
+  // tab would stall on a prompt about our own file. An explicit allow on the three file tools
+  // silences that in every mode, default included (stand 2026-11-11). Only permissions — no
+  // statusLine — so a user who turned our line off still sees his own.
+  const allow = dossierAllowRules();
+  if (allow.length) settings.permissions = { allow };
   if (!Object.keys(settings).length) { STATUSLINE_SETTINGS = null; return; }
   const settingsPath = path.join(app.getPath('userData'), 'swarm-settings.json');
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -1619,6 +1627,9 @@ function agentGone(id, d, wasBusy) {
     canResume: canResumeTab(d),
   });
   if (v.how === 'crash') {
+    // Набранное перед падением `--resume` не доставит (стенд 2026-11-11) — отдаём сами, при
+    // любом подъёме: и прежним разговором, и свежим.
+    try { dossierInherit(id, d, 'crash'); } catch (e) { reportMainError(e); }
     restartLog(`вкладка ${id}: агент ушёл сам (${v.why === 'signal' ? word : 'ход оборван'}), `
       + `разговор ${d.claudeSessionId || '—'}`);
   }
@@ -3229,12 +3240,25 @@ function tgWriteModes() {
     const hf = hireFileFor(d);
     if (rf || df || hf) files[d.claudeSessionId] = { restart: rf || '', digest: df || '', hire: hf || '' };
   }
+  // Досье — по id ВКЛАДКИ (SWARM_TAB_ID в окружении pty), а не разговора: свежая сессия после
+  // перезапуска стартует раньше, чем мы узнаём её id, а наследство ей нужно именно на старте.
+  const tabs = {};
+  if (DOSSIER_ENABLED) {
+    for (const [tid, d] of det) {
+      if (!d || d.dead || !d.tabKey) continue;
+      let p = null;
+      try { p = dossierPaths(tid, d); } catch (_) { p = null; }
+      if (p) tabs[tid] = { dossier: p.dossier, work: p.work, inherit: p.inherit, lag: d.dsLag || 0, blank: !!d.dsBlank };
+    }
+  }
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
     restart: { on: RESTART_ENABLED },
     digest: { on: DIGEST_ENABLED, note: DIGEST_NOTE, max: DIGEST_MAX_LEN },
     crew: { max: CREW_MAX, rule: TG.crewRule || '' },
+    dossier: { on: DOSSIER_ENABLED },
     files,
+    tabs,
   });
   if (body !== tgModesWritten) {
     try {
@@ -5817,6 +5841,20 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
     enabled: !d.crew && !d.parentId && !!hireFileFor(d),
     click: () => { makeProrab(key, 'меню карточки').catch(reportMainError); },
   });
+  // Посмотреть, что вкладка помнит. Пункты стоят всегда (правило меню выше): при выключенном
+  // досье они серые и говорят почему.
+  const dp = dossierFor(key, d);
+  items.push({ type: 'separator' });
+  for (const [label, which] of [['Открыть досье', 'dossier'], ['Открыть файл работы', 'work']]) {
+    items.push({
+      label: dp ? label : `${label} (досье выключено в настройках)`,
+      enabled: !!dp,
+      click: () => {
+        const p = dossierEnsure(key, d);
+        if (p) shell.openPath(p[which]).catch(reportMainError);
+      },
+    });
+  }
   const canResume = canResumeTab(d);
   items.push({ type: 'separator' });
   items.push({
@@ -6342,6 +6380,230 @@ ipcMain.on('settings:digest', (_e, opts = {}) => {
   }
 });
 
+// --- Tab dossier --------------------------------------------------------------
+// Two files per tab that outlive its sessions (see dossier.js and the spec
+// docs/superpowers/specs/2026-11-11-tab-dossier-design.md): the dossier — rules of the work —
+// and the work file — the live handoff. They live in <userData>/tabs/<tabKey>/, not in the
+// project: a file that sits there for days would be swept into someone's `git add -A`.
+// Permission to touch them comes with our --settings (dossierAllowRules).
+//
+// What the app does: seeds the files, keeps the mark «the dossier has digested the
+// conversation up to here», counts the person's messages past it (the hook nudges the agent),
+// and when a session dies writes the inheritance — tail after the mark plus undelivered
+// messages — which the hook inlines into the next session's start and consumes.
+let DOSSIER_ENABLED = true;
+const DOSSIER_TICK_MS = 30_000;
+// How much of the transcript we read for the tail. The mark is usually recent; a long-lost
+// mark is cut here rather than reading a 50 MB file in the main process.
+const DOSSIER_TAIL_BYTES = 4 * 1024 * 1024;
+// Startup sweep waits for the renderer to restore tabs; a folder without a tab by then is an orphan.
+const DOSSIER_SWEEP_DELAY_MS = 3 * 60_000;
+
+function dossierRoot() {
+  return path.join(app.getPath('userData'), dossier.DIR);
+}
+
+// Absolute paths in Claude permission rules are written with a leading `//`. Windows paths have
+// no agreed spelling there — leave them out rather than ship a rule that silently matches nothing.
+function dossierAllowRules() {
+  if (process.platform === 'win32') return [];
+  let root = '';
+  try { root = dossierRoot(); } catch (_) { return []; }
+  // `**` built apart: a literal slash-star-star reads as a comment opener to naive scanners
+  // (test/undefined-calls strips comments without a parser).
+  const glob = '/' + root + '/' + '*'.repeat(2);
+  return [`Read(${glob})`, `Edit(${glob})`, `Write(${glob})`];
+}
+
+function dossierDirOf(id, d) {
+  return path.join(dossierRoot(), dossier.safeKey(restartKeyOf(id, d)));
+}
+
+// Пути досье, если функция включена и у вкладки есть ключ, — иначе null (старый путь эстафеты).
+function dossierFor(id, d) {
+  if (!DOSSIER_ENABLED || !d || !d.tabKey) return null;
+  try { return dossierPaths(id, d); } catch (_) { return null; }
+}
+
+function dossierPaths(id, d) {
+  const dir = dossierDirOf(id, d);
+  return {
+    dir,
+    dossier: path.join(dir, dossier.FILES.dossier),
+    work: path.join(dir, dossier.FILES.work),
+    inherit: path.join(dir, dossier.FILES.inherit),
+    state: path.join(dir, dossier.FILES.state),
+    history: path.join(dir, dossier.HISTORY),
+  };
+}
+
+function dossierLoadState(p) {
+  try { return JSON.parse(fs.readFileSync(p.state, 'utf8')) || {}; } catch (_) { return {}; }
+}
+
+function dossierSaveState(p, st) {
+  try { fs.writeFileSync(p.state, JSON.stringify(st)); } catch (e) { reportMainError(e); }
+}
+
+// Seed both files once per tab. The mark starts at creation: everything said from now on is
+// «not yet digested», the brief included.
+function dossierEnsure(id, d) {
+  if (d.dsReady) return dossierPaths(id, d);
+  const p = dossierPaths(id, d);
+  try {
+    fs.mkdirSync(p.dir, { recursive: true });
+    const tp = dossier.templates();
+    if (!fs.existsSync(p.dossier)) fs.writeFileSync(p.dossier, tp.dossier);
+    if (!fs.existsSync(p.work)) fs.writeFileSync(p.work, tp.work);
+  } catch (e) { reportMainError(e); return null; }
+  const st = dossierLoadState(p);
+  if (!st.mark) { st.mark = Date.now(); dossierSaveState(p, st); }
+  d.dsMark = st.mark;
+  d.dsMtime = 0;
+  d.dsPrev = null;
+  try { d.dsBlank = dossier.isBlank(fs.readFileSync(p.dossier, 'utf8'), 'dossier'); } catch (_) { d.dsBlank = true; }
+  d.dsReady = true;
+  return p;
+}
+
+// Full entries of the tab's transcript (tail), re-read only when the file changed.
+function dossierEntries(d) {
+  if (!d.trFile) return [];
+  let st;
+  try { st = fs.statSync(d.trFile); } catch (_) { return []; }
+  if (d.dsTrFile === d.trFile && d.dsTrMtime === st.mtimeMs && d.dsTrEntries) return d.dsTrEntries;
+  let text = '';
+  try { text = tailText(d.trFile, DOSSIER_TAIL_BYTES); } catch (_) { return []; }
+  d.dsTrFile = d.trFile;
+  d.dsTrMtime = st.mtimeMs;
+  d.dsTrEntries = dossier.parseLines(text);
+  return d.dsTrEntries;
+}
+
+// Keep the previous dossier before it's overwritten — the agent may rewrite the file whole and
+// lose a section by accident.
+function dossierKeepVersion(p, text) {
+  if (!text) return;
+  try {
+    fs.mkdirSync(p.history, { recursive: true });
+    const name = new Date().toISOString().replace(/[:.]/g, '-') + '.md';
+    fs.writeFileSync(path.join(p.history, name), text);
+    for (const old of dossier.historyPrune(fs.readdirSync(p.history))) {
+      try { fs.unlinkSync(path.join(p.history, old)); } catch (_) {}
+    }
+  } catch (e) { reportMainError(e); }
+}
+
+function dossierTick(id, d) {
+  // Без ключа вкладки папка звалась бы по id, а id не переживает перезапуск приложения — уборка
+  // приняла бы её за сироту. Такие вкладки (не из сворма) живут без досье.
+  if (!d.tabKey) return;
+  const p = dossierEnsure(id, d);
+  if (!p) return;
+  let changed = false;
+  let st = null;
+  try { st = fs.statSync(p.dossier); } catch (_) { st = null; }
+  if (st && st.mtimeMs !== d.dsMtime) {
+    let text = '';
+    try { text = fs.readFileSync(p.dossier, 'utf8'); } catch (_) { text = ''; }
+    // First look after start only records what is there: the mark comes from state.json.
+    if (d.dsMtime) {
+      dossierKeepVersion(p, d.dsPrev);
+      // The moment of the edit, not the newest log entry: a message typed after the edit (even
+      // one still waiting in Claude's queue) is not digested yet.
+      d.dsMark = Math.max(st.mtimeMs, d.dsMark || 0);
+      const s = dossierLoadState(p);
+      s.mark = d.dsMark;
+      dossierSaveState(p, s);
+    }
+    d.dsMtime = st.mtimeMs;
+    d.dsPrev = text;
+    const blank = dossier.isBlank(text, 'dossier');
+    if (blank !== d.dsBlank) { d.dsBlank = blank; changed = true; }
+  }
+  const lag = dossier.humanCountAfter(dossierEntries(d), d.dsMark || 0);
+  const due = lag >= dossier.NUDGE_AFTER ? lag : 0;
+  if (due !== (d.dsLag || 0)) { d.dsLag = due; changed = true; }
+  if (changed) tgWriteModes();
+}
+
+setInterval(() => {
+  if (!DOSSIER_ENABLED) return;
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead) continue;
+    try { dossierTick(id, d); } catch (e) { reportMainError(e); }
+  }
+}, DOSSIER_TICK_MS);
+
+// The session of this tab is about to die (context restart) or just died (crash). Write what
+// the next one must get: the verbatim tail after the mark and undelivered messages. The hook
+// inlines it into the next SessionStart and renames it, so it's read exactly once.
+function dossierInherit(id, d, how) {
+  if (!DOSSIER_ENABLED || !d) return;
+  const p = dossierEnsure(id, d);
+  if (!p) return;
+  const entries = dossierEntries(d);
+  let workAt = 0;
+  try { workAt = fs.statSync(p.work).mtimeMs; } catch (_) { workAt = 0; }
+  const text = dossier.inheritText({
+    how,
+    at: Date.now(),
+    resumed: how === 'crash',
+    undelivered: dossier.undelivered(entries),
+    tail: dossier.tailAfter(entries, d.dsMark || 0),
+    workAt,
+    workStale: workAt ? dossier.toolCallsAfter(entries, workAt) : 0,
+  });
+  try {
+    fs.writeFileSync(p.inherit, text);
+    restartLog(`вкладка ${id}: наследство для следующей сессии записано (${how})`);
+  } catch (e) { reportMainError(e); }
+}
+
+// The person closed the tab: its files go to the archive (cleared after ARCHIVE_DAYS). Not on
+// process exit — quitting the app ends every pty too, and those tabs come back on next start.
+function dossierArchive(id, d) {
+  if (!d || !d.tabKey) return;
+  const p = dossierPaths(id, d);
+  if (!fs.existsSync(p.dir)) return;
+  const to = path.join(dossierRoot(), dossier.ARCHIVE, path.basename(p.dir) + '-' + new Date().toISOString().replace(/[:.]/g, '-'));
+  try {
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(p.dir, to);
+  } catch (e) { reportMainError(e); }
+}
+
+function dossierSweep() {
+  const root = dossierRoot();
+  const arch = path.join(root, dossier.ARCHIVE);
+  const liveKeys = [];
+  for (const [id, d] of det) if (d && !d.dead && d.tabKey) liveKeys.push(dossier.safeKey(restartKeyOf(id, d)));
+  const list = (dir) => { try { return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (_) { return []; } };
+  const mtime = (f) => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } };
+  const plan = dossier.sweepPlan({
+    liveKeys,
+    dirs: list(root).map((e) => ({ key: e.name })),
+    archived: list(arch).map((e) => ({ name: e.name, mtimeMs: mtime(path.join(arch, e.name)) })),
+  });
+  for (const key of plan.toArchive) {
+    try {
+      fs.mkdirSync(arch, { recursive: true });
+      fs.renameSync(path.join(root, key), path.join(arch, key + '-' + new Date().toISOString().replace(/[:.]/g, '-')));
+    } catch (e) { reportMainError(e); }
+  }
+  for (const name of plan.toDelete) {
+    try { fs.rmSync(path.join(arch, name), { recursive: true, force: true }); } catch (e) { reportMainError(e); }
+  }
+}
+
+setTimeout(() => { try { dossierSweep(); } catch (e) { reportMainError(e); } }, DOSSIER_SWEEP_DELAY_MS);
+
+ipcMain.on('settings:dossier', (_e, opts = {}) => {
+  DOSSIER_ENABLED = !!(opts && opts.enabled);
+  tgWriteModes();
+});
+
 // --- Бригада: найм по просьбе прораба -----------------------------------------------
 // Спека: docs/superpowers/specs/2026-09-22-crew-design.md, раздел «Протокол найма». Механика —
 // та же, что у digest/restart, и по той же причине: она уже работает и не требует нового
@@ -6836,7 +7098,7 @@ function restartAsk(id, d, pct) {
   // затевался.
   const text = (d.rs && d.rs.silent > 0)
     ? restart.askAgainText({ pct, answerFile: file })
-    : restart.askText({ pct, answerFile: file, sub: liveSubagents(id, d), guide: restartGuidePath() });
+    : restart.askText({ pct, answerFile: file, sub: liveSubagents(id, d), guide: restartGuidePath(), dossier: dossierFor(id, d) });
   if (!restartType(id, text)) {
     // Печать не удалась — вкладки уже нет. Возвращаем автомат в исходное, иначе он будет ждать
     // ответа на просьбу, которой никто не видел.
@@ -6945,6 +7207,7 @@ function restartTick(id, d, now) {
   }
   const r = restart.step(state, {
     now,
+    dossier: !!dossierFor(id, d),
     enabled: RESTART_ENABLED,
     threshold: RESTART_PCT,
     pct,
@@ -7162,7 +7425,7 @@ function restartGrant(id, d, state) {
   // команде запуска мы не трогаем вовсе.
   d.rsModel = String(state.model || '');
   if (d.rsModel) restartLog(`вкладка ${id}: поднимаю свежую сессию на модели ${d.rsModel}`);
-  restartLog(`вкладка ${id}: разрешил перезапуск, эстафета ${state.handoff || 'текстом'}`);
+  restartLog(`вкладка ${id}: разрешил перезапуск, эстафета ${state.handoff || (carry ? 'текстом' : 'в досье')}`);
   safeSend('app:restartAgent', { id, prompt });
 }
 
@@ -7389,6 +7652,9 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
   // без ярлыка (агент не Клод, панель) не должен затирать то, что уже знали.
   if (d.rsKey) d.sessionKey = d.rsKey;
   restartLog(`вкладка ${id}: строка запуска готова, ярлык ${d.rsKey || '—'}`);
+  // Пока прежний разговор ещё привязан (d.trFile): хвост после отметки и недоставленное берутся
+  // из него, у свежей сессии будет свой файл.
+  try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); }
   // Гасить прежнего агента теперь есть чем — и ждать общего такта незачем: строка приходит через
   // миллисекунды после разрешения, а такт добавлял к ним до полминуты пустого стояния.
   restartKick(id, d, 'line');
@@ -7894,6 +8160,8 @@ ipcMain.handle('session:create', (_event, opts = {}) => {
     if (opts.hireTask) { d0.hireTask = String(opts.hireTask); d0.hireAt = Date.now(); }
     det.set(id, d0);
     gitExcludeSwarmFiles(cwd);
+    // Файлы досье — до старта агента: инструкция на SessionStart указывает на них сразу.
+    if (DOSSIER_ENABLED && d0.tabKey) { try { dossierEnsure(id, d0); } catch (e) { reportMainError(e); } }
     // Родство при рождении — например, протокол найма (прораб просит открыть вкладку) передаёт
     // parentId сразу. При восстановлении после перезапуска id ещё не существовали, поэтому эту
     // же дверь дёргает и renderer.restoreOrStart, вторым проходом (см. setTabParent).
@@ -8169,6 +8437,9 @@ ipcMain.on('session:kill', (_event, { id }) => {
   // BEFORE the detector goes away: the Telegram side needs it to know which topic to close
   // and which timer to cancel. Dropping it first is why closing a tab left its topic open.
   tgOnTabGone(det.get(id));
+  // Человек закрыл вкладку — её досье в архив. Именно здесь, а не в onExit: выход из приложения
+  // тоже гасит все pty, а такие вкладки при следующем запуске вернутся и досье им нужно.
+  try { dossierArchive(id, det.get(id)); } catch (e) { reportMainError(e); }
   const p = sessions.get(id);
   if (p) {
     try { p.kill(); } catch (_) {}

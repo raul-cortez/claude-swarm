@@ -1164,6 +1164,62 @@ test('хук сам дописывает посредника для коман�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- досье вкладки ---
+const DOSSIER_TAB = { dossier: '/u/tabs/k/dossier.md', work: '/u/tabs/k/work.md', inherit: '/u/tabs/k/inherit.md', lag: 0, blank: false };
+const dossierEx = (over) => ({ restart: { on: true }, dossier: { on: true }, tabs: { 7: { ...DOSSIER_TAB, ...over } }, tabId: '7', takeInherit: () => '' });
+
+test('досье: на старте называет оба файла абсолютными путями', () => {
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx());
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes('/u/tabs/k/dossier.md'));
+  assert.ok(ctx.includes('/u/tabs/k/work.md'));
+  assert.ok(/\[до: событие\]/.test(ctx));
+});
+
+test('досье: самоперезапуск без handoff, с файлом работы', () => {
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx());
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(/освежи файл работы \/u\/tabs\/k\/work\.md/.test(ctx));
+  assert.ok(!/"handoff"/.test(ctx));
+});
+
+test('досье выключено или вкладка чужая — ни слова о нём', () => {
+  const off = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, { ...dossierEx(), dossier: { on: false } });
+  assert.ok(!/досье/i.test((off && off.hookSpecificOutput && off.hookSpecificOutput.additionalContext) || ''));
+  const other = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, { ...dossierEx(), tabId: '8' });
+  assert.ok(!/Досье \//.test((other && other.hookSpecificOutput && other.hookSpecificOutput.additionalContext) || ''));
+});
+
+test('досье: наследство вклеивается последним и только на старте', () => {
+  let taken = 0;
+  const ex = { ...dossierEx(), takeInherit: () => { taken++; return '# Наследство\n> ответь на вопрос'; } };
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, ex);
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.trim().endsWith('> ответь на вопрос'));
+  assert.strictEqual(taken, 1);
+  H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, ex);
+  assert.strictEqual(taken, 1, 'на ходе наследство не трогаем');
+});
+
+test('досье: пустое — напоминание на ходе; отставшее — счёт сообщений', () => {
+  const blank = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx({ blank: true }));
+  assert.ok(/ещё пустое/.test(blank.hookSpecificOutput.additionalContext));
+  const lag = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx({ lag: 6 }));
+  assert.ok(/написал 6 сообщений/.test(lag.hookSpecificOutput.additionalContext));
+  const calm = H.outputFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx());
+  assert.ok(!calm || !/досье/i.test((calm.hookSpecificOutput && calm.hookSpecificOutput.additionalContext) || ''));
+});
+
+test('досье: файл наследства читается один раз и переименовывается', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dossier-'));
+  const f = path.join(dir, 'inherit.md');
+  fs.writeFileSync(f, 'hello');
+  assert.strictEqual(H.takeInheritFile(f), 'hello');
+  assert.strictEqual(H.takeInheritFile(f), '');
+  assert.ok(fs.existsSync(path.join(dir, 'inherit-delivered.md')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 (async () => {
   H = await import(pathToFileURL(SCRIPT).href);
   for (const [name, fn] of tests) {

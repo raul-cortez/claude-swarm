@@ -11,7 +11,7 @@
 // stdout and exit 0. It prints nothing else and never blocks or returns a decision,
 // so it can't interfere with Claude's own prompt / permission flow.
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { realpathSync, readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs';
+import { realpathSync, readFileSync, readdirSync, existsSync, appendFileSync, renameSync } from 'node:fs';
 
 // --- «агент зовёт тебя»: теги и фразы ----------------------------------------
 // Compiled by the app (ask-phrases.js) and written next to this script as
@@ -336,7 +336,7 @@ const foreignProvider = (env = process.env) => {
   return !(host === 'anthropic.com' || host.endsWith('.anthropic.com'));
 };
 
-const selfRestartNote = (absPath, guide, foreign = foreignProvider()) => {
+const selfRestartNote = (absPath, guide, foreign = foreignProvider(), dossier = null) => {
   const where = absPath
     ? `положи АБСОЛЮТНЫЙ путь ${absPath} — пиши туда всегда, даже если сам сейчас в другой`
       + ' папке (worktree, поддиректория задачи): именно этот файл я читаю для этой вкладки.'
@@ -350,12 +350,19 @@ const selfRestartNote = (absPath, guide, foreign = foreignProvider()) => {
     'НЕ стоит: работа уже ЗАКОНЧЕНА (файла не пиши вовсе, просто закончи ход — свежая сессия пойдёт',
     'искать несуществующий остаток); остались одно-два дешёвых действия; или СЕЙЧАС сгорит работа',
     '— сабагенты, прогон команды, теста, сборки.',
-    guide
+    dossier
+      ? `Решишь перезапуститься — освежи файл работы ${dossier.work} и «Открытое» в досье: их и хвост`
+        + ' разговора я отдам свежей сессии сам, handoff не нужен. Затем коротко —'
+      : guide
       ? `Решишь перезапуститься — прочитай ${guide}: что унести с собой и как ответить. Коротко —`
       : 'Решишь перезапуститься — запиши эстафету (что сделано, на чём стоишь, что дальше, чем'
         + ' проверять) туда, где принято. Затем коротко —',
     `${where}`,
-    ...(foreign ? [
+    ...(dossier ? [
+      `Файл — одним JSON: {"restart": true,${foreign ? '' : ' "model": "sonnet",'} "prompt": "чем займётся свежая сессия"}.`,
+      foreign ? 'Поле model НЕ пиши: ты работаешь не на Claude, и без него вкладка поднимется на той же модели.'
+        : 'Модель называй явно каждый раз, иначе вкладка, раз попав на дорогую, доживает на ней до конца задачи.',
+    ] : foreign ? [
       'Файл — одним JSON: {"restart": true, "prompt": "чем займётся свежая сессия", "handoff":',
       '"где лежит эстафета"}. Поле model НЕ пиши: ты работаешь не на Claude, и без него вкладка',
       'поднимется на той же модели, что сейчас.',
@@ -585,6 +592,68 @@ const digestNote = (cfg, absPath) => {
     'Перезаписывать можно сколько угодно раз — я слежу за файлом и обновляю карточку сам.',
   ].filter(Boolean).join('\n');
 };
+
+// --- досье вкладки ------------------------------------------------------------
+// Два файла, которые переживают сессию: досье (по каким правилам здесь работают) и файл работы
+// (что делаем и где стоим). Пути — АБСОЛЮТНЫЕ и от ключа вкладки, не от id разговора, так что
+// внутри вкладки текст одинаков между перезапусками и промпт-кэш не рвётся. См. dossier.js и
+// docs/superpowers/specs/2026-11-11-tab-dossier-design.md.
+const dossierNote = (info) => [
+  '[сворм] У этой вкладки два файла, которые переживут тебя: перезапуск по контексту или падение',
+  'вкладки случаются в любой момент, и тот, кто придёт после, не будет помнить разговора. Пути',
+  'АБСОЛЮТНЫЕ, пиши туда всегда, даже если сам сейчас в другой папке.',
+  '',
+  `Досье ${info.dossier} — по каким правилам здесь работают. Не история, а то, что меняет поведение:`,
+  '- Задача — бриф человека, близко к его словам. Меняешь только по его слову.',
+  '- Правила задачи — его замечания, которые действуют до конца задачи.',
+  '- Пока — временное, у каждой записи [до: событие]: событие, которое ты сам увидишь, а не срок.',
+  '- Заметки себе — что выяснил и не хочешь выяснять заново.',
+  '- Открытое — твой вопрос без ответа, то, к чему договорились вернуться.',
+  'Запись — одна строка, в конце источник и дата: (человек, ДД.ММ) или (я, ДД.ММ).',
+  '',
+  `Работа ${info.work} — что делаем и где стоим: вход, план, где стою, дальше, хозяйство, как`,
+  'проверить. Перезаписывай на границе каждого шага — упадёшь посреди следующего, и преемник',
+  'потеряет только его. План живёт у команды (задача, файл плана) — сошлись на него, не копируй.',
+  '',
+  'Когда писать в досье: человек сказал что-то, что будет действовать дальше, — в том же ходе,',
+  'раньше, чем действовать. Выяснил неочевидное — записать. Сработало условие [до:] — вычеркнуть.',
+  'Что верно не только для этой задачи (грабли проекта, привычки человека) — сразу в память',
+  'проекта, не дожидаясь конца: конца может не быть, вкладку закроют молча.',
+  'Не писать: что сделано (это в работе и в репозитории), разовые просьбы («покажи», «открой»), то,',
+  'что уже лежит в CLAUDE.md или памяти проекта.',
+  'Чужие записи не ослабляй: не уверен, что запись человека ещё действует, — пометь [проверить], а',
+  'не удаляй. Новое слово человека против старого — побеждает новое, старое вычёркивается. Досье',
+  'больше пары страниц — значит, туда попал журнал.',
+].join('\n');
+
+// Досье ещё не тронуто — напоминание на каждом ходе, как у дайджеста: бриф пишется с первых слов
+// человека, а не через десять ходов.
+const dossierBlankNudge = (info) =>
+  `[сворм] Досье вкладки (${info.dossier}) ещё пустое — запиши бриф человека и его правила сейчас, раньше, чем действовать.`;
+
+// Отметка «разобрано до» отстала: человек написал N сообщений, а досье не менялось.
+const dossierLagNudge = (info, n) =>
+  `[сворм] С последней правки досье (${info.dossier}) человек написал ${n} сообщений. Если в них есть`
+  + ' правила, замечания «пока» или вопросы, на которые ты не ответил, — перенеси в досье.';
+
+// Наследство прошлой сессии этой вкладки. Читается один раз: после вклейки файл переименован,
+// и следующий SessionStart (/clear, compact) его уже не увидит.
+const takeInheritFile = (file) => {
+  if (!file) return '';
+  let text = '';
+  try { text = readFileSync(file, 'utf8'); } catch (_) { return ''; }
+  try { renameSync(file, file.replace(/\.md$/, '') + '-delivered.md'); } catch (_) { /* не смогли — лучше дважды, чем ни разу */ }
+  return text;
+};
+
+const inheritIntro = (info, text) => [
+  '[сворм] Ты продолжаешь работу этой вкладки. ПЕРВЫМ делом прочитай досье',
+  `${info.dossier} — правила, по которым здесь работают, — и файл работы ${info.work} — где стоим и`,
+  'что дальше. Ниже — то, что прошлая сессия не успела разобрать, дословно из лога. Начни с',
+  'недоставленного и неотвеченного; новые правила перенеси в досье.',
+  '',
+  text.trim(),
+].join('\n');
 
 // Своя формулировка правила: человек вправе сказать ночным агентам своё, и приложение кладёт
 // его текст в тот же файл, где лежит «где я» (swarm-tgmode.json). Дубликат подстановки из
@@ -876,6 +945,9 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   // ошибка: старая версия main.js, гонка до первой записи карты — тогда ниже используется
   // прежний шаблон с $CLAUDE_CODE_SESSION_ID.
   const fileInfo = (ex.files && ex.files[sid]) || null;
+  // Досье — по id вкладки (SWARM_TAB_ID), см. tgWriteModes в main.js.
+  const tabId = ex.tabId !== undefined ? String(ex.tabId || '') : String(process.env.SWARM_TAB_ID || '');
+  const tabInfo = (ex.dossier && ex.dossier.on && tabId && ex.tabs && ex.tabs[tabId]) || null;
   // Мандат ИМЕННО ЭТОЙ вкладки: от него зависит не только отказ, но и его причина — правило
   // «решай сам» вместо телефонного «ответь прозой, человек прочитает».
   const auto = !!(sid && Array.isArray(ex.autoSessions) && ex.autoSessions.includes(sid));
@@ -924,7 +996,9 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   const note = [showsUsage ? usageNote(ex.usage, nowSec, subName(ex.subCards, ex.usage && ex.usage.home)) : '',
     subsForCrew,
     wantsSummary ? summaryNote() : '',
-    needsDigestNudge ? digestMissingNudge(fileInfo && fileInfo.digest) : '']
+    needsDigestNudge ? digestMissingNudge(fileInfo && fileInfo.digest) : '',
+    (starts && !isSubagent(payload) && tabInfo && tabInfo.blank) ? dossierBlankNudge(tabInfo) : '',
+    (starts && !isSubagent(payload) && tabInfo && !tabInfo.blank && tabInfo.lag > 0) ? dossierLagNudge(tabInfo, tabInfo.lag) : '']
     .filter(Boolean).join('\n\n');
   // Про самозвон говорим один раз за сессию — на её старте, — и только если перезапуск включён:
   // галочка человека главнее, и обещать агенту дверь, которую сворм не откроет, нельзя. Подагенту
@@ -937,7 +1011,7 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
   const guideFile = fileURLToPath(new URL('./swarm-restart-guide.md', import.meta.url));
   const guide = existsSync(guideFile) ? guideFile : '';
   const restartIntro = (isStart && ex.restart && ex.restart.on)
-    ? selfRestartNote(fileInfo && fileInfo.restart, guide) : '';
+    ? selfRestartNote(fileInfo && fileInfo.restart, guide, foreignProvider(), tabInfo) : '';
   // Тот же миг, что у самозвона, и по той же причине: галочка человека главнее, обещать агенту
   // файл, который сворм не читает, нельзя. Подагенту не говорим: дайджест — про вкладку целиком,
   // а не про то, чем занят один её сабагент.
@@ -966,7 +1040,12 @@ function outputFor(payload, matcher, tgSessions, presence, extra) {
       : view.role === 'child' ? childNote(view, peersFile)
         : peersNote(peersFile);
   }
-  const intro = [restartIntro, digestIntro, peersIntro].filter(Boolean).join('\n\n');
+  const dossierIntro = (isStart && tabInfo) ? dossierNote(tabInfo) : '';
+  // Наследство — последним: оно длинное и единственное, что меняется от сессии к сессии, а всё,
+  // что выше, должно оставаться общим префиксом для кэша.
+  const inherited = (isStart && tabInfo) ? (ex.takeInherit || takeInheritFile)(tabInfo.inherit) : '';
+  const intro = [restartIntro, digestIntro, dossierIntro, peersIntro,
+    inherited ? inheritIntro(tabInfo, inherited) : ''].filter(Boolean).join('\n\n');
   if (!seq && !deny && !gate && !permit && !note && !intro) return null;
   const out = {};
   if (seq) out.terminalSequence = seq;
@@ -1149,6 +1228,8 @@ async function main() {
   let digestModes = null;
   let crewModes = null;
   let fileMap = null;
+  let dossierModes = null;
+  let tabMap = null;
   try {
     const tg = await readJsonBeside('swarm-tgmode.json');
     tgSessions = tg.sessions || [];
@@ -1175,6 +1256,8 @@ async function main() {
     // абсолютный путь, а не про сам файл: ниже это откатывает на прежний шаблон с
     // $CLAUDE_CODE_SESSION_ID, ровно как раньше.
     fileMap = (tg.files && typeof tg.files === 'object') ? tg.files : null;
+    dossierModes = (tg.dossier && typeof tg.dossier === 'object') ? tg.dossier : null;
+    tabMap = (tg.tabs && typeof tg.tabs === 'object') ? tg.tabs : null;
   } catch (_) { /* none */ }
   // Карточки подписок — ради их ИМЁН: агент должен знать не только «7д 84%», но и чья это
   // подписка. Файла нет (приложение старше) — молчим про имя, числа от этого не страдают.
@@ -1208,7 +1291,7 @@ async function main() {
       const usage = wantsUsage ? pickUsage(snaps, payload.session_id) : null;
       const out = outputFor(payload, matcher, tgSessions, presence,
         { usage, snaps, nightRule: nightCustom, autoSessions, restart: restartModes, digest: digestModes,
-          crew: crewModes, subCards, files: fileMap });
+          crew: crewModes, subCards, files: fileMap, dossier: dossierModes, tabs: tabMap });
       if (out) process.stdout.write(JSON.stringify(out));
     } catch (_) { /* malformed payload → emit nothing */ }
     process.exit(0);
@@ -1241,6 +1324,6 @@ export { tokenFor, markerFor, loadMatcher, callsUser, closingKind, messageText, 
   outputFor, denyReason, denyReasonFor, DENY_REASON, FALLBACK, isDirectRun, isSubagent,
   nightRule, nightRuleText, summaryNote, gatesSubagent, permitDecision, permitsCommand, permitReason, PERMIT_GIT,
   usageNote, subName, pickUsage, allSubsNote, fmtEta, GATE_FIVE, GATE_SEVEN,
-  selfRestartNote, foreignProvider, restartFileFor, digestNote, digestFileFor, digestMissingNudge, digestWritten,
+  selfRestartNote, foreignProvider, restartFileFor, dossierNote, dossierBlankNudge, dossierLagNudge, inheritIntro, takeInheritFile, digestNote, digestFileFor, digestMissingNudge, digestWritten,
   DIGEST_DEFAULT_LEN, DIGEST_MIN_LEN, DIGEST_MAX_LEN,
   peersNote, peersViewFor, crewNote, childNote, hireFileFor, CREW_MAX_DEFAULT };

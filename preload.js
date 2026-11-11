@@ -177,6 +177,7 @@ contextBridge.exposeInMainWorld('swarm', {
   // Дайджест вкладки: пара строк о том, чем занят агент, читаются из файла в его рабочей папке
   // (digest.js) и приходят сюда, чтобы лечь на карточку.
   setDigest: (opts) => ipcRenderer.send('settings:digest', opts),
+  setDossier: (opts) => ipcRenderer.send('settings:dossier', opts),
   onDigest: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('session:digest', handler);

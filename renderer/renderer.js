@@ -901,6 +901,8 @@ let sleepMin = SLEEP_API.clampMin(localStorage.getItem('swarm.sleepMin'));
 // «Показывать дайджест вкладки» (Settings → Запуск). Тоже выключено по умолчанию — тумблер,
 // который агент сам не может себе включить, и человек не обязан его хотеть.
 let digestOn = localStorage.getItem('swarm.digest') === '1';
+// Досье вкладки — по умолчанию включено: функция обязана работать сама, без похода в настройки.
+let dossierOn = localStorage.getItem('swarm.dossier') !== '0';
 // Своя формулировка того, что должно попасть в дайджест, — поверх заготовки, которую хук
 // печатает агенту сам. Пусто = заготовки хватает.
 let digestNote = localStorage.getItem('swarm.digestNote') || '';
@@ -1881,6 +1883,17 @@ function showSettingsModal(tab) {
             </div>
             <div class="set-row">
               <label class="set-check">
+                <input type="checkbox" id="set-dossier" />
+                <span class="set-check-tx">Досье вкладки</span>
+              </label>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Агент ведёт два файла, которые переживают перезапуск и падение вкладки:
+                досье — твой бриф, правила и замечания по ходу дела, и файл работы — план, где стоим и что дальше.
+                Свежая сессия получает их сама, вместе с сообщениями, которые прошлая не успела разобрать.
+                Посмотреть — в меню карточки. Если выключить, при перезапуске агент снова пишет эстафету сам.</span>
+            </div>
+            <div class="set-row">
+              <label class="set-check">
                 <input type="checkbox" id="set-digest" />
                 <span class="set-check-tx">Показывать дайджест вкладки</span>
               </label>
@@ -2709,6 +2722,8 @@ function showSettingsModal(tab) {
   sleepMinI.addEventListener('input', syncSleep);
   sleepI.addEventListener('change', syncSleep);
   syncSleep();
+  const dossierI = overlay.querySelector('#set-dossier');
+  dossierI.checked = dossierOn;
   const digestI = overlay.querySelector('#set-digest');
   digestI.checked = digestOn;
   // Своя формулировка — та же схема заготовки, что у ночных текстов ниже (nightFields/flatText):
@@ -3947,6 +3962,11 @@ function showSettingsModal(tab) {
     const nextDigestNote = digestFlat(digestNoteI.value) === digestFlat(digestDefaultNote)
       ? '' : digestNoteI.value.trim();
     const nextDigestMaxLen = DIGEST_API.clampMaxLen(digestMaxLenI.value);
+    if (dossierI.checked !== dossierOn) {
+      dossierOn = dossierI.checked;
+      localStorage.setItem('swarm.dossier', dossierOn ? '1' : '0');
+      window.swarm.setDossier({ enabled: dossierOn });
+    }
     if (digestI.checked !== digestOn || nextDigestNote !== digestNote || nextDigestMaxLen !== digestMaxLen) {
       digestOn = digestI.checked;
       digestNote = nextDigestNote;
@@ -7299,6 +7319,7 @@ window.swarm.setSleep({ enabled: sleepOn, minutes: sleepMin });          // со
 // Вернулись к окну — открытая вкладка снова «на глазах»: спящую будим (main решает сам).
 window.addEventListener('focus', () => { if (activeId) window.swarm.tabWatched(activeId); });
 window.swarm.setDigest({ enabled: digestOn, note: digestNote, maxLen: digestMaxLen }); // дайджест вкладки
+window.swarm.setDossier({ enabled: dossierOn }); // досье вкладки
 window.swarm.setCrew({ max: crewMax, model: crewModel, freed: crewFreed }); // настройки бригады
 // Голос из телеги. Chromium декодирует Opus сам, поэтому ffmpeg приложению не нужен:
 // декодируем как есть, потом пересобираем в моно 16 кГц через OfflineAudioContext — ровно

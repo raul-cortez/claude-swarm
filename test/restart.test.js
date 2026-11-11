@@ -1024,6 +1024,25 @@ test('в фазе done не спрашиваем, но положенный фа
   assert.strictEqual(r.state.phase, 'granted');
 });
 
+test('с досье «можно» без эстафеты — разрешение, без досье — нет', () => {
+  const raw = JSON.stringify({ restart: true, prompt: 'продолжи по файлу работы', model: 'sonnet' });
+  assert.strictEqual(R.parseAnswer(raw).restart, false);
+  assert.strictEqual(R.parseAnswer(raw).reason, 'no-handoff');
+  const a = R.parseAnswer(raw, { dossier: true });
+  assert.strictEqual(a.restart, true);
+  assert.strictEqual(a.prompt, 'продолжи по файлу работы');
+});
+
+test('с досье без промпта всё равно не перезапускаем', () => {
+  assert.strictEqual(R.parseAnswer(JSON.stringify({ restart: true }), { dossier: true }).reason, 'no-prompt');
+});
+
+test('просьба на пороге с досье называет файл работы и не требует handoff', () => {
+  const t = R.askText({ pct: 40, answerFile: '/x/a.json', dossier: { work: '/u/tabs/k/work.md' } });
+  assert.ok(t.includes('/u/tabs/k/work.md'));
+  assert.ok(!/без handoff/.test(t));
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; } catch (e) {
     console.error(`FAIL ${name}\n  ${e.message}`);
