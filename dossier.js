@@ -131,11 +131,33 @@
   // a real transcript had 40 enqueues, two of them typed), and our own texts typed into the
   // terminal (restart ask, crew notices) — they start with «[сворм]», possibly inside the
   // bracketed-paste wrapper.
-  const RE_NOT_PERSON = /^(?:<pasted_content[^>]*>\s*)?(?:<(?:task-notification|agent-message|[a-z-]+-notification)\b|\[сворм\])/;
+  const RE_WRAP = /^(?:<pasted_content[^>]*>\s*)?/;
+  const RE_NOTICE = /^(?:<pasted_content[^>]*>\s*)?<(?:task-notification|agent-message|[a-z-]+-notification)\b/;
+  const RE_SWARM = /^(?:<pasted_content[^>]*>\s*)?\[сворм\]/;
+  // Our restart ask and its reminder: addressed to the session that is leaving — the next one
+  // must not answer them again. Pinned against restart.askText / askAgainText by a test.
+  const RE_RESTART_ASK = /^(?:<pasted_content[^>]*>\s*)?\[сворм\] (?:Контекст этой вкладки заполнен|Всё ещё жду ответ на просьбу о перезапуске)/;
+
+  // Who put a text into the conversation: 'person' | 'swarm' (our own texts — crew questions,
+  // «close the crew»: they still need an answer) | 'notice' (background tasks, subagents) |
+  // 'restart' (our restart ask: answered by the session that left) | '' (empty).
+  function kindOf(text) {
+    const t = String(text == null ? '' : text).trim();
+    if (!t) return '';
+    if (RE_NOTICE.test(t)) return 'notice';
+    if (RE_RESTART_ASK.test(t)) return 'restart';
+    if (RE_SWARM.test(t)) return 'swarm';
+    return 'person';
+  }
 
   function fromPerson(text) {
-    const t = String(text == null ? '' : text).trim();
-    return !!t && !RE_NOT_PERSON.test(t);
+    return kindOf(text) === 'person';
+  }
+
+  // Worth handing to the next session: the person's words and our own crew texts.
+  function forHeir(text) {
+    const k = kindOf(text);
+    return k === 'person' || k === 'swarm';
   }
 
   // What the person actually said, as { at, text }. Two shapes: a plain user prompt, and a
@@ -168,6 +190,16 @@
     return (name[1].trim() + ' ' + (args ? args[1].trim() : '')).trim();
   }
 
+  // Our own crew texts in the conversation (not the restart ask): the tail shows them signed
+  // «Сворм», and they may be dropped for length like the agent's prose.
+  function swarmMessage(e) {
+    if (!e || e.isSidechain) return null;
+    let text = '';
+    if (e.type === 'user' && !e.isMeta) text = textOf(e).trim();
+    else if (e.type === 'attachment' && e.attachment && e.attachment.type === 'queued_command') text = String(e.attachment.prompt || '').trim();
+    return kindOf(text) === 'swarm' ? { at: tsOf(e), text } : null;
+  }
+
   function agentText(e) {
     if (!e || e.isSidechain || e.type !== 'assistant') return null;
     const text = textOf(e).trim();
@@ -175,23 +207,33 @@
   }
 
   // Typed while the agent was busy and never handed to it. The queue holds everything —
-  // notices too — so we replay it whole and filter for the person at the end:
-  //   enqueue          → onto the back;
-  //   dequeue (no text) → one off the front (Claude delivers in order; live logs write it bare);
-  //   remove  <text>   → that item (delivered, or pulled back into the input box);
-  //   anything else without text (popAll and the like) → the queue is emptied.
+  // notices too — so we replay it whole and keep what the next session needs:
+  //   enqueue           → onto the back;
+  //   remove  <text>    → that item: this is how a typed message leaves (delivered, or pulled
+  //                       back into the input box) — live logs, stands 2026-11-11;
+  //   dequeue (no text) → how a NOTICE leaves in live logs. Takes the first notice, never a
+  //                       typed message: a bare dequeue whose enqueue fell outside the read
+  //                       window must not eat the person's words. No notice — nothing.
+  //   anything else bare (popAll and the like) → the queue is emptied.
+  // Errs toward showing a delivered message again: the next session sees it in the tail with
+  // its answer, which is cheaper than never seeing an unanswered one.
   function undelivered(entries) {
     const q = [];
     for (const e of entries || []) {
       if (!e || e.type !== 'queue-operation') continue;
       const text = typeof e.content === 'string' ? e.content.trim() : '';
-      if (e.operation === 'enqueue') { if (text) q.push({ at: tsOf(e), text }); continue; }
-      if (e.operation === 'dequeue' && !text) { q.shift(); continue; }
-      if (!text) { q.length = 0; continue; }
+      if (e.operation === 'enqueue') { if (text) q.push({ at: tsOf(e), text, kind: kindOf(text) }); continue; }
+      if (!text) {
+        if (e.operation === 'dequeue') {
+          const i = q.findIndex((p) => p.kind === 'notice' || p.kind === 'restart');
+          if (i >= 0) q.splice(i, 1);
+        } else q.length = 0;
+        continue;
+      }
       const i = q.findIndex((p) => p.text === text);
       if (i >= 0) q.splice(i, 1);
     }
-    return q.filter((p) => fromPerson(p.text));
+    return q.filter((p) => forHeir(p.text)).map(({ at, text, kind }) => ({ at, text, who: kind === 'swarm' ? 'swarm' : 'human' }));
   }
 
   // Timestamp of the newest entry — the mark the dossier gets when it changes.
@@ -219,13 +261,15 @@
     for (const e of entries || []) {
       const h = humanMessage(e);
       if (h && h.at > (mark || 0)) { items.push({ who: 'human', ...h }); continue; }
+      const w = swarmMessage(e);
+      if (w && w.at > (mark || 0)) { items.push({ who: 'swarm', ...w }); continue; }
       const a = agentText(e);
       if (a && a.at > (mark || 0)) items.push({ who: 'agent', ...a });
     }
     const size = () => items.reduce((n, x) => n + x.text.length + 16, 0);
     let dropped = 0;
     while (size() > limit) {
-      const i = items.findIndex((x) => x.who === 'agent');
+      const i = items.findIndex((x) => x.who !== 'human');
       if (i < 0) break;
       items.splice(i, 1);
       dropped++;
@@ -279,7 +323,7 @@
       out.push('');
       out.push('## Недоставленное');
       out.push('Человек набрал это, пока прошлая сессия работала, и оно до неё так и не дошло. Начни с этого.');
-      for (const u of und) { out.push(''); out.push(`(${hhmm(u.at)})`); out.push(quote(u.text)); }
+      for (const u of und) { out.push(''); out.push(`(${u.who === 'swarm' ? 'сворм, ' : ''}${hhmm(u.at)})`); out.push(quote(u.text)); }
     }
     out.push('');
     out.push('## Хвост разговора после последней правки досье');
@@ -291,7 +335,7 @@
       if (tail.dropped) out.push(`(${tail.dropped} ранних реплик агента выпали по длине; слова человека — все.)`);
       for (const x of tail.items) {
         out.push('');
-        out.push(`**${x.who === 'human' ? 'Человек' : 'Агент'}** (${hhmm(x.at)}):`);
+        out.push(`**${x.who === 'human' ? 'Человек' : x.who === 'swarm' ? 'Сворм' : 'Агент'}** (${hhmm(x.at)}):`);
         out.push(quote(x.text));
       }
     }
@@ -330,10 +374,21 @@
   }
 
   function archivedAt(name) {
-    const m = /--(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(String(name || ''));
+    const m = /-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(String(name || ''));
     if (!m) return 0;
     const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
     return Number.isFinite(t) ? t : 0;
+  }
+
+  // Incremental read of a growing .jsonl: `rest` is the unfinished tail from last time, as a
+  // Buffer — decoding before the split would mangle a multi-byte letter cut at the boundary
+  // (Cyrillic is two bytes). A newline byte never occurs inside a UTF-8 sequence, so splitting
+  // on it is safe. Returns complete lines as text and the new rest.
+  function splitLines(rest, chunk) {
+    const buf = rest && rest.length ? Buffer.concat([rest, chunk]) : chunk;
+    const cut = buf.lastIndexOf(0x0a);
+    if (cut < 0) return { text: '', rest: buf };
+    return { text: buf.subarray(0, cut).toString('utf8'), rest: Buffer.from(buf.subarray(cut + 1)) };
   }
 
   // What we keep of a transcript line: enough for every function above, nothing else. Tool
@@ -371,6 +426,6 @@
     DIR, FILES, HISTORY, HISTORY_KEEP, ARCHIVE, ARCHIVE_DAYS, NUDGE_AFTER, TAIL_MAX,
     safeKey, templates, isBlank, parseLines, humanMessage, undelivered, lastTs,
     humanCountAfter, tailAfter, toolCallsAfter, inheritText, sweepPlan, historyPrune, hhmm,
-    fromPerson, stamp, archiveName, archivedAt, compact, ORPHAN_QUIET_MS,
+    fromPerson, kindOf, stamp, archiveName, archivedAt, compact, ORPHAN_QUIET_MS, splitLines,
   };
 });

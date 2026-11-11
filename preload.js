@@ -178,6 +178,7 @@ contextBridge.exposeInMainWorld('swarm', {
   // (digest.js) и приходят сюда, чтобы лечь на карточку.
   setDigest: (opts) => ipcRenderer.send('settings:digest', opts),
   setDossier: (opts) => ipcRenderer.send('settings:dossier', opts),
+  dossierSweep: (keys) => ipcRenderer.send('dossier:sweep', { keys }),
   onDigest: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('session:digest', handler);

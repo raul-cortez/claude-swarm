@@ -57,14 +57,42 @@ test('undelivered: unknown bare removal clears all pending', () => {
 // Live shape (this repo's transcript, 2026-11-11): background notices share the queue, and
 // `dequeue` is written without content.
 const bareDequeue = (s) => ({ type: 'queue-operation', operation: 'dequeue', timestamp: t(s), content: '' });
-test('undelivered: bare dequeue pops one from the front, the person survives', () => {
+test('undelivered: bare dequeue takes a notice, the person survives', () => {
   const es = [enqueue(1, '<task-notification>\n<task-id>x</task-id>'), enqueue(2, 'ответь мне'), bareDequeue(3)];
   assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['ответь мне']);
 });
 
-test('undelivered: notices and our own texts are not the person', () => {
-  const es = [enqueue(1, '<task-notification>x'), enqueue(2, '<agent-message from="a">hi</agent-message>'),
-    enqueue(3, '[сворм] Контекст 30%'), enqueue(4, '<pasted_content id="1">\n[сворм] Контекст'), enqueue(5, 'моё')];
+test('undelivered: bare dequeue never eats the person, even ahead of a notice', () => {
+  const es = [enqueue(1, 'ответь мне'), enqueue(2, '<task-notification>x'), bareDequeue(3)];
+  assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['ответь мне']);
+  // a leftover dequeue whose enqueue fell outside the window
+  assert.deepStrictEqual(D.undelivered([bareDequeue(1), enqueue(2, 'моё')]).map((u) => u.text), ['моё']);
+});
+
+test('undelivered: crew texts are kept and signed, the restart ask is not', () => {
+  const es = [enqueue(1, '[сворм] Вопрос от исполнителя «a»: можно?'), enqueue(2, '[сворм] Контекст этой вкладки заполнен на 30%')];
+  assert.deepStrictEqual(D.undelivered(es).map((u) => [u.who, u.text.slice(0, 12)]), [['swarm', '[сворм] Вопр']]);
+});
+
+test('the restart ask pattern matches what restart.js actually types', () => {
+  const R = require('../restart.js');
+  assert.strictEqual(D.kindOf(R.askText({ pct: 30, answerFile: '/x' })), 'restart');
+  assert.strictEqual(D.kindOf(R.askAgainText({ pct: 30, answerFile: '/x' })), 'restart');
+  assert.strictEqual(D.kindOf('<pasted_content id="1">\n' + R.askText({ pct: 30, answerFile: '/x' })), 'restart');
+});
+
+test('splitLines keeps a letter cut at the boundary intact', () => {
+  const line = Buffer.from(JSON.stringify(human(1, 'Привет')) + '\n' + JSON.stringify(human(2, 'мир')) + '\n');
+  const at = line.indexOf(Buffer.from('мир')) + 1;   // inside the two-byte «м»
+  const a = D.splitLines(null, line.subarray(0, at));
+  const b = D.splitLines(a.rest, line.subarray(at));
+  const texts = D.parseLines(a.text + '\n' + b.text).map((e) => e.message.content);
+  assert.deepStrictEqual(texts, ['Привет', 'мир']);
+  assert.strictEqual(b.rest.length, 0);
+});
+
+test('undelivered: notices are not handed over', () => {
+  const es = [enqueue(1, '<task-notification>x'), enqueue(2, '<agent-message from="a">hi</agent-message>'), enqueue(5, 'моё')];
   assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['моё']);
 });
 

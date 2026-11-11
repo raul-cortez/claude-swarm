@@ -6398,8 +6398,6 @@ const DOSSIER_TICK_MS = 30_000;
 // How much of the transcript we read for the tail. The mark is usually recent; a long-lost
 // mark is cut here rather than reading a 50 MB file in the main process.
 const DOSSIER_TAIL_BYTES = 4 * 1024 * 1024;
-// Startup sweep waits for the renderer to restore tabs; a folder without a tab by then is an orphan.
-const DOSSIER_SWEEP_DELAY_MS = 3 * 60_000;
 
 function dossierRoot() {
   return path.join(app.getPath('userData'), dossier.DIR);
@@ -6479,30 +6477,30 @@ const DOSSIER_KEEP_RECORDS = 4000;
 function dossierEntries(d) {
   if (!d.trFile) return [];
   let size = 0;
-  try { size = fs.statSync(d.trFile).size; } catch (_) { return d.dsTrEntries || []; }
+  // Файла ещё нет (после /clear Клод создаёт его не сразу) — кэш годится, только если он от
+  // этого же файла: иначе в наследство уехал бы прежний разговор.
+  try { size = fs.statSync(d.trFile).size; } catch (_) { return d.dsTrFile === d.trFile ? (d.dsTrEntries || []) : []; }
   if (d.dsTrFile !== d.trFile || size < (d.dsTrOffset || 0)) {
     d.dsTrFile = d.trFile;
     d.dsTrOffset = Math.max(0, size - DOSSIER_TAIL_BYTES);
     d.dsTrEntries = [];
-    d.dsTrRest = '';
+    d.dsTrRest = null;
   }
   if (size === d.dsTrOffset) return d.dsTrEntries;
-  let chunk = '';
+  let chunk = null;
   try {
     const fd = fs.openSync(d.trFile, 'r');
     try {
-      const buf = Buffer.alloc(size - d.dsTrOffset);
-      fs.readSync(fd, buf, 0, buf.length, d.dsTrOffset);
-      chunk = buf.toString('utf8');
+      chunk = Buffer.alloc(size - d.dsTrOffset);
+      fs.readSync(fd, chunk, 0, chunk.length, d.dsTrOffset);
     } finally { fs.closeSync(fd); }
   } catch (_) { return d.dsTrEntries; }
-  // The first read may start mid-line, and the last line may be half-written: keep the tail
-  // for next time instead of parsing it now.
-  const text = (d.dsTrRest || '') + chunk;
-  const cut = text.lastIndexOf('\n');
-  d.dsTrRest = cut < 0 ? text : text.slice(cut + 1);
+  // The first read may start mid-line, and the last line may be half-written: the unfinished
+  // tail is kept as bytes for next time (dossier.splitLines — a letter cut in half survives).
+  const part = dossier.splitLines(d.dsTrRest, chunk);
+  d.dsTrRest = part.rest;
   d.dsTrOffset = size;
-  const fresh = dossier.parseLines(cut < 0 ? '' : text.slice(0, cut)).map(dossier.compact).filter(Boolean);
+  const fresh = dossier.parseLines(part.text).map(dossier.compact).filter(Boolean);
   d.dsTrEntries = d.dsTrEntries.concat(fresh);
   if (d.dsTrEntries.length > DOSSIER_KEEP_RECORDS) d.dsTrEntries = d.dsTrEntries.slice(-DOSSIER_KEEP_RECORDS);
   return d.dsTrEntries;
@@ -6522,30 +6520,36 @@ function dossierKeepVersion(p, text) {
   } catch (e) { reportMainError(e); }
 }
 
+// The dossier changed since we last looked: keep the previous version and move the mark to the
+// moment of the edit. Returns true when «blank» flipped (the hook's texts depend on it).
+function dossierRefreshMark(p, d) {
+  let st = null;
+  try { st = fs.statSync(p.dossier); } catch (_) { return false; }
+  if (st.mtimeMs === d.dsMtime) return false;
+  let text = '';
+  try { text = fs.readFileSync(p.dossier, 'utf8'); } catch (_) { text = ''; }
+  dossierKeepVersion(p, d.dsPrev);
+  // The moment of the edit, not the newest log entry: a message typed after the edit (even one
+  // still waiting in Claude's queue) is not digested yet.
+  d.dsMark = Math.max(st.mtimeMs, d.dsMark || 0);
+  const s = dossierLoadState(p);
+  s.mark = d.dsMark;
+  dossierSaveState(p, s);
+  d.dsMtime = st.mtimeMs;
+  d.dsPrev = text;
+  const blank = dossier.isBlank(text, 'dossier');
+  if (blank === d.dsBlank) return false;
+  d.dsBlank = blank;
+  return true;
+}
+
 function dossierTick(id, d) {
   // Без ключа вкладки папка звалась бы по id, а id не переживает перезапуск приложения — уборка
   // приняла бы её за сироту. Такие вкладки (не из сворма) живут без досье.
   if (!d.tabKey) return;
   const p = dossierEnsure(id, d);
   if (!p) return;
-  let changed = false;
-  let st = null;
-  try { st = fs.statSync(p.dossier); } catch (_) { st = null; }
-  if (st && st.mtimeMs !== d.dsMtime) {
-    let text = '';
-    try { text = fs.readFileSync(p.dossier, 'utf8'); } catch (_) { text = ''; }
-    dossierKeepVersion(p, d.dsPrev);
-    // The moment of the edit, not the newest log entry: a message typed after the edit (even
-    // one still waiting in Claude's queue) is not digested yet.
-    d.dsMark = Math.max(st.mtimeMs, d.dsMark || 0);
-    const s = dossierLoadState(p);
-    s.mark = d.dsMark;
-    dossierSaveState(p, s);
-    d.dsMtime = st.mtimeMs;
-    d.dsPrev = text;
-    const blank = dossier.isBlank(text, 'dossier');
-    if (blank !== d.dsBlank) { d.dsBlank = blank; changed = true; }
-  }
+  let changed = dossierRefreshMark(p, d);
   const lag = dossier.humanCountAfter(dossierEntries(d), d.dsMark || 0);
   const due = lag >= dossier.NUDGE_AFTER ? lag : 0;
   if (due !== (d.dsLag || 0)) { d.dsLag = due; changed = true; }
@@ -6566,11 +6570,11 @@ setInterval(() => {
 // inlines it into the next SessionStart and renames it, so it's read exactly once.
 function dossierInherit(id, d, how) {
   if (!dossierFor(id, d)) return;
-  // Последняя правка досье могла случиться за секунды до ухода — такт её ещё не видел, и отметка
-  // отстала бы: хвост повторил бы уже разобранное.
-  dossierTick(id, d);
   const p = dossierEnsure(id, d);
   if (!p) return;
+  // Последняя правка досье могла случиться за секунды до ухода — такт её ещё не видел, и отметка
+  // отстала бы: хвост повторил бы уже разобранное.
+  dossierRefreshMark(p, d);
   const entries = dossierEntries(d);
   let workAt = 0;
   try { workAt = fs.statSync(p.work).mtimeMs; } catch (_) { workAt = 0; }
@@ -6602,10 +6606,13 @@ function dossierArchive(id, d) {
   } catch (e) { reportMainError(e); }
 }
 
-function dossierSweep() {
+// `savedKeys` — ключи ВСЕХ вкладок, которые окно собирается восстановить (его сохранённый список),
+// присланные до того, как оно начнёт их поднимать по одной. Сверка с тем, что уже поднято, гонялась
+// бы с восстановлением: медленная вкладка теряла бы досье.
+function dossierSweep(savedKeys) {
   const root = dossierRoot();
   const arch = path.join(root, dossier.ARCHIVE);
-  const liveKeys = [];
+  const liveKeys = (savedKeys || []).map(String);
   // Мёртвая оболочка — не закрытая вкладка: карточка на месте, досье ей ещё понадобится.
   for (const [id, d] of det) if (d && d.tabKey) liveKeys.push(dossier.safeKey(restartKeyOf(id, d)));
   const list = (dir) => { try { return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (_) { return []; } };
@@ -6614,7 +6621,7 @@ function dossierSweep() {
     liveKeys,
     // Тишина папки — по самому свежему файлу в ней: переименование и правка файла на месте
     // время самой папки не трогают.
-    dirs: list(root).map((e) => {
+    dirs: list(root).filter((e) => e.name !== dossier.ARCHIVE).map((e) => {
       const dir = path.join(root, e.name);
       let newest = mtime(dir);
       try { for (const f of fs.readdirSync(dir)) newest = Math.max(newest, mtime(path.join(dir, f))); } catch (_) {}
@@ -6633,7 +6640,12 @@ function dossierSweep() {
   }
 }
 
-setTimeout(() => { try { dossierSweep(); } catch (e) { reportMainError(e); } }, DOSSIER_SWEEP_DELAY_MS);
+let dossierSwept = false;
+ipcMain.on('dossier:sweep', (_e, { keys } = {}) => {
+  if (dossierSwept) return;      // раз за запуск: новое окно (⌘N, reload) списка заново не несёт
+  dossierSwept = true;
+  try { dossierSweep(Array.isArray(keys) ? keys : []); } catch (e) { reportMainError(e); }
+});
 
 ipcMain.on('settings:dossier', (_e, opts = {}) => {
   DOSSIER_ENABLED = !!(opts && opts.enabled);
@@ -7595,12 +7607,13 @@ function restartFire(id, d) {
   // объявил вопрос, и человек с телефона отвечал бы уже в пустоту. Второй заход эту дыру и
   // закрывает — молчаливо, если объявлять было нечего.
   tgOnRestartExit(id, d);
-  if (!live || !line) return false;
   // Наследство — здесь, а не при разрешении: прежний агент уже точно ушёл (его лог окончательный),
   // а новый ещё не запущен. Перезапуск, который сорвался раньше, наследства не оставляет — иначе
-  // его вклеил бы первый же /clear или compact в сессию, которая никуда не уходила. Привязка к
-  // прежнему разговору (d.trFile) ещё жива: её снимает trForget ниже.
-  try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); }
+  // его вклеил бы первый же /clear или compact в сессию, которая никуда не уходила. И до проверки
+  // строки: агент ушёл, даже если поднять его нечем, — тогда его поднимет человек, и наследство
+  // ему нужно не меньше. Привязка к прежнему разговору (d.trFile) ещё жива: её снимает trForget.
+  if (live) { try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); } }
+  if (!live || !line) return false;
   // Порциями, а не одним куском: именно здесь приложение и вставало намертво — строка запуска
   // с эстафетой внутри выросла до килобайтов, и оболочка со своим эхом заперла нас в write.
   // Потолок на саму эстафету стоит раньше, в restartGrant (restart.promptFits), но полагаться

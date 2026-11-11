@@ -7246,6 +7246,9 @@ async function restoreOrStart() {
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem('swarm.tabs') || '[]'); } catch (_) {}
   saved = Array.isArray(saved) ? saved.filter((t) => t && t.cwd) : [];
+  // Уборка досье — по полному списку того, что сейчас поднимется, ДО подъёма: сверять с уже
+  // поднятым значило бы гоняться с медленным восстановлением.
+  window.swarm.dossierSweep(saved.map((t) => t.tabKey).filter(Boolean));
   if (!saved.length) { createSession(); return; }
   // Один разговор — одной вкладке. В сохранённых вкладках один и тот же claudeSessionId
   // может стоять у нескольких: так бывало, когда вкладка без своей стенограммы забирала
