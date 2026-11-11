@@ -159,6 +159,7 @@ test('inheritText: undelivered first, tail quoted, crash wording', () => {
   assert.ok(txt.indexOf('Недоставленное') < txt.indexOf('Хвост'));
   assert.ok(txt.includes('> ответь на вопрос'));
   assert.ok(txt.includes('4 вызовов'));
+  assert.ok(/САМ НЕ ВЫПОЛНЯЙ/.test(txt), 'старые просьбы — только через подтверждение человека');
 });
 
 test('inheritText: empty tail says so', () => {
