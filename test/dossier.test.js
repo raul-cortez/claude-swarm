@@ -57,21 +57,20 @@ test('undelivered: unknown bare removal clears all pending', () => {
 // Live shape (this repo's transcript, 2026-11-11): background notices share the queue, and
 // `dequeue` is written without content.
 const bareDequeue = (s) => ({ type: 'queue-operation', operation: 'dequeue', timestamp: t(s), content: '' });
-test('undelivered: bare dequeue takes a notice, the person survives', () => {
-  const es = [enqueue(1, '<task-notification>\n<task-id>x</task-id>'), enqueue(2, 'ответь мне'), bareDequeue(3)];
-  assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['ответь мне']);
-});
-
-test('undelivered: bare dequeue never eats the person, even ahead of a notice', () => {
-  const es = [enqueue(1, 'ответь мне'), enqueue(2, '<task-notification>x'), bareDequeue(3)];
-  assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['ответь мне']);
-  // a leftover dequeue whose enqueue fell outside the window
-  assert.deepStrictEqual(D.undelivered([bareDequeue(1), enqueue(2, 'моё')]).map((u) => u.text), ['моё']);
+test('undelivered: a bare dequeue takes the front, whatever it is (measured order)', () => {
+  // delivered in turn: the notice first, then the person
+  assert.deepStrictEqual(D.undelivered([enqueue(1, '<task-notification>x'), enqueue(2, 'ответь мне'), bareDequeue(3)]).map((u) => u.text), ['ответь мне']);
+  // the person was at the front — it's the person who got delivered
+  assert.deepStrictEqual(D.undelivered([enqueue(1, 'ответь мне'), enqueue(2, '<task-notification>x'), bareDequeue(3)]).map((u) => u.text), []);
+  // two typed, one delivered
+  assert.deepStrictEqual(D.undelivered([enqueue(1, 'раз'), enqueue(2, 'два'), bareDequeue(3)]).map((u) => u.text), ['два']);
 });
 
 test('undelivered: crew texts are kept and signed, the restart ask is not', () => {
   const es = [enqueue(1, '[сворм] Вопрос от исполнителя «a»: можно?'), enqueue(2, '[сворм] Контекст этой вкладки заполнен на 30%')];
   assert.deepStrictEqual(D.undelivered(es).map((u) => [u.who, u.text.slice(0, 12)]), [['swarm', '[сворм] Вопр']]);
+  const txt = D.inheritText({ how: 'restart', undelivered: D.undelivered(es), tail: { items: [], dropped: 0 } });
+  assert.ok(txt.includes('**Сворм**'));
 });
 
 test('the restart ask pattern matches what restart.js actually types', () => {

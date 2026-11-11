@@ -6568,20 +6568,22 @@ setInterval(() => {
 // The session of this tab is about to die (context restart) or just died (crash). Write what
 // the next one must get: the verbatim tail after the mark and undelivered messages. The hook
 // inlines it into the next SessionStart and renames it, so it's read exactly once.
-function dossierInherit(id, d, how) {
+// `resumed`: the next session may come up with the old conversation (crash — the menu offers
+// --resume; a restart without a launch line — the person raises it by hand).
+function dossierInherit(id, d, how, resumed) {
   if (!dossierFor(id, d)) return;
   const p = dossierEnsure(id, d);
   if (!p) return;
   // Последняя правка досье могла случиться за секунды до ухода — такт её ещё не видел, и отметка
   // отстала бы: хвост повторил бы уже разобранное.
-  dossierRefreshMark(p, d);
+  if (dossierRefreshMark(p, d)) tgWriteModes();
   const entries = dossierEntries(d);
   let workAt = 0;
   try { workAt = fs.statSync(p.work).mtimeMs; } catch (_) { workAt = 0; }
   const text = dossier.inheritText({
     how,
     at: Date.now(),
-    resumed: how === 'crash',
+    resumed: how === 'crash' || !!resumed,
     undelivered: dossier.undelivered(entries),
     tail: dossier.tailAfter(entries, d.dsMark || 0),
     workAt,
@@ -6609,6 +6611,8 @@ function dossierArchive(id, d) {
 // `savedKeys` — ключи ВСЕХ вкладок, которые окно собирается восстановить (его сохранённый список),
 // присланные до того, как оно начнёт их поднимать по одной. Сверка с тем, что уже поднято, гонялась
 // бы с восстановлением: медленная вкладка теряла бы досье.
+// `savedKeys === null` — списка нет (восстановление выключено, сброшенный профиль): тогда сирот
+// не ищем вовсе, только чистим архив. Пустой список значил бы «всё — сироты».
 function dossierSweep(savedKeys) {
   const root = dossierRoot();
   const arch = path.join(root, dossier.ARCHIVE);
@@ -6629,7 +6633,7 @@ function dossierSweep(savedKeys) {
     }),
     archived: list(arch).map((e) => ({ name: e.name, mtimeMs: mtime(path.join(arch, e.name)) })),
   });
-  for (const key of plan.toArchive) {
+  for (const key of savedKeys ? plan.toArchive : []) {
     try {
       fs.mkdirSync(arch, { recursive: true });
       fs.renameSync(path.join(root, key), path.join(arch, dossier.archiveName(key)));
@@ -6640,11 +6644,13 @@ function dossierSweep(savedKeys) {
   }
 }
 
+// Сирот ищем раз за запуск, по первому списку: новое окно (⌘N, reload) приходит с тем же
+// списком, а вкладки к этому времени уже подняты и видны в det. Архив чистим на каждом зове.
 let dossierSwept = false;
 ipcMain.on('dossier:sweep', (_e, { keys } = {}) => {
-  if (dossierSwept) return;      // раз за запуск: новое окно (⌘N, reload) списка заново не несёт
-  dossierSwept = true;
-  try { dossierSweep(Array.isArray(keys) ? keys : []); } catch (e) { reportMainError(e); }
+  const list = Array.isArray(keys) && keys.length && !dossierSwept ? keys : null;
+  if (list) dossierSwept = true;
+  try { dossierSweep(list); } catch (e) { reportMainError(e); }
 });
 
 ipcMain.on('settings:dossier', (_e, opts = {}) => {
@@ -7612,7 +7618,7 @@ function restartFire(id, d) {
   // его вклеил бы первый же /clear или compact в сессию, которая никуда не уходила. И до проверки
   // строки: агент ушёл, даже если поднять его нечем, — тогда его поднимет человек, и наследство
   // ему нужно не меньше. Привязка к прежнему разговору (d.trFile) ещё жива: её снимает trForget.
-  if (live) { try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); } }
+  if (live) { try { dossierInherit(id, d, 'restart', !line); } catch (e) { reportMainError(e); } }
   if (!live || !line) return false;
   // Порциями, а не одним куском: именно здесь приложение и вставало намертво — строка запуска
   // с эстафетой внутри выросла до килобайтов, и оболочка со своим эхом заперла нас в write.

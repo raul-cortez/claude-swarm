@@ -160,26 +160,32 @@
     return k === 'person' || k === 'swarm';
   }
 
-  // What the person actually said, as { at, text }. Two shapes: a plain user prompt, and a
-  // message typed while the agent was busy, delivered later as a queued_command attachment.
-  function humanMessage(e) {
+  // A prompt put into the conversation, as { at, text, kind } (kind — see kindOf). Two shapes: a
+  // plain user prompt, and a message typed while the agent was busy, delivered later as a
+  // queued_command attachment (not also as a user entry — stand 2026-11-11).
+  function said(e) {
     if (!e || e.isSidechain) return null;
+    // Claude marks who put a prompt into the conversation; trust it when it's there. Our own
+    // texts arrive typed into the terminal, so they are «human» to Claude — kindOf tells them.
+    if (e.origin && e.origin.kind && e.origin.kind !== 'human') return null;
+    let text = '';
     if (e.type === 'user') {
       if (e.isMeta || e.isCompactSummary) return null;
-      // Claude marks who put a prompt into the conversation; trust it when it's there.
-      if (e.origin && e.origin.kind && e.origin.kind !== 'human') return null;
       const c = e.message && e.message.content;
       if (Array.isArray(c) && c.some((b) => b && b.type === 'tool_result')) return null;
-      const text = textOf(e).trim();
-      if (!text || RE_INTERRUPT.test(text) || RE_NOISE.test(text) || !fromPerson(text)) return null;
-      return { at: tsOf(e), text: commandText(text) };
-    }
-    if (e.type === 'attachment' && e.attachment && e.attachment.type === 'queued_command') {
-      if (e.origin && e.origin.kind && e.origin.kind !== 'human') return null;
-      const text = String(e.attachment.prompt || '').trim();
-      return fromPerson(text) ? { at: tsOf(e), text } : null;
-    }
-    return null;
+      text = textOf(e).trim();
+      if (RE_INTERRUPT.test(text) || RE_NOISE.test(text)) return null;
+    } else if (e.type === 'attachment' && e.attachment && e.attachment.type === 'queued_command') {
+      text = String(e.attachment.prompt || '').trim();
+    } else return null;
+    const kind = kindOf(text);
+    return kind ? { at: tsOf(e), text: commandText(text), kind } : null;
+  }
+
+  // What the person actually said.
+  function humanMessage(e) {
+    const s = said(e);
+    return s && s.kind === 'person' ? { at: s.at, text: s.text } : null;
   }
 
   // `/task <url>` arrives wrapped in tags; the person typed the plain form.
@@ -193,11 +199,8 @@
   // Our own crew texts in the conversation (not the restart ask): the tail shows them signed
   // «Сворм», and they may be dropped for length like the agent's prose.
   function swarmMessage(e) {
-    if (!e || e.isSidechain) return null;
-    let text = '';
-    if (e.type === 'user' && !e.isMeta) text = textOf(e).trim();
-    else if (e.type === 'attachment' && e.attachment && e.attachment.type === 'queued_command') text = String(e.attachment.prompt || '').trim();
-    return kindOf(text) === 'swarm' ? { at: tsOf(e), text } : null;
+    const s = said(e);
+    return s && s.kind === 'swarm' ? { at: s.at, text: s.text } : null;
   }
 
   function agentText(e) {
@@ -209,14 +212,15 @@
   // Typed while the agent was busy and never handed to it. The queue holds everything —
   // notices too — so we replay it whole and keep what the next session needs:
   //   enqueue           → onto the back;
-  //   remove  <text>    → that item: this is how a typed message leaves (delivered, or pulled
-  //                       back into the input box) — live logs, stands 2026-11-11;
-  //   dequeue (no text) → how a NOTICE leaves in live logs. Takes the first notice, never a
-  //                       typed message: a bare dequeue whose enqueue fell outside the read
-  //                       window must not eat the person's words. No notice — nothing.
-  //   anything else bare (popAll and the like) → the queue is emptied.
-  // Errs toward showing a delivered message again: the next session sees it in the tail with
-  // its answer, which is cheaper than never seeing an unanswered one.
+  //   dequeue (no text) → one off the FRONT, whatever it is;
+  //   remove  <text>    → that item (delivered out of turn, or pulled back into the input box);
+  //   anything else bare → the queue is emptied.
+  // Strict order is measured, not assumed: across all 1126 local transcripts with a queue
+  // (2026-11-11), 2084 typed messages left by a bare dequeue while at the front and only 265 by
+  // `remove <text>`. Replayed in order, 1074 files end with nothing of the person's left over
+  // (66 messages in all — sessions that ended with input still queued); «notices leave first»
+  // would leave 2150. Known gap: a dequeue whose enqueue lies before the read window pops a
+  // newer item — rare, the queue drains in seconds.
   function undelivered(entries) {
     const q = [];
     for (const e of entries || []) {
@@ -224,10 +228,7 @@
       const text = typeof e.content === 'string' ? e.content.trim() : '';
       if (e.operation === 'enqueue') { if (text) q.push({ at: tsOf(e), text, kind: kindOf(text) }); continue; }
       if (!text) {
-        if (e.operation === 'dequeue') {
-          const i = q.findIndex((p) => p.kind === 'notice' || p.kind === 'restart');
-          if (i >= 0) q.splice(i, 1);
-        } else q.length = 0;
+        if (e.operation === 'dequeue') q.shift(); else q.length = 0;
         continue;
       }
       const i = q.findIndex((p) => p.text === text);
@@ -322,8 +323,12 @@
     if (und.length) {
       out.push('');
       out.push('## Недоставленное');
-      out.push('Человек набрал это, пока прошлая сессия работала, и оно до неё так и не дошло. Начни с этого.');
-      for (const u of und) { out.push(''); out.push(`(${u.who === 'swarm' ? 'сворм, ' : ''}${hhmm(u.at)})`); out.push(quote(u.text)); }
+      out.push('Это набрали, пока прошлая сессия работала, и до неё оно так и не дошло. Начни с этого. «Человек» — его слова; «Сворм» — сообщения бригады (вопрос исполнителя и т.п.), отвечай на них в бригаду, а не человеку.');
+      for (const u of und) {
+        out.push('');
+        out.push(`**${u.who === 'swarm' ? 'Сворм' : 'Человек'}** (${hhmm(u.at)}):`);
+        out.push(quote(u.text));
+      }
     }
     out.push('');
     out.push('## Хвост разговора после последней правки досье');
@@ -332,7 +337,7 @@
       out.push('Пусто: досье успело разобрать всё, что было сказано.');
     } else {
       out.push('Разбери: новые правила и замечания — в досье, на неотвеченное — ответь.');
-      if (tail.dropped) out.push(`(${tail.dropped} ранних реплик агента выпали по длине; слова человека — все.)`);
+      if (tail.dropped) out.push(`(${tail.dropped} ранних реплик агента и сворма выпали по длине; слова человека — все.)`);
       for (const x of tail.items) {
         out.push('');
         out.push(`**${x.who === 'human' ? 'Человек' : x.who === 'swarm' ? 'Сворм' : 'Агент'}** (${hhmm(x.at)}):`);
@@ -374,7 +379,7 @@
   }
 
   function archivedAt(name) {
-    const m = /-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(String(name || ''));
+    const m = /--(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(String(name || ''));
     if (!m) return 0;
     const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
     return Number.isFinite(t) ? t : 0;
