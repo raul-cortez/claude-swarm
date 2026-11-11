@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.82.0 — 2026-11-11
+
+- feat(dossier): the heir confirms the old session's requests before doing them
+- feat(dossier): say what counts as a plan — steps we'll come back to after this turn
+- feat(dossier): the plan in the work file is a tree that keeps its top steps
+- fix(dossier): queue replays in measured order, labelled heirs, safer sweep
+- fix(dossier): control review — a bare dequeue takes a notice, crew texts reach the heir, byte-safe reads
+- fix(dossier): review round — the queue is not only the person, bare dequeue, cheaper log reading
+- feat(dossier): every tab keeps a dossier and a live work file that outlive its sessions
+
 ## 0.81.1 — 2026-11-10
 
 - fix(proxy): undo the command split mid-session, remember silent drops, retry relays
