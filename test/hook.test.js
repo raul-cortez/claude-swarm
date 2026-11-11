@@ -1174,6 +1174,7 @@ test('досье: на старте называет оба файла абсо�
   assert.ok(ctx.includes('/u/tabs/k/dossier.md'));
   assert.ok(ctx.includes('/u/tabs/k/work.md'));
   assert.ok(/\[до: событие\]/.test(ctx));
+  assert.ok(/План — дерево/.test(ctx), 'план держится деревом, верхние шаги не стираются');
 });
 
 test('досье: самоперезапуск без handoff, с файлом работы', () => {
