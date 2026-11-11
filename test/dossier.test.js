@@ -50,8 +50,22 @@ test('undelivered: two identical texts — one removal cancels one copy', () => 
   assert.strictEqual(D.undelivered(es).length, 1);
 });
 
-test('undelivered: removal without content clears all pending', () => {
+test('undelivered: unknown bare removal clears all pending', () => {
   assert.strictEqual(D.undelivered([enqueue(1, 'A'), enqueue(2, 'B'), { type: 'queue-operation', operation: 'popAll', timestamp: t(3) }]).length, 0);
+});
+
+// Live shape (this repo's transcript, 2026-11-11): background notices share the queue, and
+// `dequeue` is written without content.
+const bareDequeue = (s) => ({ type: 'queue-operation', operation: 'dequeue', timestamp: t(s), content: '' });
+test('undelivered: bare dequeue pops one from the front, the person survives', () => {
+  const es = [enqueue(1, '<task-notification>\n<task-id>x</task-id>'), enqueue(2, 'ответь мне'), bareDequeue(3)];
+  assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['ответь мне']);
+});
+
+test('undelivered: notices and our own texts are not the person', () => {
+  const es = [enqueue(1, '<task-notification>x'), enqueue(2, '<agent-message from="a">hi</agent-message>'),
+    enqueue(3, '[сворм] Контекст 30%'), enqueue(4, '<pasted_content id="1">\n[сворм] Контекст'), enqueue(5, 'моё')];
+  assert.deepStrictEqual(D.undelivered(es).map((u) => u.text), ['моё']);
 });
 
 test('humanMessage: prompts and queued commands count, noise does not', () => {
@@ -62,6 +76,15 @@ test('humanMessage: prompts and queued commands count, noise does not', () => {
   assert.strictEqual(D.humanMessage(human(1, '[Request interrupted by user]')), null);
   assert.strictEqual(D.humanMessage(human(1, '<local-command-stdout>ok</local-command-stdout>')), null);
   assert.strictEqual(D.humanMessage({ type: 'user', timestamp: t(1), message: { content: [{ type: 'tool_result', content: 'x' }] } }), null);
+});
+
+test('humanMessage: origin other than human, notices, swarm texts are not the person', () => {
+  assert.strictEqual(D.humanMessage({ ...human(1, 'x'), origin: { kind: 'task-notification' } }), null);
+  assert.ok(D.humanMessage({ ...human(1, 'x'), origin: { kind: 'human' } }));
+  assert.strictEqual(D.humanMessage(human(1, '[сворм] Контекст этой вкладки заполнен на 30%')), null);
+  assert.strictEqual(D.humanMessage(human(1, '\n\n<pasted_content id="6d74">\n[сворм] Контекст')), null);
+  assert.strictEqual(D.humanMessage(queued(1, '<task-notification>\n<task-id>a</task-id>')), null);
+  assert.strictEqual(D.humanMessage({ ...queued(1, 'x'), origin: { kind: 'task-notification' } }), null);
 });
 
 test('humanMessage: slash command is shown as typed', () => {
@@ -118,15 +141,34 @@ test('inheritText: empty tail says so', () => {
   assert.ok(!/Недоставленное/.test(txt));
 });
 
-test('sweepPlan: orphans to archive, old archive deleted, live untouched', () => {
+test('sweepPlan: quiet orphans to archive, recent ones wait, live untouched', () => {
   const now = Date.parse('2026-12-31T00:00:00Z');
+  const old = now - 2 * 86400000;
   const p = D.sweepPlan({
     now, liveKeys: ['k1'],
-    dirs: [{ key: 'k1' }, { key: 'k2' }, { key: 'archive' }],
-    archived: [{ name: 'k0-2026-11-01', mtimeMs: Date.parse('2026-11-01T00:00:00Z') }, { name: 'k3-2026-12-20', mtimeMs: Date.parse('2026-12-20T00:00:00Z') }],
+    dirs: [{ key: 'k1', mtimeMs: old }, { key: 'k2', mtimeMs: old }, { key: 'k5', mtimeMs: now - 3600000 }, { key: 'archive', mtimeMs: old }],
+    archived: [],
   });
   assert.deepStrictEqual(p.toArchive, ['k2']);
-  assert.deepStrictEqual(p.toDelete, ['k0-2026-11-01']);
+});
+
+test('sweepPlan: archive age from the name stamp, not the folder mtime', () => {
+  const now = Date.parse('2026-12-31T00:00:00Z');
+  const fresh = D.archiveName('k9', Date.parse('2026-12-25T10:00:00Z'));
+  const stale = D.archiveName('k8', Date.parse('2026-11-01T10:00:00Z'));
+  assert.strictEqual(D.archivedAt(fresh), Date.parse('2026-12-25T10:00:00Z'));
+  const p = D.sweepPlan({ now, liveKeys: [], dirs: [],
+    archived: [{ name: fresh, mtimeMs: Date.parse('2026-01-01T00:00:00Z') }, { name: stale, mtimeMs: now }] });
+  assert.deepStrictEqual(p.toDelete, [stale]);
+});
+
+test('compact keeps text, queue ops and tool_use stubs, drops tool bulk', () => {
+  assert.strictEqual(D.compact({ type: 'user', timestamp: t(1), message: { content: [{ type: 'tool_result', content: 'huge' }] } }), null);
+  const a = D.compact({ type: 'assistant', timestamp: t(2), message: { content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'hi' }, { type: 'tool_use', input: { big: 'x'.repeat(1000) } }] } });
+  assert.deepStrictEqual(a.message.content, [{ type: 'text', text: 'hi' }, { type: 'tool_use' }]);
+  assert.strictEqual(D.compact({ type: 'attachment', attachment: { type: 'hook_success' } }), null);
+  assert.strictEqual(D.compact(enqueue(1, 'A')).content, 'A');
+  assert.strictEqual(D.toolCallsAfter([a], 0), 1);
 });
 
 test('historyPrune keeps the newest five', () => {

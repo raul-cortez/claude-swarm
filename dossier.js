@@ -126,6 +126,17 @@
   const RE_INTERRUPT = /^\[Request interrupted by user(?: for tool use)?\]$/;
   // Harness noise that arrives as a «user» string: local command output, caveats.
   const RE_NOISE = /^<(local-command-stdout|local-command-stderr|local-command-caveat|system-reminder)>/;
+  // Not the person, though it travels the same queue: background-task and subagent notices
+  // (`<task-notification>`, `<agent-message …>` — enqueued and delivered like a typed message;
+  // a real transcript had 40 enqueues, two of them typed), and our own texts typed into the
+  // terminal (restart ask, crew notices) — they start with «[сворм]», possibly inside the
+  // bracketed-paste wrapper.
+  const RE_NOT_PERSON = /^(?:<pasted_content[^>]*>\s*)?(?:<(?:task-notification|agent-message|[a-z-]+-notification)\b|\[сворм\])/;
+
+  function fromPerson(text) {
+    const t = String(text == null ? '' : text).trim();
+    return !!t && !RE_NOT_PERSON.test(t);
+  }
 
   // What the person actually said, as { at, text }. Two shapes: a plain user prompt, and a
   // message typed while the agent was busy, delivered later as a queued_command attachment.
@@ -133,15 +144,18 @@
     if (!e || e.isSidechain) return null;
     if (e.type === 'user') {
       if (e.isMeta || e.isCompactSummary) return null;
+      // Claude marks who put a prompt into the conversation; trust it when it's there.
+      if (e.origin && e.origin.kind && e.origin.kind !== 'human') return null;
       const c = e.message && e.message.content;
       if (Array.isArray(c) && c.some((b) => b && b.type === 'tool_result')) return null;
       const text = textOf(e).trim();
-      if (!text || RE_INTERRUPT.test(text) || RE_NOISE.test(text)) return null;
+      if (!text || RE_INTERRUPT.test(text) || RE_NOISE.test(text) || !fromPerson(text)) return null;
       return { at: tsOf(e), text: commandText(text) };
     }
     if (e.type === 'attachment' && e.attachment && e.attachment.type === 'queued_command') {
+      if (e.origin && e.origin.kind && e.origin.kind !== 'human') return null;
       const text = String(e.attachment.prompt || '').trim();
-      return text ? { at: tsOf(e), text } : null;
+      return fromPerson(text) ? { at: tsOf(e), text } : null;
     }
     return null;
   }
@@ -160,20 +174,24 @@
     return text ? { at: tsOf(e), text } : null;
   }
 
-  // Typed while the agent was busy and never handed to it. Each removal (delivery, the person
-  // pulling it back into the input box) cancels the oldest pending copy with the same text;
-  // a removal without content clears everything pending.
+  // Typed while the agent was busy and never handed to it. The queue holds everything —
+  // notices too — so we replay it whole and filter for the person at the end:
+  //   enqueue          → onto the back;
+  //   dequeue (no text) → one off the front (Claude delivers in order; live logs write it bare);
+  //   remove  <text>   → that item (delivered, or pulled back into the input box);
+  //   anything else without text (popAll and the like) → the queue is emptied.
   function undelivered(entries) {
-    const pending = [];
+    const q = [];
     for (const e of entries || []) {
       if (!e || e.type !== 'queue-operation') continue;
-      const text = typeof e.content === 'string' ? e.content : '';
-      if (e.operation === 'enqueue') { if (text.trim()) pending.push({ at: tsOf(e), text: text.trim() }); continue; }
-      if (!text) { pending.length = 0; continue; }
-      const i = pending.findIndex((p) => p.text === text.trim());
-      if (i >= 0) pending.splice(i, 1);
+      const text = typeof e.content === 'string' ? e.content.trim() : '';
+      if (e.operation === 'enqueue') { if (text) q.push({ at: tsOf(e), text }); continue; }
+      if (e.operation === 'dequeue' && !text) { q.shift(); continue; }
+      if (!text) { q.length = 0; continue; }
+      const i = q.findIndex((p) => p.text === text);
+      if (i >= 0) q.splice(i, 1);
     }
-    return pending;
+    return q.filter((p) => fromPerson(p.text));
   }
 
   // Timestamp of the newest entry — the mark the dossier gets when it changes.
@@ -284,13 +302,63 @@
   // Housekeeping at startup. `dirs`: [{ key, mtimeMs }] — live tab folders under tabs/;
   // `archived`: [{ name, mtimeMs }] under tabs/archive/; `liveKeys`: keys of restored tabs.
   // Folders with no tab go to the archive; the archive is cleared after ARCHIVE_DAYS.
+  //
+  // A folder is an orphan only if it's also quiet for ORPHAN_QUIET_MS: tabs are restored one by
+  // one, and a slow restore must not lose a dossier that was written to this morning.
+  // Archive age comes from the stamp in the folder name (archiveName) — a rename doesn't touch
+  // a directory's mtime, so mtime would be the tab's birth, and a 40-day tab would vanish at once.
+  const ORPHAN_QUIET_MS = 24 * 3600 * 1000;
   function sweepPlan(o) {
     const opts = o || {};
     const live = new Set((opts.liveKeys || []).map(safeKey));
     const now = Number(opts.now) || Date.now();
-    const toArchive = (opts.dirs || []).filter((d) => d && d.key && d.key !== ARCHIVE && !live.has(d.key)).map((d) => d.key);
-    const toDelete = (opts.archived || []).filter((a) => a && now - (a.mtimeMs || 0) > ARCHIVE_DAYS * 86400000).map((a) => a.name);
+    const toArchive = (opts.dirs || [])
+      .filter((d) => d && d.key && d.key !== ARCHIVE && !live.has(d.key) && now - (d.mtimeMs || 0) > ORPHAN_QUIET_MS)
+      .map((d) => d.key);
+    const toDelete = (opts.archived || [])
+      .filter((a) => a && now - (archivedAt(a.name) || a.mtimeMs || now) > ARCHIVE_DAYS * 86400000)
+      .map((a) => a.name);
     return { toArchive, toDelete };
+  }
+
+  function stamp(at) {
+    return new Date(Number(at) || Date.now()).toISOString().replace(/[:.]/g, '-');
+  }
+
+  function archiveName(key, at) {
+    return safeKey(key) + '--' + stamp(at);
+  }
+
+  function archivedAt(name) {
+    const m = /--(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(String(name || ''));
+    if (!m) return 0;
+    const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  // What we keep of a transcript line: enough for every function above, nothing else. Tool
+  // inputs and results are the bulk of a log and none of our business.
+  function compact(e) {
+    if (!e || typeof e !== 'object') return null;
+    const base = { type: e.type, timestamp: e.timestamp };
+    if (e.isSidechain) base.isSidechain = true;
+    if (e.type === 'queue-operation') return { ...base, operation: e.operation, content: typeof e.content === 'string' ? e.content : '' };
+    if (e.type === 'attachment') {
+      if (!e.attachment || e.attachment.type !== 'queued_command') return null;
+      return { ...base, origin: e.origin, attachment: { type: 'queued_command', prompt: e.attachment.prompt } };
+    }
+    if (e.type === 'user') {
+      const c = e.message && e.message.content;
+      if (Array.isArray(c) && c.some((b) => b && b.type === 'tool_result')) return null;
+      return { ...base, isMeta: e.isMeta, isCompactSummary: e.isCompactSummary, origin: e.origin, message: { content: c } };
+    }
+    if (e.type === 'assistant') {
+      const c = (e.message && e.message.content) || [];
+      const blocks = Array.isArray(c) ? c.filter((b) => b && (b.type === 'text' || b.type === 'tool_use'))
+        .map((b) => (b.type === 'text' ? { type: 'text', text: b.text } : { type: 'tool_use' })) : [];
+      return blocks.length ? { ...base, message: { content: blocks } } : null;
+    }
+    return null;
   }
 
   // Versions to drop after a new one was added: keep the newest HISTORY_KEEP.
@@ -303,5 +371,6 @@
     DIR, FILES, HISTORY, HISTORY_KEEP, ARCHIVE, ARCHIVE_DAYS, NUDGE_AFTER, TAIL_MAX,
     safeKey, templates, isBlank, parseLines, humanMessage, undelivered, lastTs,
     humanCountAfter, tailAfter, toolCallsAfter, inheritText, sweepPlan, historyPrune, hhmm,
+    fromPerson, stamp, archiveName, archivedAt, compact, ORPHAN_QUIET_MS,
   };
 });

@@ -3243,13 +3243,10 @@ function tgWriteModes() {
   // Досье — по id ВКЛАДКИ (SWARM_TAB_ID в окружении pty), а не разговора: свежая сессия после
   // перезапуска стартует раньше, чем мы узнаём её id, а наследство ей нужно именно на старте.
   const tabs = {};
-  if (DOSSIER_ENABLED) {
-    for (const [tid, d] of det) {
-      if (!d || d.dead || !d.tabKey) continue;
-      let p = null;
-      try { p = dossierPaths(tid, d); } catch (_) { p = null; }
-      if (p) tabs[tid] = { dossier: p.dossier, work: p.work, inherit: p.inherit, lag: d.dsLag || 0, blank: !!d.dsBlank };
-    }
+  for (const [tid, d] of det) {
+    if (!d || d.dead) continue;
+    const p = dossierFor(tid, d);
+    if (p) tabs[tid] = { dossier: p.dossier, work: p.work, inherit: p.inherit, lag: d.dsLag || 0, blank: !!d.dsBlank };
   }
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
@@ -5847,11 +5844,16 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
   items.push({ type: 'separator' });
   for (const [label, which] of [['Открыть досье', 'dossier'], ['Открыть файл работы', 'work']]) {
     items.push({
-      label: dp ? label : `${label} (досье выключено в настройках)`,
+      label: dp ? label
+        : !DOSSIER_ENABLED ? `${label} (досье выключено в настройках)`
+          : `${label} (вкладка открыта не свормом)`,
       enabled: !!dp,
       click: () => {
         const p = dossierEnsure(key, d);
-        if (p) shell.openPath(p[which]).catch(reportMainError);
+        if (!p) return;
+        // openPath не бросает: ошибку он отдаёт строкой. Пустая строка — открылось.
+        shell.openPath(p[which]).then((err) => { if (err) restartLog(`вкладка ${key}: не открылся ${p[which]}: ${err}`); })
+          .catch(reportMainError);
       },
     });
   }
@@ -6459,24 +6461,50 @@ function dossierEnsure(id, d) {
   const st = dossierLoadState(p);
   if (!st.mark) { st.mark = Date.now(); dossierSaveState(p, st); }
   d.dsMark = st.mark;
-  d.dsMtime = 0;
-  d.dsPrev = null;
-  try { d.dsBlank = dossier.isBlank(fs.readFileSync(p.dossier, 'utf8'), 'dossier'); } catch (_) { d.dsBlank = true; }
+  // Базой служит то, что лежит сейчас: первая же правка агента (а пишет он бриф в первом ходе,
+  // раньше любого такта) — это уже изменение, и отметка по ней сдвигается.
+  try {
+    d.dsPrev = fs.readFileSync(p.dossier, 'utf8');
+    d.dsMtime = fs.statSync(p.dossier).mtimeMs;
+  } catch (_) { d.dsPrev = null; d.dsMtime = 0; }
+  d.dsBlank = dossier.isBlank(d.dsPrev || '', 'dossier');
   d.dsReady = true;
   return p;
 }
 
-// Full entries of the tab's transcript (tail), re-read only when the file changed.
+// The tab's transcript, compacted (dossier.compact): read once from the last DOSSIER_TAIL_BYTES,
+// then only the bytes appended since. Tool inputs and results — the bulk of a log — are dropped
+// on the spot, so a tab holds kilobytes, not the parsed megabytes of its conversation.
+const DOSSIER_KEEP_RECORDS = 4000;
 function dossierEntries(d) {
   if (!d.trFile) return [];
-  let st;
-  try { st = fs.statSync(d.trFile); } catch (_) { return []; }
-  if (d.dsTrFile === d.trFile && d.dsTrMtime === st.mtimeMs && d.dsTrEntries) return d.dsTrEntries;
-  let text = '';
-  try { text = tailText(d.trFile, DOSSIER_TAIL_BYTES); } catch (_) { return []; }
-  d.dsTrFile = d.trFile;
-  d.dsTrMtime = st.mtimeMs;
-  d.dsTrEntries = dossier.parseLines(text);
+  let size = 0;
+  try { size = fs.statSync(d.trFile).size; } catch (_) { return d.dsTrEntries || []; }
+  if (d.dsTrFile !== d.trFile || size < (d.dsTrOffset || 0)) {
+    d.dsTrFile = d.trFile;
+    d.dsTrOffset = Math.max(0, size - DOSSIER_TAIL_BYTES);
+    d.dsTrEntries = [];
+    d.dsTrRest = '';
+  }
+  if (size === d.dsTrOffset) return d.dsTrEntries;
+  let chunk = '';
+  try {
+    const fd = fs.openSync(d.trFile, 'r');
+    try {
+      const buf = Buffer.alloc(size - d.dsTrOffset);
+      fs.readSync(fd, buf, 0, buf.length, d.dsTrOffset);
+      chunk = buf.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch (_) { return d.dsTrEntries; }
+  // The first read may start mid-line, and the last line may be half-written: keep the tail
+  // for next time instead of parsing it now.
+  const text = (d.dsTrRest || '') + chunk;
+  const cut = text.lastIndexOf('\n');
+  d.dsTrRest = cut < 0 ? text : text.slice(cut + 1);
+  d.dsTrOffset = size;
+  const fresh = dossier.parseLines(cut < 0 ? '' : text.slice(0, cut)).map(dossier.compact).filter(Boolean);
+  d.dsTrEntries = d.dsTrEntries.concat(fresh);
+  if (d.dsTrEntries.length > DOSSIER_KEEP_RECORDS) d.dsTrEntries = d.dsTrEntries.slice(-DOSSIER_KEEP_RECORDS);
   return d.dsTrEntries;
 }
 
@@ -6486,7 +6514,7 @@ function dossierKeepVersion(p, text) {
   if (!text) return;
   try {
     fs.mkdirSync(p.history, { recursive: true });
-    const name = new Date().toISOString().replace(/[:.]/g, '-') + '.md';
+    const name = dossier.stamp() + '.md';
     fs.writeFileSync(path.join(p.history, name), text);
     for (const old of dossier.historyPrune(fs.readdirSync(p.history))) {
       try { fs.unlinkSync(path.join(p.history, old)); } catch (_) {}
@@ -6506,16 +6534,13 @@ function dossierTick(id, d) {
   if (st && st.mtimeMs !== d.dsMtime) {
     let text = '';
     try { text = fs.readFileSync(p.dossier, 'utf8'); } catch (_) { text = ''; }
-    // First look after start only records what is there: the mark comes from state.json.
-    if (d.dsMtime) {
-      dossierKeepVersion(p, d.dsPrev);
-      // The moment of the edit, not the newest log entry: a message typed after the edit (even
-      // one still waiting in Claude's queue) is not digested yet.
-      d.dsMark = Math.max(st.mtimeMs, d.dsMark || 0);
-      const s = dossierLoadState(p);
-      s.mark = d.dsMark;
-      dossierSaveState(p, s);
-    }
+    dossierKeepVersion(p, d.dsPrev);
+    // The moment of the edit, not the newest log entry: a message typed after the edit (even
+    // one still waiting in Claude's queue) is not digested yet.
+    d.dsMark = Math.max(st.mtimeMs, d.dsMark || 0);
+    const s = dossierLoadState(p);
+    s.mark = d.dsMark;
+    dossierSaveState(p, s);
     d.dsMtime = st.mtimeMs;
     d.dsPrev = text;
     const blank = dossier.isBlank(text, 'dossier');
@@ -6540,7 +6565,10 @@ setInterval(() => {
 // the next one must get: the verbatim tail after the mark and undelivered messages. The hook
 // inlines it into the next SessionStart and renames it, so it's read exactly once.
 function dossierInherit(id, d, how) {
-  if (!DOSSIER_ENABLED || !d) return;
+  if (!dossierFor(id, d)) return;
+  // Последняя правка досье могла случиться за секунды до ухода — такт её ещё не видел, и отметка
+  // отстала бы: хвост повторил бы уже разобранное.
+  dossierTick(id, d);
   const p = dossierEnsure(id, d);
   if (!p) return;
   const entries = dossierEntries(d);
@@ -6567,7 +6595,7 @@ function dossierArchive(id, d) {
   if (!d || !d.tabKey) return;
   const p = dossierPaths(id, d);
   if (!fs.existsSync(p.dir)) return;
-  const to = path.join(dossierRoot(), dossier.ARCHIVE, path.basename(p.dir) + '-' + new Date().toISOString().replace(/[:.]/g, '-'));
+  const to = path.join(dossierRoot(), dossier.ARCHIVE, dossier.archiveName(path.basename(p.dir)));
   try {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.renameSync(p.dir, to);
@@ -6578,18 +6606,26 @@ function dossierSweep() {
   const root = dossierRoot();
   const arch = path.join(root, dossier.ARCHIVE);
   const liveKeys = [];
-  for (const [id, d] of det) if (d && !d.dead && d.tabKey) liveKeys.push(dossier.safeKey(restartKeyOf(id, d)));
+  // Мёртвая оболочка — не закрытая вкладка: карточка на месте, досье ей ещё понадобится.
+  for (const [id, d] of det) if (d && d.tabKey) liveKeys.push(dossier.safeKey(restartKeyOf(id, d)));
   const list = (dir) => { try { return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch (_) { return []; } };
   const mtime = (f) => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } };
   const plan = dossier.sweepPlan({
     liveKeys,
-    dirs: list(root).map((e) => ({ key: e.name })),
+    // Тишина папки — по самому свежему файлу в ней: переименование и правка файла на месте
+    // время самой папки не трогают.
+    dirs: list(root).map((e) => {
+      const dir = path.join(root, e.name);
+      let newest = mtime(dir);
+      try { for (const f of fs.readdirSync(dir)) newest = Math.max(newest, mtime(path.join(dir, f))); } catch (_) {}
+      return { key: e.name, mtimeMs: newest };
+    }),
     archived: list(arch).map((e) => ({ name: e.name, mtimeMs: mtime(path.join(arch, e.name)) })),
   });
   for (const key of plan.toArchive) {
     try {
       fs.mkdirSync(arch, { recursive: true });
-      fs.renameSync(path.join(root, key), path.join(arch, key + '-' + new Date().toISOString().replace(/[:.]/g, '-')));
+      fs.renameSync(path.join(root, key), path.join(arch, dossier.archiveName(key)));
     } catch (e) { reportMainError(e); }
   }
   for (const name of plan.toDelete) {
@@ -7560,6 +7596,11 @@ function restartFire(id, d) {
   // закрывает — молчаливо, если объявлять было нечего.
   tgOnRestartExit(id, d);
   if (!live || !line) return false;
+  // Наследство — здесь, а не при разрешении: прежний агент уже точно ушёл (его лог окончательный),
+  // а новый ещё не запущен. Перезапуск, который сорвался раньше, наследства не оставляет — иначе
+  // его вклеил бы первый же /clear или compact в сессию, которая никуда не уходила. Привязка к
+  // прежнему разговору (d.trFile) ещё жива: её снимает trForget ниже.
+  try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); }
   // Порциями, а не одним куском: именно здесь приложение и вставало намертво — строка запуска
   // с эстафетой внутри выросла до килобайтов, и оболочка со своим эхом заперла нас в write.
   // Потолок на саму эстафету стоит раньше, в restartGrant (restart.promptFits), но полагаться
@@ -7652,9 +7693,6 @@ ipcMain.handle('session:relaunch', (_e, opts = {}) => {
   // без ярлыка (агент не Клод, панель) не должен затирать то, что уже знали.
   if (d.rsKey) d.sessionKey = d.rsKey;
   restartLog(`вкладка ${id}: строка запуска готова, ярлык ${d.rsKey || '—'}`);
-  // Пока прежний разговор ещё привязан (d.trFile): хвост после отметки и недоставленное берутся
-  // из него, у свежей сессии будет свой файл.
-  try { dossierInherit(id, d, 'restart'); } catch (e) { reportMainError(e); }
   // Гасить прежнего агента теперь есть чем — и ждать общего такта незачем: строка приходит через
   // миллисекунды после разрешения, а такт добавлял к ним до полминуты пустого стояния.
   restartKick(id, d, 'line');
