@@ -7732,8 +7732,8 @@ function applyAutoTitle(s, title) {
 // Знак бригады изнутри разговора — не отдельная плашка, а начало строки дайджеста: у прораба
 // «Прораб: …», у исполнителя «Бригада «имя прораба»: …». Плавающая плашка в углу терминала лежала
 // поверх дайджеста и текста терминала; в одной строке с текстом ей ложиться не на что (спека,
-// «Карточка прораба»: прораб и ребёнок называют друг друга по имени). Без дайджеста остаётся
-// одно это слово — полоска показывает, чья это вкладка.
+// «Карточка прораба»: прораб и ребёнок называют друг друга по имени). Без дайджеста знака нет
+// вовсе: чья это вкладка, видно по карточке.
 function crewLabel(s) {
   if (!s) return '';
   const parent = s.parentId ? sessions.get(s.parentId) : null;
@@ -7748,7 +7748,7 @@ function renderDigestStrip() {
   const s = sessions.get(activeId);
   const digest = (s && s.digestText) || '';
   const crew = crewLabel(s);
-  const text = crew ? (digest ? `${crew}: ${digest}` : crew) : digest;
+  const text = crew && digest ? `${crew}: ${digest}` : digest;   // без дайджеста слова «Прораб» не нужны: видно по самой вкладке
   const was = !digestEl.hidden;
   digestEl.hidden = !text;
   document.body.classList.toggle('has-digest', !!text);
