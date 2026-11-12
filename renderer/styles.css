@@ -2517,14 +2517,16 @@ body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
 }
 .hm-scope button:hover { color: var(--text); }
 .hm-scope button.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.hm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 8px; border-top: 1px solid var(--hairline); }
+.hm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 18px 12px; border-top: 1px solid var(--hairline); }
 .hm-note { padding: 28px 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .hm-item {
   display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left;
-  padding: 9px 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text); cursor: pointer;
-  min-width: 0; overflow: hidden;
+  padding: 10px 14px; border-radius: 10px; color: var(--text); cursor: pointer;
+  min-width: 0; overflow: hidden; margin-top: 8px;
+  background: var(--panel); border: 1px solid var(--hairline);
 }
-.hm-item.sel { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.hm-item:hover { border-color: var(--border); }
+.hm-item.sel { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .hm-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .hm-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Без имени строку зовёт первая просьба человека — она длинная, ей обычный вес. */
