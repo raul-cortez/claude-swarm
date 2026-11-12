@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- feat(tabs): own tab color from the card menu, shown on a lane of your choice (background, border or left stripe); status takes another lane or just the dot
+- feat(tabs): collapse the left panel to icons (⌘B or the button at the bottom left)
+- feat(tabs): past conversations of a folder
+- feat(tabs): the agent names its tab from the task
+- fix(about): show the running version, not the installed one
+
 ## 0.82.0 — 2026-11-11
 
 - feat(dossier): the heir confirms the old session's requests before doing them

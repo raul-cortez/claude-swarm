@@ -271,7 +271,7 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
    появление/исчезновение НЕ меняет высоту вкладки. Проценты не показываем,
    насыщенность передаёт цвет. Раньше это была полоса по самому краю карточки, и
    скругление углов обрезало её так, что она читалась как сбой отрисовки. Левый край
-   — по тексту, а не по точке; без точки (body.tab-no-dot) — по паддингу. */
+   — по тексту, а не по точке; точка есть всегда. */
 .tab .ctx {
   position: absolute;
   left: calc(var(--tab-pad-x) + var(--tab-dot-size) + var(--tab-gap));
@@ -409,13 +409,75 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .tab.status-running .dot { background: var(--run); }
 .tab.status-waiting .dot { background: var(--waiting); }
 .tab.status-dead    .dot { background: var(--danger); }
-/* Статус несут три вещи сразу: точка с ореолом, подпись его цветом и лёгкий тон плитки.
-   Цветная рамка — только у тех, кто зовёт человека (ждёт ответа) или упал: это и есть то,
-   что должно быть громче остального. Режимы «только точкой» / «только заливкой» — ниже. */
-.tab.status-ready   { --tab-c: var(--ready);   background: color-mix(in srgb, var(--ready)    4%, var(--tile)); }
-.tab.status-running { --tab-c: var(--run);     background: color-mix(in srgb, var(--run)      7%, var(--tile)); }
-.tab.status-waiting { --tab-c: var(--waiting); background: color-mix(in srgb, var(--waiting) 10%, var(--tile)); border-color: color-mix(in srgb, var(--waiting) 45%, transparent); }
-.tab.status-dead    { --tab-c: var(--danger);  background: color-mix(in srgb, var(--danger)  10%, var(--tile)); border-color: color-mix(in srgb, var(--danger)  40%, transparent); }
+/* Статус несёт точка с ореолом (всегда), подпись его цветом и ОДНА дорожка карточки: фон,
+   рамка или полоска слева (Настройки → Вкладки). Свой цвет вкладки занимает другую дорожку —
+   две на одну не бывает (tabstyle.setLane).
+   Дорожки читаются через переменные --st-lane / --own-lane: их ставит класс на body и на
+   #set-tab-preview (:where(...) — переменная на САМОМ элементе, ближайшая побеждает, так что
+   превью живёт по черновику, а не по бою), а правила ниже спрашивают их style-запросом. Один
+   запрос на оба адреса вместо пары селекторов с :not(#set-tab-preview *). */
+:where(body, #set-tab-preview).status-lane-bg     { --st-lane: bg; }
+:where(body, #set-tab-preview).status-lane-border { --st-lane: border; }
+:where(body, #set-tab-preview).status-lane-stripe { --st-lane: stripe; }
+:where(body, #set-tab-preview).status-lane-dot    { --st-lane: dot; }
+:where(body, #set-tab-preview).color-lane-bg     { --own-lane: bg; }
+:where(body, #set-tab-preview).color-lane-border { --own-lane: border; }
+:where(body, #set-tab-preview).color-lane-stripe { --own-lane: stripe; }
+.tab.status-ready   { --tab-c: var(--ready); }
+.tab.status-running { --tab-c: var(--run); }
+.tab.status-waiting { --tab-c: var(--waiting); }
+.tab.status-dead    { --tab-c: var(--danger); }
+/* Фон (умолчание): лёгкий тон плитки; рамка — только у тех, кто зовёт человека или упал: это и
+   есть то, что должно быть громче остального. */
+@container style(--st-lane: bg) {
+  .tab.status-ready   { background: color-mix(in srgb, var(--ready)    4%, var(--tile)); }
+  .tab.status-running { background: color-mix(in srgb, var(--run)      7%, var(--tile)); }
+  .tab.status-waiting { background: color-mix(in srgb, var(--waiting) 10%, var(--tile)); border-color: color-mix(in srgb, var(--waiting) 45%, transparent); }
+  .tab.status-dead    { background: color-mix(in srgb, var(--danger)  10%, var(--tile)); border-color: color-mix(in srgb, var(--danger)  40%, transparent); }
+}
+/* Рамка: плитка спокойная, кромка цвета статуса у всех. */
+@container style(--st-lane: border) {
+  .tab:is(.status-ready, .status-running, .status-waiting, .status-dead) {
+    border-color: color-mix(in srgb, var(--tab-c) 70%, transparent);
+  }
+}
+/* Полоска слева: цветной язычок у кромки, плитка и рамка спокойные. */
+@container style(--st-lane: stripe) {
+  .tab:is(.status-ready, .status-running, .status-waiting, .status-dead)::before { background: var(--tab-c); }
+}
+/* Только точкой: плитка спокойная; рамка у зовущей и упавшей остаётся — единственный их знак. */
+@container style(--st-lane: dot) {
+  .tab.status-waiting { border-color: color-mix(in srgb, var(--waiting) 55%, transparent); }
+  .tab.status-dead    { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+}
+/* Полоска — один и тот же язычок для статуса и для своего цвета (дорожка у них всегда разная,
+   значит, одновременно красит только кто-то один). */
+.tab::before {
+  content: '';
+  position: absolute;
+  left: -1px; top: 6px; bottom: 6px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  pointer-events: none;
+}
+/* Свой цвет вкладки (--own ставит renderer инлайном вместе с классом has-color). Ночь, регион и
+   прораб красят рамку и плитку сами — «чья она» у них сильнее, и свой цвет им не мешает; но
+   полоска, которой они не пользуются, остаётся. */
+@container style(--own-lane: stripe) {
+  .tab.has-color::before { background: var(--own); }
+}
+@container style(--own-lane: bg) {
+  .tab.has-color:not(.is-auto):not(.is-geo):not(.is-crew):not(.is-sleep) {
+    background: color-mix(in srgb, var(--own) 18%, var(--tile));
+  }
+}
+@container style(--own-lane: border) {
+  .tab.has-color:not(.is-auto):not(.is-geo):not(.is-crew),
+  .layout-top #tabs .tab.has-color:not(.is-auto):not(.is-geo):not(.is-crew) {
+    border-color: color-mix(in srgb, var(--own) 85%, transparent) !important;
+  }
+}
 .tab .dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tab-c) 22%, transparent); }
 .tab.status-ready .sub, .tab.status-running .sub,
 .tab.status-waiting .sub, .tab.status-dead .sub { color: var(--tab-c); font-weight: 500; }
@@ -426,9 +488,9 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 /* Сверху рамка — только у открытой, и она же светлее остальных: в ряду одинаковых плиток
    тонкое кольцо одно не читалось. Статус остальных несут точка и заливка. !important — потому
    что ночь, регион и прораб ставят свою рамку ниже по файлу с большей специфичностью.
-   Кроме «только точкой» (tab-no-fill): там заливки нет, и рамка у зовущей и упавшей —
-   единственный их знак на плитке. */
-body.layout-top:not(.tab-no-fill) #tabs .tab:not(.active) { border-color: transparent !important; }
+   Кроме дорожек «рамка» и «только точкой»: там рамка и есть знак статуса (у зовущей и упавшей —
+   единственный). Свой цвет «рамкой» перебивает это правило выше (own-lane: border). */
+body.layout-top:not(.status-lane-dot):not(.status-lane-border) #tabs .tab:not(.active) { border-color: transparent !important; }
 .layout-top #tabs .tab.active { filter: brightness(1.3); }
 /* Спит — поверх статуса: плитка гаснет, подпись серая. Стоит здесь, после статусов, потому
    что специфичность у них одна и побеждает порядок. */
@@ -574,50 +636,10 @@ body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .foot,
 
 /* Видимость элементов. У .ctx !important обязателен: updateCtx() снимает атрибут
    hidden, а правило .tab .ctx[hidden] имеет ту же специфичность, что это. */
-body.tab-no-dot .tab:not(#set-tab-preview *) .dot,
-#set-tab-preview.tab-no-dot .tab .dot { display: none; }
-body.tab-no-dot .tab:not(#set-tab-preview *) .ctx,
-#set-tab-preview.tab-no-dot .tab .ctx { left: var(--tab-pad-x); }
 body.tab-no-ctx .tab:not(#set-tab-preview *) .ctx,
 #set-tab-preview.tab-no-ctx .tab .ctx { display: none !important; }
 body.tab-no-sub .tab:not(#set-tab-preview *) .sub,
 #set-tab-preview.tab-no-sub .tab .sub { display: none; }
-
-/* Заливка/бордер по статусу гасятся, но точка и рамка активной вкладки остаются —
-   иначе активную нечем отличить. Рамка при этом всё равно цвета её статуса (--tab-c). */
-body.tab-no-fill .tab.status-ready:not(#set-tab-preview *),
-body.tab-no-fill .tab.status-running:not(#set-tab-preview *),
-body.tab-no-fill .tab.status-waiting:not(#set-tab-preview *),
-body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
-#set-tab-preview.tab-no-fill .tab.status-ready,
-#set-tab-preview.tab-no-fill .tab.status-running,
-#set-tab-preview.tab-no-fill .tab.status-waiting,
-#set-tab-preview.tab-no-fill .tab.status-dead {
-  background: var(--tile);
-  border-color: var(--hairline);
-}
-/* Рамка — не заливка: зовущая и упавшая оставляют её и «только точкой». */
-body.tab-no-fill .tab.status-waiting:not(#set-tab-preview *),
-#set-tab-preview.tab-no-fill .tab.status-waiting { border-color: color-mix(in srgb, var(--waiting) 55%, transparent); }
-body.tab-no-fill .tab.status-dead:not(#set-tab-preview *),
-#set-tab-preview.tab-no-fill .tab.status-dead { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
-
-/* «Только заливкой»: точки нет, и статус целиком на плитке — тон гуще, у каждой кромка своего
-   цвета. Ночь, регион, прораб и сон красят плитку сами и сюда не попадают. */
-body.tab-no-dot .tab.status-ready:not(.is-auto):not(.is-geo):not(.is-crew):not(.is-sleep):not(#set-tab-preview *),
-#set-tab-preview.tab-no-dot .tab.status-ready:not(.is-auto):not(.is-geo):not(.is-crew):not(.is-sleep) {
-  background: color-mix(in srgb, var(--ready) 9%, var(--tile));
-  border-color: color-mix(in srgb, var(--ready) 22%, transparent);
-}
-body.tab-no-dot .tab.status-running:not(.is-auto):not(.is-geo):not(.is-crew):not(.is-sleep):not(#set-tab-preview *),
-#set-tab-preview.tab-no-dot .tab.status-running:not(.is-auto):not(.is-geo):not(.is-crew):not(.is-sleep) {
-  background: color-mix(in srgb, var(--run) 13%, var(--tile));
-  border-color: color-mix(in srgb, var(--run) 28%, transparent);
-}
-body.tab-no-dot .tab.status-waiting:not(.is-auto):not(.is-geo):not(#set-tab-preview *),
-#set-tab-preview.tab-no-dot .tab.status-waiting:not(.is-auto):not(.is-geo) {
-  background: color-mix(in srgb, var(--waiting) 18%, var(--tile));
-}
 
 /* Вкладка, которая работает без человека. Отметка нужна не для красоты: печатать в такую
    вкладку нельзя (см. typeInto), и человек обязан видеть, чем она отличается, ДО того как
@@ -645,23 +667,12 @@ body.tab-no-dot .tab.status-waiting:not(.is-auto):not(.is-geo):not(#set-tab-prev
   flex: none; width: 8px; height: 8px; color: var(--night);
 }
 .tab .dot-moon svg { width: 11px; height: 11px; }
-/* «Точка» выключена (Вкладки → Что показывать → Статус → заливка) — луна тоже отметка статуса
-   слева от подписи, и без точки ей стоять не на чем: ночь тогда видна по цвету всей карточки. */
-body.tab-no-dot .tab.is-auto:not(#set-tab-preview *) .dot-moon,
-#set-tab-preview.tab-no-dot .tab.is-auto .dot-moon { display: none; }
 /* Полоска контекста и бейдж сабагентов на ночной карточке тоже фиолетовые: ширина полоски и
    число агентов остаются, а вот их цвета — из палитры статусов, которой здесь не место. */
 .tab.is-auto .ctx.ctx-lo .ctx-fill,
 .tab.is-auto .ctx.ctx-mid .ctx-fill,
 .tab.is-auto .ctx.ctx-hi .ctx-fill { background: color-mix(in srgb, var(--night) 75%, var(--text)); }
 .tab.is-auto .agents { color: color-mix(in srgb, var(--night) 70%, var(--text)); }
-/* Заливку статусов человек может выключить («Вкладки → Что показывать»), но ночную — нет:
-   она не про статус. Специфичность здесь выше, чем у гасящего правила выше. */
-body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
-#set-tab-preview.tab-no-fill .tab.is-auto {
-  background: color-mix(in srgb, var(--night) 20%, var(--tile));
-  border-color: color-mix(in srgb, var(--night) 55%, transparent);
-}
 /* Открытая вкладка подсвечена цветом своего состояния — а состояние ночной вкладки и есть
    ночь, так что --tab-c уже фиолетовый и складывать ничего не нужно. */
 
@@ -688,13 +699,6 @@ body.tab-no-fill .tab.is-auto:not(#set-tab-preview *),
 .tab.is-geo .sub { color: var(--danger); }
 .tab.is-geo .dot { display: inline-block; background: var(--danger); }
 .tab.is-geo .dot-moon { display: none; }
-/* Как и ночную, эту заливку не гасит «Вкладки → Что показывать»: она не про статус. */
-body.tab-no-fill .tab.is-geo:not(#set-tab-preview *),
-#set-tab-preview.tab-no-fill .tab.is-geo {
-  background: color-mix(in srgb, var(--danger) 16%, var(--tile));
-  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
-}
-
 /* drag & drop — the moved item becomes a faint dashed slot; others reflow around it */
 .tab.dragging {
   opacity: 0.5;
@@ -2541,3 +2545,98 @@ body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* --- левая панель, свёрнутая до значков (⌘B / кнопка внизу слева) ------------------------ */
+/* Только для «списка слева»: сверху карточки и так компактны. Состояние — класс rail-mini на body
+   (его ставит applyRailMini), а раскладка top его просто не слушает. Ширина 64px — светофор
+   macOS влезает. Карточка → квадрат 42px: инициалы (data-ini), точка статуса в углу, статус и
+   свой цвет — по выбранным дорожкам, как и в полной карточке. Папка → подпись из первых букв
+   (data-mini), полное имя — в подсказке. Пульт → значок с бейджем, «новая сессия» → «+». */
+#rail-toggle {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+#rail-toggle:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+#rail-toggle svg { width: 15px; height: 15px; }
+.layout-rail #rail-toggle { display: inline-flex; }
+body.layout-rail.rail-mini { grid-template-columns: 64px 1fr; }
+.layout-rail.rail-mini #tabs { padding: 8px; gap: 8px; align-items: center; }
+.layout-rail.rail-mini .tab-group {
+  width: 100%;
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  align-items: center;
+}
+.layout-rail.rail-mini .group-head { justify-content: center; padding: 0 0 2px; min-height: 0; width: 100%; }
+.layout-rail.rail-mini .group-head > * { display: none; }
+.layout-rail.rail-mini .group-head::after {
+  content: attr(data-mini);
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.layout-rail.rail-mini .group-tabs { align-items: center; gap: 6px; }
+.layout-rail.rail-mini .tab {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  justify-content: center;
+  align-items: center;
+}
+.layout-rail.rail-mini .tab .body,
+.layout-rail.rail-mini .tab .tools,
+.layout-rail.rail-mini .tab .ctx { display: none; }
+.layout-rail.rail-mini .tab::after {
+  content: attr(data-ini);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.layout-rail.rail-mini .tab .dot,
+.layout-rail.rail-mini .tab .dot-moon {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  margin: 0;
+}
+.layout-rail.rail-mini .tab .dot { width: 7px; height: 7px; }
+/* Тянуть карточку можно и здесь: ручка растягивается на всю плитку, невидимая. Клик по ней
+   всплывает в обработчик карточки — вкладка открывается как обычно. */
+.layout-rail.rail-mini .tab > .grip {
+  left: 0; right: 0; top: 0; bottom: 0;
+  width: auto;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.layout-rail.rail-mini .tab > .grip svg { display: none; }
+.layout-rail.rail-mini .pult-tab {
+  position: relative;
+  align-self: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  justify-content: center;
+}
+.layout-rail.rail-mini .pult-tab .pult-name { display: none; }
+.layout-rail.rail-mini .pult-tab::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  background: var(--muted);
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>') center/contain no-repeat;
+}
+.layout-rail.rail-mini .pult-tab .pult-count { position: absolute; top: -6px; right: -6px; margin: 0; }
+.layout-rail.rail-mini #new-session-folder { width: 42px; padding: 9px 0; align-self: center; }
+.layout-rail.rail-mini #new-session-folder .tx { display: none; }

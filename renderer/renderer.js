@@ -130,6 +130,7 @@ function openLogsModal() {
 const APPEARANCE = window.SWARM_THEMES;       // terminal theme presets + helpers
 const KEYBINDS_API = window.SWARM_KEYBINDS;   // newline chord + word/line scopes
 const RESUME_API = window.SWARM_RESUME;       // Claude -n / --resume per tab
+const RAILMINI = window.SWARM_RAILMINI;       // initials / folder abbreviations for the collapsed rail
 const TABSTYLE = window.SWARM_TABSTYLE;       // tab card density / visibility / colors
 const RESTART_API = window.SWARM_RESTART;     // самоперезапуск: границы порога, общие с main
 const SLEEP_API = window.SWARM_SLEEP;         // сон простаивающей вкладки: границы ползунка, общие с main
@@ -218,7 +219,9 @@ function applyAppearance() {
 // state without touching layout-* / platform-* on the same element.
 const TABSTYLE_CLASSES = [
   'tabs-compact', 'tabs-normal', 'tabs-roomy',
-  'tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill',
+  'status-lane-bg', 'status-lane-border', 'status-lane-stripe', 'status-lane-dot',
+  'color-lane-bg', 'color-lane-border', 'color-lane-stripe',
+  'tab-no-ctx', 'tab-no-sub',
 ];
 
 // Restyle every tab card at once: vars on <html>, classes on <body>. No DOM
@@ -306,6 +309,8 @@ const ICONS = {
   plus: SVG('<path d="M5 12h14"/><path d="M12 5v14"/>'),
   command: SVG('<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>'),
   folder: SVG('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>'),
+  // Lucide "panel-left" — свернуть / развернуть левую панель.
+  panelLeft: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>'),
   chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
   // Стрелка «развернуть бригаду» в подвале прораба — вправо, туда, куда карточка растёт.
   chevronRight: SVG('<path d="m9 18 6-6-6-6"/>'),
@@ -1539,7 +1544,16 @@ async function createSession(opts = {}) {
   // ожидаемый, а рисовать под один пункт свой попап значило бы вторую машинерию меню.
   tab.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    window.swarm.night.tabMenu(id);
+    window.swarm.night.tabMenu(id, sessions.get(id)?.color || null);
+  });
+  // Свёрнутая панель: от карточки остался квадрат с инициалами, и имя с дайджестом живут в
+  // подсказке. Собираем её при наведении — имя и дайджест к тому времени свежие.
+  tab.addEventListener('mouseenter', () => {
+    const s = sessions.get(id);
+    if (!s || tab.classList.contains('is-geo')) return;
+    if (!(railMini && currentLayout() === 'layout-rail')) { if (tab.title) tab.title = ''; return; }
+    const name = tab.querySelector('.label').textContent;
+    tab.title = s.digestText ? `${name}\n${s.digestText}` : name;
   });
   tab.dataset.sid = id;
   attachDragHandle(tab, tab.querySelector('.grip'), () => {
@@ -1573,7 +1587,10 @@ async function createSession(opts = {}) {
     // Имя дал человек (переименовал сам, назвал в телеге, прораб назвал исполнителя) — тогда
     // имя из дайджеста агента его не перебивает. Иначе карточка зовётся тем, что дал агент.
     named: tabNamed(opts, tab.querySelector('.label').textContent, folderName),
+    // Свой цвет вкладки (id из TABSTYLE.OWN_COLORS) — метка человека, переживает перезапуск.
+    color: TABSTYLE.ownColorHex(opts.color) ? opts.color : null,
   });
+  paintTabColor(sessions.get(id));
   // Вкладка подписки, чей выход в России, рождается под плашкой сразу, а не к следующей проверке.
   window.swarm.geo.state().then(renderGeo).catch(() => {});
   const okey = resolvedCwd || '';
@@ -1589,6 +1606,23 @@ async function createSession(opts = {}) {
   // незачем — ребёнок и так виден точкой под карточкой прораба (её рисует setStatus выше).
   if (!(background && sessions.has(activeId))) activate(id);
 }
+
+// Свой цвет вкладки: класс + переменная на самой карточке; куда он ляжет (фон / рамка /
+// полоска), решают настройки — см. styles.css, --own-lane.
+function paintTabColor(s) {
+  if (!s) return;
+  const hex = TABSTYLE.ownColorHex(s.color);
+  s.tab.classList.toggle('has-color', !!hex);
+  if (hex) s.tab.style.setProperty('--own', hex);
+  else s.tab.style.removeProperty('--own');
+}
+window.swarm.onColorRequest(({ id, color }) => {
+  const s = sessions.get(String(id));
+  if (!s) return;
+  s.color = TABSTYLE.ownColorHex(color) ? color : null;
+  paintTabColor(s);
+  persistTabs();
+});
 
 // Своё ли имя у вкладки. Новая — своё, если его кто-то дал явно (прораб — исполнителю).
 // Восстановленная несёт отметку из persistTabs; у сохранённых до неё отметки нет, и тогда
@@ -2245,13 +2279,25 @@ function showSettingsModal(tab) {
           <div class="set-group-h">Что показывать на карточке</div>
           <div class="set-field is-row">
             <div class="set-head">
-              <span class="set-label">Статус</span>
+              <span class="set-label">Статус показывать</span>
               <button type="button" class="set-q" aria-label="подсказка">?</button>
-              <span class="set-hint" hidden>Точкой — цветной кружок слева, карточка остаётся спокойной.
-                Заливкой — цвет статуса заливает фон и рамку всей карточки: видно с другого конца экрана,
-                но список из десяти цветных плашек шумит. Подпись словами настраивается отдельно.</span>
+              <span class="set-hint" hidden>Точка статуса стоит на карточке всегда. Дальше — чем ещё:
+                фоном (лёгкий тон всей карточки), рамкой или полоской слева. «Только точкой» —
+                карточка остаётся спокойной. Свой цвет вкладки занимает другое место: если выбрать
+                для статуса то, где стоит цвет, цвет переедет на свободное.</span>
             </div>
             <select class="set-input" id="set-tab-status"></select>
+          </div>
+          <div class="set-field is-row">
+            <div class="set-head">
+              <span class="set-label">Свой цвет вкладки показывать</span>
+              <button type="button" class="set-q" aria-label="подсказка">?</button>
+              <span class="set-hint" hidden>Цвет задаётся в меню карточки (правый клик → «Цвет вкладки»)
+                — это метка для себя, не статус. Здесь выбирается, где он виден: полоской слева,
+                рамкой или фоном. Тем, чем показан статус, он не бывает — тот сдвинется на свободное.
+                Ночной режим, прораб и заморозка по региону красят карточку сами, и цвет им не мешает.</span>
+            </div>
+            <select class="set-input" id="set-tab-colorlane"></select>
           </div>
           <div class="set-row">
             <label class="set-check">
@@ -3581,6 +3627,7 @@ function showSettingsModal(tab) {
   const tabDraft = TABSTYLE.normalizeTabStyle(tabstyle);
   const densitySel = overlay.querySelector('#set-tab-density');
   const statusSel = overlay.querySelector('#set-tab-status');
+  const colorLaneSel = overlay.querySelector('#set-tab-colorlane');
   const showInputs = {
     ctx: overlay.querySelector('#set-tab-ctx'),
     sub: overlay.querySelector('#set-tab-sub'),
@@ -3629,13 +3676,24 @@ function showSettingsModal(tab) {
   });
   densitySel.value = tabDraft.density;
 
-  TABSTYLE.STATUS_STYLES.forEach((x) => {
-    const o = document.createElement('option');
-    o.value = x.id;
-    o.textContent = x.name;
-    statusSel.appendChild(o);
-  });
-  statusSel.value = tabDraft.status;
+  function fillLaneSelect(sel, lanes) {
+    sel.innerHTML = '';
+    lanes.forEach((x) => {
+      const o = document.createElement('option');
+      o.value = x.id;
+      o.textContent = x.name;
+      sel.appendChild(o);
+    });
+  }
+  fillLaneSelect(statusSel, TABSTYLE.STATUS_LANES);
+  fillLaneSelect(colorLaneSel, TABSTYLE.COLOR_LANES);
+  // Выбор одной дорожки двигает другую (TABSTYLE.setLane): оба селекта перечитываются из
+  // черновика, чтобы человек видел, куда переехал сосед.
+  function syncLaneSelects() {
+    statusSel.value = tabDraft.statusLane;
+    colorLaneSel.value = tabDraft.colorLane;
+  }
+  syncLaneSelects();
 
   // Раскладка — ЧЕРНОВИК, как и всё остальное в этой панели: применяется по
   // «Сохранить», отмена её не трогает.
@@ -3692,7 +3750,7 @@ function showSettingsModal(tab) {
        </span>
        ${tabTools()}
      </div>
-     <div class="tab status-ready">
+     <div class="tab status-ready has-color" style="--own:#f472b6">
        <span class="grip">${ICONS.grip}</span>
        <span class="dot"></span>
        <span class="body">
@@ -3761,7 +3819,13 @@ function showSettingsModal(tab) {
       renderTabPreview();
     });
   });
-  statusSel.addEventListener('change', () => { tabDraft.status = statusSel.value; renderTabPreview(); });
+  function pickLane(which, lane) {
+    Object.assign(tabDraft, TABSTYLE.setLane(tabDraft, which, lane));
+    syncLaneSelects();
+    renderTabPreview();
+  }
+  statusSel.addEventListener('change', () => pickLane('status', statusSel.value));
+  colorLaneSel.addEventListener('change', () => pickLane('color', colorLaneSel.value));
   overlay.querySelector('#set-tab-colors-reset').addEventListener('click', () => {
     tabDraft.colors = { ...TABSTYLE.DEFAULT_TABSTYLE.colors };
     renderColorPickers();
@@ -4199,6 +4263,7 @@ function persistTabs() {
         cwd: s.cwd || null,
         name: s.tab.querySelector('.label').textContent,
         named: !!s.named,
+        color: s.color || null,
         cmd: s.cmd || null,
         flags: s.flags != null ? s.flags : null,
         blank: s.blank || false,
@@ -4242,12 +4307,13 @@ function rememberHistory() {
       cwd: s.cwd,
       name: s.tab.querySelector('.label').textContent,
       named: !!s.named,
+      color: s.color || null,
       digest: s.digestText || (h[s.claudeSessionId] && h[s.claudeSessionId].digest) || '',
       cmd: s.cmd || null,
       flags: s.flags != null ? s.flags : null,
     };
     const old = h[s.claudeSessionId];
-    if (old && old.cwd === rec.cwd && old.name === rec.name && old.named === rec.named
+    if (old && old.cwd === rec.cwd && old.name === rec.name && old.named === rec.named && (old.color || null) === rec.color
       && old.digest === rec.digest && old.cmd === rec.cmd && old.flags === rec.flags) continue;
     h[s.claudeSessionId] = { ...rec, at: Date.now() };
     changed = true;
@@ -4352,6 +4418,7 @@ function resumeFromHistory(cwd, f, rec) {
     resume: true,
     name: rec && rec.name ? rec.name : undefined,
     named: !!(rec && rec.named),
+    color: rec && rec.color ? rec.color : undefined,
   });
 }
 window.swarm.onHistoryRequest(({ id }) => {
@@ -4584,8 +4651,9 @@ function relayoutTabs() {
 
     const head = document.createElement('div');
     head.className = 'group-head';
-    head.title = collapsed ? 'Развернуть' : 'Свернуть';
+    head.title = railMini ? `${folderName} — ${collapsed ? 'развернуть' : 'свернуть'}` : (collapsed ? 'Развернуть' : 'Свернуть');
     head.dataset.cwd = cwd;
+    head.dataset.mini = RAILMINI.folderAbbr(folderName);
     const grip = document.createElement('span');
     grip.className = 'grip';
     grip.title = 'Перетащить папку';
@@ -5194,6 +5262,37 @@ function applyLayout(name) {
   // Chrome changed size => the stage did too; refit the visible terminal(s).
   requestAnimationFrame(refitVisibleTerms);
 }
+
+// Левая панель, свёрнутая до значков (⌘B / кнопка в строке состояния). Состояние помним всегда,
+// но действует оно только в «списке слева» — CSS слушает rail-mini лишь там.
+let railMini = localStorage.getItem('swarm.railMini') === '1';
+function applyRailMini() {
+  document.body.classList.toggle('rail-mini', railMini);
+  const btn = document.getElementById('rail-toggle');
+  if (btn) {
+    btn.innerHTML = ICONS.panelLeft;
+    btn.title = (railMini ? 'Развернуть панель' : 'Свернуть панель') + ` (${key('B')})`;
+  }
+}
+function toggleRailMini() {
+  if (currentLayout() !== 'layout-rail') return;
+  railMini = !railMini;
+  localStorage.setItem('swarm.railMini', railMini ? '1' : '0');
+  applyRailMini();
+  relayoutTabs();       // подписи папок и подсказки зависят от вида
+  window.swarm.uiRepaint();
+  requestAnimationFrame(refitVisibleTerms);   // колонка сменила ширину — терминалу тоже
+}
+// Инициалы читаются из имени вкладки, а имя меняется из многих мест (переименование, авто-имя
+// агента, телега, восстановление) — поэтому смотрим за самим текстом, а не за каждым из мест.
+function paintTabInitials() {
+  for (const s of sessions.values()) {
+    const ini = RAILMINI.tabInitials(s.tab.querySelector('.label').textContent);
+    if (s.tab.dataset.ini !== ini) s.tab.dataset.ini = ini;
+  }
+}
+new MutationObserver(paintTabInitials).observe(tabsEl, { subtree: true, childList: true, characterData: true });
+document.getElementById('rail-toggle').addEventListener('click', toggleRailMini);
 
 function toggleLayout() {
   closeFind();
@@ -6102,7 +6201,7 @@ const HELP_HTML = `
   <h4>Горячие клавиши</h4>
   <ul>
     <li><code>${key('T')}</code> — новая вкладка (папка по умолчанию) · <code>${key('O')}</code> — с выбором папки</li>
-    <li><code>${key('K')}</code> — палитра команд · <code>${key('L')}</code> — раскладка · <code>${key('W')}</code> — закрыть вкладку</li>
+    <li><code>${key('K')}</code> — палитра команд · <code>${key('L')}</code> — раскладка · <code>${key('B')}</code> — свернуть левую панель · <code>${key('W')}</code> — закрыть вкладку</li>
     <li><code>${key('1')}…9</code> — прыжок на вкладку · <code>${key('/')}</code> — эта справка</li>
   </ul>
 
@@ -6512,6 +6611,7 @@ window.addEventListener('keydown', (e) => {
   // the window either.
   else if (e.key === 'w') { e.preventDefault(); if (activeId && !pultOn) requestCloseSession(activeId); }
   else if (e.key === 'l') { e.preventDefault(); toggleLayout(); }
+  else if (e.key === 'b') { e.preventDefault(); toggleRailMini(); }
   else if (e.key === 'j') { e.preventDefault(); toggleTermPanel(); }
   else if (e.key === '0') { e.preventDefault(); if (pultEnabled) setPult(true); }
   else if (/^[1-9]$/.test(e.key)) {
@@ -7441,6 +7541,7 @@ async function restoreOrStart() {
       cwd: t.cwd,
       name: t.name,
       named: t.named,
+      color: t.color || undefined,
       // A clean terminal restores as clean (no command). Otherwise always pass a
       // cmd so restore never pops the picker — legacy saved tabs may lack `cmd`;
       // fall back to the default agent, as before.
@@ -7482,6 +7583,8 @@ async function restoreOrStart() {
 
 // Restore saved prefs, then the tabs.
 applyTabStyle();
+applyRailMini();
+paintTabInitials();
 applyLayout(localStorage.getItem('swarm.layout') || 'layout-rail');
 applyNotify(localStorage.getItem('swarm.notify') !== '0'); // master notifications on/off
 // Tell main the saved hooks pref BEFORE restoring sessions, so swarm-settings.json

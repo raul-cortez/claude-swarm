@@ -85,6 +85,8 @@
   <!-- Bottom status bar: git branch of the ACTIVE session's folder (VS Code
        style). Hidden entirely when that folder is not a git repo. -->
   <footer id="statusbar">
+    <!-- Свернуть / развернуть левую панель (⌘B). Только в раскладке «список слева». -->
+    <button id="rail-toggle" title="Свернуть панель (⌘B)"></button>
     <button id="git-branch" class="git-branch" hidden title="Git — ветка активной сессии">
       <span class="git-ic"></span>
       <span class="git-wt" hidden>WT</span>
@@ -168,6 +170,8 @@
   <script src="./logstore.js"></script>
   <!-- Tab card style: density presets + pure helpers (window.SWARM_TABSTYLE). -->
   <script src="./tabstyle.js"></script>
+  <!-- Подписи свёрнутой левой панели (window.SWARM_RAILMINI). Before renderer.js. -->
+  <script src="./railmini.js"></script>
   <!-- Unified-diff parser + change-tree builder (window.SWARM_DIFF). Before renderer.js. -->
   <script src="./diffview.js"></script>
   <!-- «Agent is calling me» phrase matcher (window.SWARM_ASK_PHRASES). Shared with

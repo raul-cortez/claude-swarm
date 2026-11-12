@@ -102,6 +102,7 @@ const pty = require('./pty-loader').loadPty({
 });
 const git = require('./git');
 const updater = require('./updater');
+const tabstyle = require('./renderer/tabstyle');
 const resume = require('./renderer/resume'); // UMD: exports { supports, stemOf, ... } under Node
 
 /** @type {BrowserWindow | null} */
@@ -5813,7 +5814,7 @@ ipcMain.handle('night:setAll', (_e, { auto } = {}) => setAllAuto(auto, 'окно
 // Меню карточки. Родное меню системы, а не своё: правый клик по карточке — ожидаемый жест, и
 // рисовать под него собственный попап значило бы заводить вторую машинерию меню ради одного
 // пункта.
-ipcMain.handle('tab:menu', (_e, { id } = {}) => {
+ipcMain.handle('tab:menu', (_e, { id, color } = {}) => {
   const key = String(id == null ? '' : id);
   const d = det.get(key);
   if (!d || !win) return false;
@@ -5831,6 +5832,26 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
     type: 'checkbox',
     checked: !!d.auto,
     click: () => setTabAuto(key, !d.auto, 'меню карточки'),
+  }, {
+    // Свой цвет вкладки — метка человека, не статус. Где он рисуется (фон / рамка / полоска),
+    // решают настройки «Вкладки»; здесь только выбор цвета. Текущий приносит окно: цвет живёт
+    // в нём, вместе с вкладкой (persistTabs), а main о нём не знает.
+    label: 'Цвет вкладки',
+    submenu: [
+      ...tabstyle.OWN_COLORS.map((c) => ({
+        label: `${c.dot}  ${c.name}`,
+        type: 'radio',
+        checked: color === c.id,
+        click: () => safeSend('tab:colorRequest', { id: key, color: c.id }),
+      })),
+      { type: 'separator' },
+      {
+        label: 'Без цвета',
+        type: 'radio',
+        checked: !tabstyle.ownColorHex(color),
+        click: () => safeSend('tab:colorRequest', { id: key, color: null }),
+      },
+    ],
   }];
   // Поднять упавшего агента. Пункт стоит ВСЕГДА, а не появляется на упавшей вкладке: меню
   // ищут глазами, и пункт, которого в спокойное время не видно, невозможно запомнить. Когда

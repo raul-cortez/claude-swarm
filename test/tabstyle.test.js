@@ -44,39 +44,110 @@ test('normalizeTabStyle fills defaults from empty/garbage input', () => {
   for (const bad of [null, undefined, 'nope', 42, []]) {
     const s = T.normalizeTabStyle(bad);
     assert.strictEqual(s.density, 'normal', String(bad));
-    assert.strictEqual(s.status, 'both', String(bad));
+    assert.strictEqual(s.statusLane, 'bg', String(bad));
+    assert.strictEqual(s.colorLane, 'stripe', String(bad));
     assert.deepStrictEqual(s.show, { ctx: true, sub: true });
     assert.deepStrictEqual(s.colors, T.DEFAULT_TABSTYLE.colors);
   }
 });
 
-test('STATUS_STYLES: три способа показать статус, ни одного «никак»', () => {
-  assert.deepStrictEqual(T.STATUS_STYLES.map((x) => x.id), ['dot', 'fill', 'both']);
-  for (const x of T.STATUS_STYLES) assert.ok(x.name && typeof x.name === 'string', x.id);
+test('дорожки: статус — фон/рамка/полоска/только точка, цвет — три первые', () => {
+  assert.deepStrictEqual(T.STATUS_LANES.map((x) => x.id), ['bg', 'border', 'stripe', 'dot']);
+  assert.deepStrictEqual(T.COLOR_LANES.map((x) => x.id), ['bg', 'border', 'stripe']);
+  for (const x of T.STATUS_LANES) assert.ok(x.name && typeof x.name === 'string', x.id);
 });
 
-test('normalizeTabStyle keeps a known status and falls back on a bogus one', () => {
-  assert.strictEqual(T.normalizeTabStyle({ status: 'fill' }).status, 'fill');
-  assert.strictEqual(T.normalizeTabStyle({ status: 'dot' }).status, 'dot');
-  assert.strictEqual(T.normalizeTabStyle({ status: 'nope' }).status, 'both');
+test('палитра своего цвета: шесть, валидный hex, не совпадает со статусными', () => {
+  assert.strictEqual(T.OWN_COLORS.length, 6);
+  const status = Object.values(T.DEFAULT_TABSTYLE.colors);
+  for (const c of T.OWN_COLORS) {
+    assert.match(c.hex, HEX, c.id);
+    assert.ok(!status.includes(c.hex), c.id);
+    assert.ok(c.name && c.dot, c.id);
+  }
+  assert.strictEqual(new Set(T.OWN_COLORS.map((c) => c.id)).size, 6);
+  assert.strictEqual(T.ownColorHex('pink'), '#f472b6');
+  assert.strictEqual(T.ownColorHex('nope'), null);
 });
 
-// Переезд со старой формы: точка и заливка были двумя галочками. Настройки людей
-// лежат в localStorage в ней, и потерять их выбор нельзя.
-test('normalizeTabStyle переносит старые show.dot / show.statusFill в status', () => {
-  const cases = [
-    [{ dot: true, statusFill: true }, 'both'],
-    [{ dot: false, statusFill: true }, 'fill'],
-    [{ dot: true, statusFill: false }, 'dot'],
-    [{ dot: false, statusFill: false }, 'dot'],  // «без цвета» больше нельзя — точка тише всего
-  ];
-  for (const [show, want] of cases) {
-    assert.strictEqual(T.normalizeTabStyle({ show }).status, want, JSON.stringify(show));
+test('normalizeTabStyle: известные дорожки сохраняются, мусор — умолчание', () => {
+  const s = T.normalizeTabStyle({ statusLane: 'border', colorLane: 'bg' });
+  assert.strictEqual(s.statusLane, 'border');
+  assert.strictEqual(s.colorLane, 'bg');
+  const bad = T.normalizeTabStyle({ statusLane: 'zzz', colorLane: 'dot' });
+  assert.strictEqual(bad.statusLane, 'bg');
+  assert.strictEqual(bad.colorLane, 'stripe', '«точка» — не дорожка для цвета');
+});
+
+test('normalizeTabStyle: сохранённое столкновение дорожек разводится', () => {
+  const s = T.normalizeTabStyle({ statusLane: 'stripe', colorLane: 'stripe' });
+  assert.notStrictEqual(s.statusLane, s.colorLane);
+  assert.strictEqual(s.statusLane, 'stripe', 'статус остаётся, цвет уступает');
+});
+
+// Миграция localStorage: прежние режимы статуса переезжают на дорожки.
+test('normalizeTabStyle переносит прежний status в statusLane', () => {
+  const cases = [['both', 'bg'], ['fill', 'bg'], ['dot', 'dot']];
+  for (const [old, want] of cases) {
+    assert.strictEqual(T.normalizeTabStyle({ status: old }).statusLane, want, old);
   }
 });
 
-test('новое поле status побеждает старые галочки, если есть и то и то', () => {
-  assert.strictEqual(T.normalizeTabStyle({ status: 'dot', show: { dot: false, statusFill: true } }).status, 'dot');
+test('normalizeTabStyle переносит и совсем старые show.dot / show.statusFill', () => {
+  const cases = [
+    [{ dot: true, statusFill: true }, 'bg'],
+    [{ dot: false, statusFill: true }, 'bg'],
+    [{ dot: true, statusFill: false }, 'dot'],
+    [{ dot: false, statusFill: false }, 'dot'],
+  ];
+  for (const [show, want] of cases) {
+    assert.strictEqual(T.normalizeTabStyle({ show }).statusLane, want, JSON.stringify(show));
+  }
+});
+
+test('новое поле statusLane побеждает прежние', () => {
+  assert.strictEqual(T.normalizeTabStyle({ statusLane: 'stripe', status: 'dot' }).statusLane, 'stripe');
+});
+
+// Главное правило: одна дорожка на двоих невозможна, выбор двигает соседа на освободившуюся.
+test('setLane: цвет на дорожку статуса — статус переезжает на место цвета', () => {
+  const s = T.setLane({ statusLane: 'bg', colorLane: 'stripe' }, 'color', 'bg');
+  assert.strictEqual(s.colorLane, 'bg');
+  assert.strictEqual(s.statusLane, 'stripe');
+});
+
+test('setLane: статус на дорожку цвета — цвет переезжает на место статуса', () => {
+  const s = T.setLane({ statusLane: 'bg', colorLane: 'stripe' }, 'status', 'stripe');
+  assert.strictEqual(s.statusLane, 'stripe');
+  assert.strictEqual(s.colorLane, 'bg');
+});
+
+test('setLane: «только точкой» дорожек не занимает; из неё цвет не вытесняется', () => {
+  const a = T.setLane({ statusLane: 'bg', colorLane: 'stripe' }, 'status', 'dot');
+  assert.deepStrictEqual([a.statusLane, a.colorLane], ['dot', 'stripe']);
+  // выходя из «точки» на дорожку цвета, статус не оставляет цвету свободного места «где был» —
+  // цвет берёт первую свободную
+  const b = T.setLane({ statusLane: 'dot', colorLane: 'bg' }, 'status', 'bg');
+  assert.strictEqual(b.statusLane, 'bg');
+  assert.notStrictEqual(b.colorLane, 'bg');
+});
+
+test('setLane: любой выбор оставляет разные дорожки; мусор ничего не меняет', () => {
+  for (const sl of T.STATUS_LANES) for (const cl of T.COLOR_LANES) {
+    if (sl.id === cl.id) continue;
+    for (const lane of T.STATUS_LANES) {
+      const s = T.setLane({ statusLane: sl.id, colorLane: cl.id }, 'status', lane.id);
+      assert.strictEqual(s.statusLane, lane.id);
+      assert.notStrictEqual(s.statusLane, s.colorLane);
+    }
+    for (const lane of T.COLOR_LANES) {
+      const s = T.setLane({ statusLane: sl.id, colorLane: cl.id }, 'color', lane.id);
+      assert.strictEqual(s.colorLane, lane.id);
+      assert.notStrictEqual(s.statusLane, s.colorLane);
+    }
+  }
+  const same = T.setLane({ statusLane: 'bg', colorLane: 'stripe' }, 'color', 'dot');
+  assert.deepStrictEqual([same.statusLane, same.colorLane], ['bg', 'stripe']);
 });
 
 test('снятые настройки больше не возвращаются из нормализации', () => {
@@ -138,27 +209,16 @@ test('toCssVars normalizes garbage instead of emitting it', () => {
   assert.strictEqual(v['--danger'], T.DEFAULT_TABSTYLE.colors.danger);
 });
 
-test('bodyClasses always names the density and nothing else by default', () => {
-  assert.deepStrictEqual(T.bodyClasses(T.normalizeTabStyle(null)), ['tabs-normal']);
-  assert.deepStrictEqual(T.bodyClasses({ density: 'compact' }), ['tabs-compact']);
+test('bodyClasses: плотность и по классу на каждую дорожку', () => {
+  assert.deepStrictEqual(T.bodyClasses(T.normalizeTabStyle(null)),
+    ['tabs-normal', 'status-lane-bg', 'color-lane-stripe']);
+  assert.deepStrictEqual(T.bodyClasses({ density: 'compact', statusLane: 'dot', colorLane: 'border' }),
+    ['tabs-compact', 'status-lane-dot', 'color-lane-border']);
 });
 
 test('bodyClasses adds one tab-no-* class per hidden element', () => {
-  const all = T.bodyClasses({ status: 'dot', show: { ctx: false, sub: false } });
-  assert.deepStrictEqual(all, ['tabs-normal', 'tab-no-fill', 'tab-no-ctx', 'tab-no-sub']);
-  assert.deepStrictEqual(T.bodyClasses({ show: { sub: false } }), ['tabs-normal', 'tab-no-sub']);
-});
-
-// Ни одно значение status не гасит оба канала сразу: карточка без статуса — это
-// дырка, из-за которой две галочки и превратились в один выбор.
-test('bodyClasses: каждый способ гасит ровно противоположный канал', () => {
-  assert.deepStrictEqual(T.bodyClasses({ status: 'both' }), ['tabs-normal']);
-  assert.deepStrictEqual(T.bodyClasses({ status: 'dot' }), ['tabs-normal', 'tab-no-fill']);
-  assert.deepStrictEqual(T.bodyClasses({ status: 'fill' }), ['tabs-normal', 'tab-no-dot']);
-  for (const x of T.STATUS_STYLES) {
-    const cls = T.bodyClasses({ status: x.id });
-    assert.ok(!(cls.includes('tab-no-dot') && cls.includes('tab-no-fill')), x.id);
-  }
+  const all = T.bodyClasses({ show: { ctx: false, sub: false } });
+  assert.deepStrictEqual(all, ['tabs-normal', 'status-lane-bg', 'color-lane-stripe', 'tab-no-ctx', 'tab-no-sub']);
 });
 
 // --- превью не должно жить по бою -------------------------------------------
@@ -182,7 +242,7 @@ test('вид карточки: боевое правило не достаёт �
     assert.doesNotMatch(line, /:where\(body,\s*#set-tab-preview\)[^,{]*\s\.[\w-]/,
       'превью снова живёт по бою, а не по черновику: ' + line.trim());
   }
-  for (const cls of ['tab-no-dot', 'tab-no-ctx', 'tab-no-sub', 'tab-no-fill']) {
+  for (const cls of ['tab-no-ctx', 'tab-no-sub']) {
     assert.ok(css.includes(`body.${cls} `), cls + ': нет боевого правила');
     assert.ok(css.includes(`#set-tab-preview.${cls} `), cls + ': нет правила для превью');
     // Боевое правило обязано исключать превью — иначе черновик снова нечем перебить.
@@ -190,6 +250,19 @@ test('вид карточки: боевое правило не достаёт �
     for (const l of live) {
       assert.match(l, /:not\(#set-tab-preview \*\)/, cls + ': боевое правило лезет в превью — ' + l.trim());
     }
+  }
+});
+
+// Дорожки: класс на body/превью лишь ставит переменную НА СЕБЕ, а правила карточек спрашивают её
+// style-запросом — так превью живёт по черновику без пары селекторов.
+test('дорожки: на каждый класс есть переменная и style-запрос', () => {
+  for (const l of T.STATUS_LANES) {
+    assert.ok(css.includes(`:where(body, #set-tab-preview).status-lane-${l.id} `), 'status-lane-' + l.id);
+    assert.ok(css.includes(`@container style(--st-lane: ${l.id})`), 'запрос статуса ' + l.id);
+  }
+  for (const l of T.COLOR_LANES) {
+    assert.ok(css.includes(`:where(body, #set-tab-preview).color-lane-${l.id} `), 'color-lane-' + l.id);
+    assert.ok(css.includes(`@container style(--own-lane: ${l.id})`), 'запрос цвета ' + l.id);
   }
 });
 

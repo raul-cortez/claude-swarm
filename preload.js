@@ -249,7 +249,7 @@ contextBridge.exposeInMainWorld('swarm', {
     setTexts: (t)  => ipcRenderer.invoke('night:setTexts', t),
     // Мандат вкладки «работает без меня»: меню карточки (родное меню системы) и прямой
     // переключатель — им пользуется гейт ввода, когда человек забирает вкладку себе.
-    tabMenu:  (id) => ipcRenderer.invoke('tab:menu', { id }),
+    tabMenu:  (id, color) => ipcRenderer.invoke('tab:menu', { id, color: color || null }),
     setTab:   (id, auto) => ipcRenderer.invoke('tab:setAuto', { id, auto }),
     // Родство: id вкладки живёт один запуск, поэтому сохранённое родство (по tabKey)
     // пересобирается ЗДЕСЬ, после restoreOrStart, а не передаётся при создании.
@@ -343,6 +343,11 @@ contextBridge.exposeInMainWorld('swarm', {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('tab:historyRequest', handler);
     return () => ipcRenderer.removeListener('tab:historyRequest', handler);
+  },
+  onColorRequest: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('tab:colorRequest', handler);
+    return () => ipcRenderer.removeListener('tab:colorRequest', handler);
   },
   onRenameRequest: (cb) => {
     const handler = (_e, payload) => cb(payload);

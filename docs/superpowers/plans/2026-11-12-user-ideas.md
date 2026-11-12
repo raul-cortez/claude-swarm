@@ -16,7 +16,9 @@
    renderer `swarm.history` в localStorage (имя, named, дайджест, cmd/flags по id разговора),
    `openHistoryMenu` / `resumeFromHistory`. Claude сам чистит разговоры старше 30 дней.
 
-## Осталось — вид согласован по кадрам, код ещё не писали
+## Пункты 4 и 5 — сделано (tabstyle.setLane + railmini.js, проверено стендом; кадры ниже — историческая справка)
+
+Было: вид согласован по кадрам, код ещё не писали.
 
 Кадры и прототип: `docs/superpowers/plans/2026-11-12-stand/` — `combos.png`, `mini.png`,
 `proto.css` (прототипный CSS, НЕ продакшн: на !important и подставных data-атрибутах),

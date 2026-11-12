@@ -31,14 +31,32 @@
     { key: 'danger', name: 'Ошибка' },
   ];
 
-  // Как карточка показывает статус. Это ОДИН выбор, а не две галочки: точка и
-  // заливка — два способа сказать одно и то же, и парой переключателей они делали
-  // дырку «выключил оба — статуса не видно» и заставляли выбирать дважды.
-  const STATUS_STYLES = [
-    { id: 'dot', name: 'Точкой' },
-    { id: 'fill', name: 'Заливкой карточки' },
-    { id: 'both', name: 'Точкой и заливкой' },
+  // Три «дорожки» карточки: на что ложится цвет. Статус занимает одну, свой цвет вкладки —
+  // другую, и разделить одну на двоих нельзя (см. setLane). Точка статуса стоит ВСЕГДА, вне
+  // дорожек; «Только точкой» — четвёртое положение статуса: дорожки он не занимает вовсе, и
+  // свой цвет тогда может лечь на любую из трёх.
+  const LANES = [
+    { id: 'bg', name: 'Фоном' },
+    { id: 'border', name: 'Рамкой' },
+    { id: 'stripe', name: 'Полоской слева' },
   ];
+  const STATUS_LANES = LANES.concat([{ id: 'dot', name: 'Только точкой' }]);
+  const COLOR_LANES = LANES;
+
+  // Палитра своего цвета вкладки — в стороне от статусных (янтарь, зелёный, бирюза, красный)
+  // и от фиолетового ночного режима.
+  const OWN_COLORS = [
+    { id: 'pink', name: 'Розовый', hex: '#f472b6', dot: '\uD83E\uDE77' },
+    { id: 'blue', name: 'Синий', hex: '#5b8def', dot: '\uD83D\uDD35' },
+    { id: 'sand', name: 'Песочный', hex: '#d6b88a', dot: '\uD83D\uDFEB' },
+    { id: 'gray', name: 'Серый', hex: '#9aa4b2', dot: '\u26AA' },
+    { id: 'olive', name: 'Оливковый', hex: '#a3b34c', dot: '\uD83D\uDFE2' },
+    { id: 'rose', name: 'Бордовый', hex: '#b5546b', dot: '\uD83D\uDD34' },
+  ];
+  function ownColorHex(id) {
+    const c = OWN_COLORS.find(function (x) { return x.id === id; });
+    return c ? c.hex : null;
+  }
 
   // Что ещё показывать на карточке. Значок сабагентов сюда НЕ входит: он и так
   // виден только когда сабагенты работают, выключать было нечего. «Оранжевый, пока
@@ -65,7 +83,8 @@
   // regression test, so a change there must be mirrored here.
   const DEFAULT_TABSTYLE = {
     density: 'normal',
-    status: 'both',
+    statusLane: 'bg',
+    colorLane: 'stripe',
     show: { ctx: true, sub: true },
     // Умолчание — ровно то, что было кнопками всегда (луна + крестик), чтобы включение
     // настройки никому не переставило капсулу без спроса.
@@ -80,6 +99,29 @@
 
   const HEX = /^#[0-9a-fA-F]{6}$/;
 
+  // Первая дорожка, не занятая `taken` (и, если есть, предпочтительно `prefer`).
+  function freeLane(taken, prefer) {
+    if (prefer && prefer !== taken && COLOR_LANES.some(function (x) { return x.id === prefer; })) return prefer;
+    return COLOR_LANES.find(function (x) { return x.id !== taken; }).id;
+  }
+
+  // Выбор дорожки человеком. which: 'status' | 'color'. Тот, кого подвинули, переезжает на
+  // освободившуюся: выбрал для цвета дорожку статуса — статус занимает ту, где был цвет, и
+  // наоборот. «Только точкой» никого не двигает. Возвращает новый нормализованный стиль.
+  function setLane(style, which, lane) {
+    const s = normalizeTabStyle(style);
+    if (which === 'status') {
+      if (!STATUS_LANES.some(function (x) { return x.id === lane; })) return s;
+      if (lane === s.colorLane) s.colorLane = freeLane(lane, s.statusLane);
+      s.statusLane = lane;
+    } else if (which === 'color') {
+      if (!COLOR_LANES.some(function (x) { return x.id === lane; })) return s;
+      if (lane === s.statusLane) s.statusLane = s.colorLane;
+      s.colorLane = lane;
+    }
+    return s;
+  }
+
   // Coerce any stored/garbage value into a valid tab style. Never throws.
   // Returns a deep copy, so callers can use it to fork an editable draft.
   function normalizeTabStyle(raw) {
@@ -91,16 +133,21 @@
     SHOW_KEYS.forEach(function (k) {
       show[k] = typeof rShow[k] === 'boolean' ? rShow[k] : d.show[k];
     });
-    // Переезд со старой формы, где точка и заливка были двумя галочками. Читаем их
-    // из сохранённого show, чтобы у человека осталось то, что он выбирал: были обе —
-    // 'both', только заливка — 'fill', только точка — 'dot'. Ни одной — 'dot': такое
-    // сочетание раньше означало «без цвета вообще», и точка здесь тише всего.
-    let status = STATUS_STYLES.some(function (x) { return x.id === r.status; }) ? r.status : null;
-    if (!status) {
-      const oldDot = typeof rShow.dot === 'boolean' ? rShow.dot : true;
-      const oldFill = typeof rShow.statusFill === 'boolean' ? rShow.statusFill : true;
-      status = (oldDot && oldFill) ? 'both' : (oldFill ? 'fill' : 'dot');
+    // Переезд со старых форм. Была пара галочек show.dot/statusFill, потом один выбор status
+    // (dot / fill / both). В новой модели статус — дорожка: «заливкой» и «обоими» стали фоном
+    // (точка теперь есть всегда), «только точкой» осталась точкой.
+    let statusLane = STATUS_LANES.some(function (x) { return x.id === r.statusLane; }) ? r.statusLane : null;
+    if (!statusLane) {
+      let old = ['dot', 'fill', 'both'].includes(r.status) ? r.status : null;
+      if (!old) {
+        const oldFill = typeof rShow.statusFill === 'boolean' ? rShow.statusFill : true;
+        old = oldFill ? 'both' : 'dot';
+      }
+      statusLane = old === 'dot' ? 'dot' : d.statusLane;
     }
+    let colorLane = COLOR_LANES.some(function (x) { return x.id === r.colorLane; }) ? r.colorLane : d.colorLane;
+    // Одна дорожка на двоих невозможна: при столкновении свой цвет уступает на свободную.
+    if (colorLane === statusLane) colorLane = freeLane(statusLane, null);
     const colors = {};
     COLORS.forEach(function (c) {
       const v = rColors[c.key];
@@ -119,7 +166,8 @@
     }
     return {
       density: DENSITIES.some(function (x) { return x.id === r.density; }) ? r.density : d.density,
-      status: status,
+      statusLane: statusLane,
+      colorLane: colorLane,
       show: show,
       tools: tools,
       colors: colors,
@@ -142,8 +190,7 @@
   function bodyClasses(style) {
     const s = normalizeTabStyle(style);
     const out = ['tabs-' + s.density];
-    if (s.status === 'fill') out.push('tab-no-dot');
-    if (s.status === 'dot') out.push('tab-no-fill');
+    out.push('status-lane-' + s.statusLane, 'color-lane-' + s.colorLane);
     if (!s.show.ctx) out.push('tab-no-ctx');
     if (!s.show.sub) out.push('tab-no-sub');
     return out;
@@ -156,7 +203,7 @@
   }
 
   return {
-    DENSITIES, COLORS, STATUS_STYLES, TOOL_KEYS, TOOL_DEFS, TOOLS_MAX, DEFAULT_TABSTYLE,
+    DENSITIES, COLORS, LANES, STATUS_LANES, COLOR_LANES, OWN_COLORS, ownColorHex, setLane, TOOL_KEYS, TOOL_DEFS, TOOLS_MAX, DEFAULT_TABSTYLE,
     normalizeTabStyle, toCssVars, bodyClasses, orderedTools,
   };
 });
