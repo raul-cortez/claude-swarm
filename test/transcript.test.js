@@ -532,6 +532,12 @@ test('поиск: потолок по числу реплик, счёт — по
   assert.strictEqual(r.hits.length, 2);
 });
 
+test('historyHead: папка, записанная иначе (регистр, симлинк), признаётся через предикат', () => {
+  const line = JSON.stringify({ type: 'user', cwd: '/P/Shop', message: { content: 'привет' } });
+  assert.strictEqual(T.historyHead(line, '/p/shop'), null);
+  assert.deepStrictEqual(T.historyHead(line, '/p/shop', (a, b) => a.toLowerCase() === b.toLowerCase()), { prompt: 'привет', title: '' });
+});
+
 test('historyHead: первая просьба человека, служебное мимо, чужая папка и пустой разговор — null', () => {
   const L = (o) => JSON.stringify(o);
   const text = [

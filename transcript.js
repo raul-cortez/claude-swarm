@@ -437,7 +437,7 @@ function searchEntries(entries, query, max = SEARCH_MAX) {
 // ни одной просьбы: открыть и закрыть пустую вкладку — не разговор, к которому возвращаются.
 const HISTORY_PROMPT_LEN = 140;
 
-function historyHead(text, cwd) {
+function historyHead(text, cwd, same) {
   const want = String(cwd || '').replace(/[\\/]+$/, '');
   let seenCwd = false;
   let prompt = '';
@@ -449,7 +449,8 @@ function historyHead(text, cwd) {
     try { e = JSON.parse(t); } catch (_) { continue; }
     if (!seenCwd && e.cwd) {
       seenCwd = true;
-      if (want && String(e.cwd).replace(/[\\/]+$/, '') !== want) return null;
+      const there = String(e.cwd).replace(/[\\/]+$/, '');
+      if (want && there !== want && !(same && same(there, want))) return null;
     }
     if (e.type === 'custom-title' && e.customTitle && !/^swarm-/i.test(e.customTitle)) title = String(e.customTitle);
     if (prompt || e.type !== 'user' || e.isMeta || e.isSidechain) continue;

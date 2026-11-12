@@ -1179,7 +1179,7 @@ function openLaunchMenu(anchor, cwd, toggle) {
     const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(null); } };
     launchMenu.classList.remove('hidden');
     placeMenuUnder(launchMenu, anchor);
-    setTimeout(() => document.addEventListener('mousedown', outside), 0);
+    setTimeout(() => { if (!closed) document.addEventListener('mousedown', outside); }, 0);
     document.addEventListener('keydown', onKey, true);
     launchMenu.querySelector('.cmd-item')?.focus();
   });
@@ -1553,9 +1553,16 @@ async function createSession(opts = {}) {
   tab.addEventListener('mouseenter', () => {
     const s = sessions.get(id);
     if (!s || tab.classList.contains('is-geo')) return;
-    if (!(railMini && currentLayout() === 'layout-rail')) { if (tab.title) tab.title = ''; return; }
+    // Подсказку, которую поставили не мы (ночь, «работа сделана», сон), не стираем: наша —
+    // сверху, чужая под ней, а при развёрнутой панели возвращается как была.
+    if (tab.dataset.miniTip && tab.title === tab.dataset.miniTip) tab.title = tab.dataset.tipBase || '';
+    delete tab.dataset.miniTip; delete tab.dataset.tipBase;
+    if (!(railMini && currentLayout() === 'layout-rail')) return;
     const name = tab.querySelector('.label').textContent;
-    tab.title = s.digestText ? `${name}\n${s.digestText}` : name;
+    const mini = s.digestText ? `${name}\n${s.digestText}` : name;
+    tab.dataset.tipBase = tab.title;
+    tab.title = tab.title ? `${mini}\n\n${tab.title}` : mini;
+    tab.dataset.miniTip = tab.title;
   });
   tab.dataset.sid = id;
   attachDragHandle(tab, tab.querySelector('.grip'), () => {
@@ -4298,8 +4305,14 @@ function persistTabs() {
 // удалил, и обещать его нельзя. Потолок — чтобы запись не росла годами.
 const HISTORY_KEY = 'swarm.history';
 const HISTORY_KEEP = 400;
+// Разобранная история живёт в памяти: rememberHistory зовётся на каждый persistTabs и каждый
+// дайджест, а писать нужно редко — парсить до 400 записей из localStorage каждый раз незачем.
+let historyCache = null;
 function loadHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}') || {}; } catch (_) { return {}; }
+  if (!historyCache) {
+    try { historyCache = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}') || {}; } catch (_) { historyCache = {}; }
+  }
+  return historyCache;
 }
 function rememberHistory() {
   const h = loadHistory();
@@ -4358,11 +4371,16 @@ async function openHistoryMenu(anchor, cwd) {
   menu.dataset.cwd = cwd;
   menu.__anchor = anchor;
   menu.innerHTML = '<div class="cmd-empty">Ищу разговоры…</div>';
-  const outside = (ev) => { if (!menu.contains(ev.target) && !anchor.contains(ev.target)) close(); };
+  // Клик по самой карточке-якорю меню закрывает (карточка при этом активируется); кнопку-якорь
+  // пропускаем: её собственный клик повторно зовёт openHistoryMenu, и тот закрывает сам.
+  const ownsClick = (ev) => anchor.contains(ev.target) && !anchor.classList.contains('tab');
+  const outside = (ev) => { if (!menu.contains(ev.target) && !ownsClick(ev)) close(); };
+  let closed = false;
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => {
+    closed = true;
     menu.classList.add('hidden');
-    historyMenuClose = null;
+    if (historyMenuClose === close) historyMenuClose = null;
     document.removeEventListener('mousedown', outside);
     document.removeEventListener('keydown', onKey, true);
   };
@@ -4428,7 +4446,8 @@ window.swarm.onHistoryRequest(({ id }) => {
   const s = sessions.get(String(id));
   if (!s || !s.cwd) return;
   // Меню карточки родное и уже закрылось — вешаем список под саму карточку.
-  openHistoryMenu(s.tab, s.cwd);
+  // Карточки может не быть в ленте (свёрнутая папка, подвал бригады) — тогда якорь вся лента.
+  openHistoryMenu(s.tab.getClientRects().length ? s.tab : tabsEl, s.cwd);
 });
 
 // Sessions in display order, grouped into units (a folder or a loner) by cwd.
@@ -4864,6 +4883,7 @@ function attachRename(labelEl) {
     labelEl.contentEditable = 'false';
     const text = labelEl.textContent.replace(/\s+/g, ' ').trim();
     const t0 = labelEl.closest('.tab');
+    setTimeout(applyPendingTitles, 0);   // после того как это имя запишется ниже
     const s = t0 && sessions.get(t0.dataset.sid);
     // Стёр имя целиком — значит, отдал его обратно: карточка снова зовётся тем, что даёт агент
     // (или именем папки, пока агент ничего не дал).
@@ -4980,6 +5000,7 @@ function attachTermRename(labelEl, id) {
   });
   labelEl.addEventListener('blur', () => {
     renaming = false;
+    setTimeout(applyPendingTitles, 0);
     labelEl.contentEditable = 'false';
     const text = labelEl.textContent.replace(/\s+/g, ' ').trim();
     labelEl.textContent = text || 'терминал';
@@ -5296,7 +5317,21 @@ function paintTabInitials() {
     if (s.tab.dataset.ini !== ini) s.tab.dataset.ini = ini;
   }
 }
-new MutationObserver(paintTabInitials).observe(tabsEl, { subtree: true, childList: true, characterData: true });
+// Смена статуса, контекста и дайджеста дёргает ту же ленту много раз в минуту, а инициалам важен
+// только текст ярлыка (или появление карточки): остальные изменения пропускаем, остальное
+// склеиваем в один проход на кадр.
+let initialsQueued = false;
+const touchesLabel = (n) => {
+  const el = n && n.nodeType === 3 ? n.parentElement : n;
+  return !!(el && el.nodeType === 1 && (el.closest('.label') || el.querySelector('.label')));
+};
+new MutationObserver((muts) => {
+  if (initialsQueued) return;
+  const hit = muts.some((m) => touchesLabel(m.target) && (m.type !== 'childList' || m.target.closest('.label') || [...m.addedNodes].some(touchesLabel)));
+  if (!hit) return;
+  initialsQueued = true;
+  requestAnimationFrame(() => { initialsQueued = false; paintTabInitials(); });
+}).observe(tabsEl, { subtree: true, childList: true, characterData: true });
 document.getElementById('rail-toggle').addEventListener('click', toggleRailMini);
 
 function toggleLayout() {
@@ -7723,10 +7758,25 @@ window.swarm.onDigest(({ id, text, title }) => setDigestText(id, text, title));
 
 // Имя от агента (поле title в файле дайджеста). Ставим, только пока человек не дал своё, и не
 // посреди переименования — иначе агент выдернул бы текст из-под курсора.
-function applyAutoTitle(s, title) {
-  s.autoTitle = title;
+// Два агента могут назвать вкладки одинаково — карточки, темы телеги и поиск по имени в бригаде
+// различают их по имени, так что повтор получает « 2», «  3», как у defaultName.
+function uniqueTitle(s, title) {
+  const taken = new Set([...sessions.values()].filter((x) => x !== s).map((x) => x.tab.querySelector('.label').textContent));
+  if (!taken.has(title)) return title;
+  let i = 2;
+  while (taken.has(`${title} ${i}`)) i++;
+  return `${title} ${i}`;
+}
+// Имя, пришедшее посреди чужого переименования, не пропадает: файл дайджеста больше не изменится
+// и main его не пришлёт, так что по окончании правки применяем отложенное сами.
+function applyPendingTitles() {
+  for (const s of sessions.values()) if (s.autoTitle && !s.named) applyAutoTitle(s, s.autoTitle);
+}
+function applyAutoTitle(s, raw) {
+  s.autoTitle = raw;
   if (s.named || renaming) return;
   const el = s.tab.querySelector('.label');
+  const title = uniqueTitle(s, raw);
   if (el.textContent === title) return;
   el.textContent = title;
   window.swarm.setTabName(s.id, title);   // тема в телеге зовётся так же, как вкладка

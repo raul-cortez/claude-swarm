@@ -70,6 +70,17 @@ test('пустая подпись отметки пропускается', () =
   assert.strictEqual(P.parse(doc('[ ]\n[ ] a')), null);
 });
 
+test('нумерованные пункты «1. [ ]» и «1) [x]» читаются', () => {
+  const p = P.parse(doc('1. [x] a\n2. [>] b\n3) [ ] c'));
+  assert.strictEqual(p.total, 3);
+  assert.strictEqual(p.nowIndex, 1);
+});
+
+test('«## …» внутри комментария не обрывает раздел', () => {
+  const p = P.parse(doc('<!-- пример:\n## Не заголовок\n-->\n[ ] a\n[ ] b'));
+  assert.strictEqual(p.total, 2);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; } catch (e) { console.error('FAIL', name, '\n', e.message); process.exit(1); }
 }

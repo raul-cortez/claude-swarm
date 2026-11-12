@@ -6639,7 +6639,10 @@ setInterval(() => {
     // Досье выключили: плана нет, кнопка уходит.
     for (const id of sessions.keys()) {
       const d = det.get(id);
-      if (d && d.planJson && d.planJson !== 'null') planSend(id, d, null);
+      if (!d) continue;
+      // mtime тоже забываем: когда досье включат снова, тот же файл должен прочитаться заново.
+      d.planMtime = 0;
+      if (d.planJson && d.planJson !== 'null') planSend(id, d, null);
     }
     return;
   }
@@ -8508,7 +8511,18 @@ ipcMain.handle('session:canResumeName', (_e, cwd, name) => {
 // знает — в ней наш служебный swarm-ярлык, а не имя вкладки. Для разговоров без записи
 // (открытых до этой функции или в голом терминале) имя — начало первой просьбы человека.
 const HISTORY_MAX = 80;
-const HISTORY_HEAD_BYTES = 64 * 1024;
+const HISTORY_HEAD_STEPS = [64 * 1024, 1024 * 1024, 4 * 1024 * 1024];
+
+// Та же ли это папка: слэши на конце не в счёт, на маке и в Windows регистр тоже, а симлинк
+// сверяем по настоящему пути.
+function sameDir(a, b) {
+  const trim = (x) => String(x || '').replace(/[\\/]+$/, '');
+  const x = trim(a);
+  const y = trim(b);
+  if (x === y) return true;
+  if (process.platform !== 'linux' && x.toLowerCase() === y.toLowerCase()) return true;
+  try { return fs.realpathSync(x) === fs.realpathSync(y); } catch (_) { return false; }
+}
 
 function readHead(file, bytes) {
   let fd = null;
@@ -8533,14 +8547,20 @@ ipcMain.handle('history:scan', (_e, cwd) => {
       if (seen.has(id)) continue;
       seen.add(id);
       const file = path.join(dir, n);
-      try { files.push({ id, file, at: fs.statSync(file).mtimeMs }); } catch (_) {}
+      try { const st = fs.statSync(file); files.push({ id, file, at: st.mtimeMs, size: st.size }); } catch (_) {}
     }
   }
   files.sort((a, b) => b.at - a.at);
   const out = [];
   for (const f of files) {
     if (out.length >= HISTORY_MAX) break;
-    const head = transcript.historyHead(readHead(f.file, HISTORY_HEAD_BYTES), cwd);
+    // Первая просьба может лежать глубже окна (огромная вставка, большой снимок в начале) —
+    // тогда окно растёт, но не дальше потолка.
+    let head = null;
+    for (const bytes of HISTORY_HEAD_STEPS) {
+      head = transcript.historyHead(readHead(f.file, bytes), cwd, sameDir);
+      if (head || f.size <= bytes) break;
+    }
     if (!head) continue;              // чужая папка или пустой разговор — возвращаться не к чему
     out.push({ id: f.id, at: f.at, prompt: head.prompt, title: head.title });
   }

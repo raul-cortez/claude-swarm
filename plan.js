@@ -1,17 +1,18 @@
 // plan.js — разбор раздела «## План» файла работы вкладки в дерево шагов.
 // Dual-mode: module.exports под Node (main, тест). Только строки, без файловой системы и DOM.
 // Формат: пункты с отметкой `[ ]` не сделано, `[x]`/`[X]` сделано, `[>]` мы здесь;
-// подшаги вложены отступом.
+// подшаги вложены отступом. Перед отметкой допустим маркер списка: `-`, `*`, `+` или `1.`/`1)`.
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.SWARM_PLAN = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const MARK = /^(\s*)(?:[-*+]\s+)?\[([ xX>])\]\s*(.*)$/;
+  const MARK = /^(\s*)(?:(?:[-*+]|\d+[.)])\s+)?\[([ xX>])\]\s*(.*)$/;
 
   // Текст раздела «## План» (до следующего заголовка того же или верхнего уровня).
   function section(text) {
-    const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+    // Комментарии вырезаем ДО разбора по заголовкам: строка `## …` внутри подсказки не конец раздела.
+    const lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
     const out = [];
     let on = false;
     for (const line of lines) {
@@ -22,7 +23,7 @@
       }
       if (on) out.push(line);
     }
-    return out.join('\n').replace(/<!--[\s\S]*?-->/g, '');
+    return out.join('\n');
   }
 
   function indentOf(s) { return s.replace(/\t/g, '    ').length; }
