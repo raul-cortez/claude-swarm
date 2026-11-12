@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.83.0 — 2026-11-12
+
+- feat(tabs): past conversations in a window with search; agent keeps a per-tab summary
+- feat(geo): show a dead subscription proxy instead of an empty tab
+- fix: review round — plan survives dossier toggle, tab tips kept, auto-title retried and deduped, history scan deeper
+- feat(plan): right-hand plan panel from the work file
+- fix(crew): no foreman label without a digest
+- feat(crew): foreman label becomes the digest prefix
+- feat(tabs): own tab color with status/color lanes, collapsible left panel
+- feat(tabs): past conversations of a folder
+- feat(tabs): the agent names its tab from the task
+- fix(about): show the running version, not the installed one
+
 ## 0.82.0 — 2026-11-11
 
 - feat(dossier): the heir confirms the old session's requests before doing them
