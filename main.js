@@ -8967,6 +8967,12 @@ const geoProxy = new Map();
 function geoTabBlocked(d) {
   return geo.tabBlocked(geoBlocked, d && d.proxy ? geoProxy.get(d.proxy) : null);
 }
+// Прокси вкладки не отвечает на проверку: агента в неё не запускаем (он повис бы в пустоту), а
+// окну показываем плашку. Уже идущего агента не трогаем — только говорим.
+function geoTabDown(d) {
+  const proxy = (d && d.proxy) || '';
+  return geo.tabProxyDown(proxy, proxy ? geoProxy.get(proxy) : null);
+}
 function geoTabKnown(d) {
   const proxy = (d && d.proxy) || '';
   return geo.tabKnown(geoKnown, proxy, proxy ? geoProxy.get(proxy) : null);
@@ -8974,8 +8980,10 @@ function geoTabKnown(d) {
 
 function geoGate(id, fn) {
   const d = det.get(id);
-  if (geoTabKnown(d) && !geoTabBlocked(d)) { fn(); return; }
+  if (geoTabKnown(d) && !geoTabBlocked(d) && !geoTabDown(d)) { fn(); return; }
   geoHeld.push({ id, fn });
+  // Новая вкладка встала в ожидание из-за прокси — плашка нужна сразу, а не к следующей проверке.
+  if (geoTabKnown(d) && geoTabDown(d)) setTimeout(() => safeSend('geo:state', geoStateNow()), 0);
 }
 
 async function geoAsk(proxy) {
@@ -9007,7 +9015,7 @@ function geoSubsNow() {
   return NETWORK_PROXIES.map((c) => {
     const st = geoProxy.get(normalizeProxy(c && c.proxy)) || {};
     const country = st.country || '';
-    return { line: String((c && c.line) || ''), country, flag: geo.flagOf(country), tried: !!st.tried };
+    return { line: String((c && c.line) || ''), country, flag: geo.flagOf(country), tried: !!st.tried, down: !!st.tried && !!st.down };
   });
 }
 
@@ -9020,11 +9028,19 @@ function geoTabCountry(d) {
 function geoStateNow() {
   const blockedTabs = [];
   for (const [id, d] of det) if (!d.dead && geoTabBlocked(d)) blockedTabs.push({ id, country: geoTabCountry(d) });
+  // Вкладки с молчащим прокси: окну — для плашки и отметки на карточке. waiting — агент ещё не
+  // стартовал и ждёт прокси; line — строка запуска подписки, по ней окно подпишет её именем.
+  const downTabs = [];
+  for (const [id, d] of det) {
+    if (d.dead || !geoTabDown(d)) continue;
+    const c = NETWORK_PROXIES.find((x) => normalizeProxy(x && x.proxy) === d.proxy);
+    downTabs.push({ id, line: String((c && c.line) || ''), waiting: geoHeld.some((h) => h.id === id) });
+  }
   return {
     direct: geoBlocked,
     country: geoCountry, flag: geo.flagOf(geoCountry), checkedAt: geoCheckedAt, why: geoWhy,
     subs: geoSubsNow(),
-    blockedTabs,
+    blockedTabs, downTabs,
   };
 }
 
@@ -9042,7 +9058,8 @@ async function geoCheckProxies(why) {
     const was = geoProxy.get(url) || { country: '', tried: false };
     if (c && c !== was.country) tgLog(`регион подписки ${label(url)} через прокси (${why}): ${was.country || '?'} → ${c}`);
     if (!c && !was.tried) tgLog(`регион подписки ${label(url)}: прокси не ответил (${why})`);
-    geoProxy.set(url, { country: c || was.country, tried: true });
+    if (!c !== !!was.down && was.tried) tgLog(`прокси подписки ${label(url)}: ${c ? 'снова отвечает' : 'перестал отвечать'} (${why})`);
+    geoProxy.set(url, { country: c || was.country, tried: true, down: !c });
   }));
 }
 
@@ -9066,8 +9083,8 @@ async function geoCheckOnce(why) {
     tgLog(`регион (${geoWhy}): ${wasCountry || '?'} → ${geoCountry || '?'}`
       + (geoBlocked !== was ? (geoBlocked ? ' — замораживаю вкладки без своего прокси' : ' — размораживаю вкладки без своего прокси') : ''));
   }
+  geoApply();                       // сначала отпускаем ждущих, потом рассказываем окну, кто ещё ждёт
   safeSend('geo:state', geoStateNow());
-  geoApply();
 }
 
 // Привести вкладки в соответствие с решением: замороженные — заморозить, остальные разбудить и
@@ -9081,7 +9098,7 @@ function geoApply() {
   for (const h of held) {
     const d = det.get(h.id);
     if (!d) continue;                                   // вкладку закрыли, пока ждала
-    if (!geoTabKnown(d) || geoTabBlocked(d)) { geoHeld.push(h); continue; }
+    if (!geoTabKnown(d) || geoTabBlocked(d) || geoTabDown(d)) { geoHeld.push(h); continue; }
     try { h.fn(); } catch (e) { reportMainError(e); }
   }
 }

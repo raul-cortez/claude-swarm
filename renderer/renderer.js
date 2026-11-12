@@ -865,6 +865,10 @@ let geoNow = null;
 // ним гейт решает, уходит ли печать, а он работает с первой восстановленной вкладки.
 let geoFrozenTabs = new Map();
 function geoFrozen(id) { return geoFrozenTabs.has(String(id)); }
+// Вкладки, чей прокси молчит: id -> { line, waiting }. Не заморозка: агента не останавливаем, а
+// ещё не запущенному не даём стартовать в пустоту (решает main). Тут — только плашка и отметки.
+let geoDownTabs = new Map();
+function geoDown(id) { return geoDownTabs.has(String(id)); }
 const geoFlagEl = document.getElementById('geo-flag');
 let launch = launchList[0];
 let launchMode = localStorage.getItem('swarm.launchMode') || 'agent';
@@ -5881,7 +5885,10 @@ function typeInto(id, bytes) {
 function renderGate() {
   if (!gateEl) return;
   const s = sessions.get(activeId);
-  const on = !!s && gatedTab(activeId);
+  // Молчащий прокси говорит плашкой, только если над вкладкой нет другой (ночь важнее: на ней
+  // кнопка «забрать»); отметка на карточке и флажок есть в любом случае.
+  const downOnly = !!s && geoDown(activeId) && !gatedTab(activeId);
+  const on = !!s && (gatedTab(activeId) || downOnly);
   for (const [id, sess] of sessions) sess.holder.classList.toggle('gated', on && id === activeId);
   const was = !gateEl.hidden;
   gateEl.hidden = !on;
@@ -5891,7 +5898,21 @@ function renderGate() {
     return;
   }
   const name = s.tab.querySelector('.label').textContent;
-  gateEl.classList.toggle('is-geo', geoFrozen(activeId));
+  gateEl.classList.toggle('is-geo', geoFrozen(activeId) || downOnly);
+  if (downOnly) {
+    const d = geoDownTabs.get(String(activeId));
+    const sub = geoSubLabel(d.line);
+    const text = gateEl.querySelector('.gate-text');
+    text.textContent = d.waiting
+      ? `Прокси подписки${sub ? ` «${sub}»` : ''} не отвечает — «${name}» не запущена. Заработает прокси — агент стартует сам.`
+      : `Прокси подписки${sub ? ` «${sub}»` : ''} не отвечает: «${name}» не достучится до сети. Заработает — продолжит сама.`;
+    text.title = 'Это сеть, а не сворм: проверка через прокси этой подписки не получила ответа. Сворм'
+      + ' проверяет каждые 15 секунд и сам запустит агента (или даст ему продолжить), когда прокси ответит.'
+      + ' Печатать в вкладку можно.';
+    gateEl.querySelector('.gate-take').hidden = true;
+    if (!was) refitActive();
+    return;
+  }
   if (geoFrozen(activeId)) {
     // Регион — не владение: забирать здесь нечего, кнопки нет. Сменится адрес — плашка уйдёт сама.
     const c = geoFrozenTabs.get(String(activeId));
@@ -5997,8 +6018,10 @@ function paintAuto(s) {
   if (sub && done) sub.textContent = 'работа сдана';
   // Заморожена по региону — это видно и в списке вкладок, не только открыв её.
   const frozen = geoFrozen(s.id);
-  s.tab.classList.toggle('is-geo', frozen);
+  const down = !frozen && geoDown(s.id);
+  s.tab.classList.toggle('is-geo', frozen || down);
   if (sub && frozen) sub.textContent = 'заморожена: регион';
+  if (sub && down) sub.textContent = 'прокси не отвечает';
   s.tab.title = !on ? ''
     : done
       ? 'Ночной режим, работа сдана: агент сказал, что задача кончилась, — откройте вкладку и'
@@ -6006,12 +6029,16 @@ function paintAuto(s) {
         + ' полумесяц или кнопка в плашке над терминалом.'
       : 'Ночной режим: агент решает сам, сворм подталкивает вкладку и будит. Печать в неё'
         + ' не уходит — полумесяц или кнопка в плашке над терминалом, чтобы забрать себе.';
+  if (down) {
+    s.tab.title = 'Прокси подписки этой вкладки не отвечает — это сеть, а не сворм. Агент не стартует'
+      + ' (или ждёт сеть), пока прокси не заработает; сворм проверяет каждые 15 секунд и всё сделает сам.';
+  }
   if (frozen) {
     s.tab.title = 'Заморожена: подписка этой вкладки выходит в сеть из страны, где Claude недоступен.'
       + ' Агент стоит, печать не уходит. Сменится адрес — продолжит с того же места сам.';
   }
   // Спит — поверх обычного статуса, как и «работа сдана»: подпись под именем и снежинка.
-  const asleep = !!s.sleep && !frozen;
+  const asleep = !!s.sleep && !frozen && !down;
   s.tab.classList.toggle('is-sleep', asleep);
   const mark = s.tab.querySelector('.sleep-mark');
   if (mark) {
@@ -7298,7 +7325,7 @@ function geoTitle() {
   const ago = Math.max(0, Math.round((Date.now() - s.checkedAt) / 1000));
   // Флажок — страна самого мака. Подписки со своим прокси выходят в сеть из другой страны, и
   // у них свой флажок в пилюле остатков — здесь только перечисляем, чтобы не путать одно с другим.
-  const viaProxy = (s.subs || []).map((x) => `${geoSubLabel(x.line)}: ${x.country ? geoName(x.country) : 'прокси не отвечает'} (через прокси)`);
+  const viaProxy = (s.subs || []).map((x) => `${geoSubLabel(x.line)}: ${x.down ? 'прокси не отвечает' : x.country ? geoName(x.country) : 'ещё не проверен'} (через прокси)`);
   return [`Адрес: ${geoName(s.country)}`, ...viaProxy, `Проверено ${ago} с назад (${s.why || '—'})`].join('\n');
 }
 // Подпись подписки по строке запуска — её имя из карточки, если оно есть.
@@ -7320,7 +7347,8 @@ function geoFlagForPill(p) {
   const i = acc ? SUBS_API.matchIndex(launchList, acc) : -1;
   const stem = i === -1 ? '' : SUBS_API.stemOf(launchList[i].line);
   const g = stem ? geoNow.subs.find((x) => SUBS_API.stemOf(x.line) === stem) : null;
-  if (g) return g.flag || '🏳';
+  // Прокси молчит — восклицательный знак: страну он не подтверждает, а вкладки подписки ждут.
+  if (g) return (g.flag || '🏳') + (g.down ? '❗' : '');
   return geoNow.flag || '🏳';
 }
 // Вкладки, замороженные по региону: id -> страна их выхода. Окно регион не закрывает никогда —
@@ -7329,11 +7357,15 @@ function geoFlagForPill(p) {
 function renderGeoTabs(s) {
   const was = geoFrozenTabs;
   geoFrozenTabs = new Map(((s && s.blockedTabs) || []).map((t) => [String(t.id), t.country || '']));
+  const wasDown = geoDownTabs;
+  geoDownTabs = new Map(((s && s.downTabs) || []).map((t) => [String(t.id), { line: t.line || '', waiting: !!t.waiting }]));
   for (const sess of sessions.values()) {
     // Разморозилась — вернуть карточке её обычную подпись. Сама она не вернётся: агент всё время
     // заморозки стоял, и если он и до неё был свободен, нового статуса, который перепишет «.sub»,
     // может не прийти часами — «заморожена: регион» так и висела бы на живой вкладке.
-    if (was.has(String(sess.id)) && !geoFrozenTabs.has(String(sess.id))) {
+    const back = (was.has(String(sess.id)) && !geoFrozenTabs.has(String(sess.id)))
+      || (wasDown.has(String(sess.id)) && !geoDownTabs.has(String(sess.id)));
+    if (back) {
       const sub = sess.tab && sess.tab.querySelector('.sub');
       if (sub) sub.textContent = sess.status === 'waiting' ? waitLabel(sess) : (effectiveStatus(sess).detail || ({ ready: 'готов', running: 'работает' })[sess.status] || '');
     }

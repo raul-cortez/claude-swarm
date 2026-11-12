@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(geo): a dead subscription proxy is shown — a plate over the tab, a red card mark and ❗ on the subscription flag; the agent waits for the proxy instead of starting into the void
 - feat(plan): the plan from the work file in a right-hand panel — a «План 3/6» button appears at the top right when the tab has one; read-only, the agent ticks the steps
 - feat(crew): the foreman label is part of the digest line («Прораб: …»), no more floating plate over the terminal
 - feat(tabs): own tab color from the card menu, shown on a lane of your choice (background, border or left stripe); status takes another lane or just the dot

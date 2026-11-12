@@ -92,4 +92,11 @@ function tabKnown(directKnown, proxy, proxyState) {
   return !proxy || !!(proxyState && proxyState.tried);
 }
 
-module.exports = { BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf, tabBlocked, tabKnown };
+// Прокси вкладки молчит: проверка через него уже была и ответа не получила. tabBlocked такую
+// вкладку не замораживает (страну гадать не по чему), но запускать в неё агента и звать это
+// «всё в порядке» нельзя: он повис бы в пустоту. Состояние — { country, tried, down }.
+function tabProxyDown(proxy, proxyState) {
+  return !!proxy && !!proxyState && !!proxyState.tried && !!proxyState.down;
+}
+
+module.exports = { tabProxyDown, BLOCKED, SOURCES, CHECK_EVERY_MS, NET_POLL_MS, FETCH_TIMEOUT_MS, parseTrace, parsePlain, nextBlocked, netSignature, flagOf, tabBlocked, tabKnown };

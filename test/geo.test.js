@@ -83,6 +83,15 @@ test('агента не запускаем, пока не проверен и п
   assert.strictEqual(GEO.tabKnown(true, 'http://h:1', { country: '', tried: true }), true);
 });
 
+test('прокси молчит: вкладка «лежит» только после проверки, без прокси — никогда', () => {
+  assert.strictEqual(GEO.tabProxyDown('', null), false);
+  assert.strictEqual(GEO.tabProxyDown('http://h:1', null), false);
+  assert.strictEqual(GEO.tabProxyDown('http://h:1', { country: '', tried: false, down: true }), false);
+  assert.strictEqual(GEO.tabProxyDown('http://h:1', { country: '', tried: true, down: true }), true);
+  assert.strictEqual(GEO.tabProxyDown('http://h:1', { country: 'DE', tried: true, down: true }), true);
+  assert.strictEqual(GEO.tabProxyDown('http://h:1', { country: 'DE', tried: true, down: false }), false);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; console.log('ok —', name); } catch (e) { console.error('FAIL —', name); console.error(e); process.exit(1); }
 }
