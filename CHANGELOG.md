@@ -1,16 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- feat(geo): a dead subscription proxy is shown — a plate over the tab, a red card mark and ❗ on the subscription flag; the agent waits for the proxy instead of starting into the void
-- feat(plan): the plan from the work file in a right-hand panel — a «План 3/6» button appears at the top right when the tab has one; read-only, the agent ticks the steps
-- feat(crew): the foreman label is part of the digest line («Прораб: …»), no more floating plate over the terminal
-- feat(tabs): own tab color from the card menu, shown on a lane of your choice (background, border or left stripe); status takes another lane or just the dot
-- feat(tabs): collapse the left panel to icons (⌘B or the button at the bottom left)
-- feat(tabs): past conversations in a window — search, a flat dated list, «this folder / all folders», keyboard; the agent keeps a short summary of each tab to find it by
-- feat(tabs): the agent names its tab from the task
-- fix(about): show the running version, not the installed one
-
 ## 0.82.0 — 2026-11-11
 
 - feat(dossier): the heir confirms the old session's requests before doing them
