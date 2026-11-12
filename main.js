@@ -6349,9 +6349,13 @@ function digestTick(id, d) {
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
   const text = digest.readText(raw, DIGEST_MAX_LEN);
-  if (text === (d.digestText || '')) return;
+  const title = digest.readTitle(raw);
+  if (text === (d.digestText || '') && title === (d.digestTitle || '')) return;
   d.digestText = text;
-  safeSend('session:digest', { id, text });
+  d.digestTitle = title;
+  // Имя едет вместе с текстом: применять его или нет, решает карточка — только она знает,
+  // переименовал ли человек вкладку сам.
+  safeSend('session:digest', { id, text, title });
   // Дайджест — единственное в реестре, что рассказывает соседям О ЗАДАЧЕ, а не о вкладке.
   writeTabsMap();
 }
@@ -6376,9 +6380,12 @@ ipcMain.on('settings:digest', (_e, opts = {}) => {
     // Текст на карточках гасим вместе с функцией — он писался при включённой галочке и без неё
     // больше не обновится, то есть превратится в застывший обман о том, чем вкладка занята.
     for (const [tid, d] of det) {
-      if (!d || !d.digestText) continue;
+      if (!d || (!d.digestText && !d.digestTitle)) continue;
       d.digestText = '';
+      d.digestTitle = '';
       d.digestMtime = 0;
+      // Без title: имя, которое агент уже дал вкладке, остаётся на карточке — оно не врёт о
+      // том, чем вкладка занята СЕЙЧАС, оно просто её зовёт.
       safeSend('session:digest', { id: tid, text: '' });
     }
   }

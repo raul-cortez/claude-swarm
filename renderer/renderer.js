@@ -1570,6 +1570,9 @@ async function createSession(opts = {}) {
     crew: !!opts.crew,
     // The conversation this tab is in. Saved with the tab; the next launch resumes it.
     claudeSessionId: claudeSessionId || null,
+    // Имя дал человек (переименовал сам, назвал в телеге, прораб назвал исполнителя) — тогда
+    // имя из дайджеста агента его не перебивает. Иначе карточка зовётся тем, что дал агент.
+    named: tabNamed(opts, tab.querySelector('.label').textContent, folderName),
   });
   // Вкладка подписки, чей выход в России, рождается под плашкой сразу, а не к следующей проверке.
   window.swarm.geo.state().then(renderGeo).catch(() => {});
@@ -1585,6 +1588,18 @@ async function createSession(opts = {}) {
   // Исполнителя открывает прораб, а не человек: уводить человека из той вкладки, где он сейчас,
   // незачем — ребёнок и так виден точкой под карточкой прораба (её рисует setStatus выше).
   if (!(background && sessions.has(activeId))) activate(id);
+}
+
+// Своё ли имя у вкладки. Новая — своё, если его кто-то дал явно (прораб — исполнителю).
+// Восстановленная несёт отметку из persistTabs; у сохранённых до неё отметки нет, и тогда
+// судим по самому имени: имя папки (с номером) — это наше умолчание, всё остальное ввёл человек.
+function tabNamed(opts, label, folderName) {
+  if (opts.restored) {
+    if (typeof opts.named === 'boolean') return opts.named;
+    const esc = String(folderName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return !(label === 'claude' || new RegExp('^' + esc + '( \\d+)?$').test(label));
+  }
+  return !!opts.name;
 }
 
 // Last path segment of a folder path, used as the tab label.
@@ -4182,6 +4197,7 @@ function persistTabs() {
       out.push({
         cwd: s.cwd || null,
         name: s.tab.querySelector('.label').textContent,
+        named: !!s.named,
         cmd: s.cmd || null,
         flags: s.flags != null ? s.flags : null,
         blank: s.blank || false,
@@ -4629,7 +4645,15 @@ function attachRename(labelEl) {
     renaming = false;
     labelEl.contentEditable = 'false';
     const text = labelEl.textContent.replace(/\s+/g, ' ').trim();
-    labelEl.textContent = text || 'claude';
+    const t0 = labelEl.closest('.tab');
+    const s = t0 && sessions.get(t0.dataset.sid);
+    // Стёр имя целиком — значит, отдал его обратно: карточка снова зовётся тем, что даёт агент
+    // (или именем папки, пока агент ничего не дал).
+    if (s) {
+      if (text && text !== labelEl.dataset.before) s.named = true;
+      if (!text) s.named = false;
+    }
+    labelEl.textContent = text || (s && s.autoTitle) || (s ? defaultName(basename(s.cwd || '') || 'claude') : 'claude');
     persistTabs();
     // The Telegram bridge titles a topic after the tab, so a rename has to travel.
     const t = labelEl.closest('.tab');
@@ -4641,6 +4665,7 @@ function startRename(labelEl) {
   // Карточки нет в ленте (исполнитель внутри бригады, свёрнутая папка) — править нечего.
   if (!labelEl || !labelEl.isConnected) return;
   renaming = true;
+  labelEl.dataset.before = labelEl.textContent;
   labelEl.contentEditable = 'plaintext-only';
   labelEl.spellcheck = false;
   labelEl.focus();
@@ -7268,6 +7293,7 @@ async function restoreOrStart() {
     await createSession({
       cwd: t.cwd,
       name: t.name,
+      named: t.named,
       // A clean terminal restores as clean (no command). Otherwise always pass a
       // cmd so restore never pops the picker — legacy saved tabs may lack `cmd`;
       // fall back to the default agent, as before.
@@ -7379,6 +7405,7 @@ window.swarm.onRenameTab(({ id, name }) => {
   const s = sessions.get(String(id));
   const clean = String(name || '').replace(/\s+/g, ' ').trim();
   if (!s || !clean) return;
+  if (clean !== s.tab.querySelector('.label').textContent) s.named = true;
   s.tab.querySelector('.label').textContent = clean;
   persistTabs();          // имя переживает перезапуск, как и при переименовании мышью
 });
@@ -7430,12 +7457,26 @@ window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
 // Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
 // из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
 // неактивной вкладки), а рисуем — только для активной: полоска одна на сцену, как у гейта.
-function setDigestText(id, text) {
+function setDigestText(id, text, title) {
   const s = sessions.get(String(id));
   if (s) s.digestText = text || '';
+  if (s && title) applyAutoTitle(s, title);
   if (id === activeId) renderDigestStrip();
 }
-window.swarm.onDigest(({ id, text }) => setDigestText(id, text));
+window.swarm.onDigest(({ id, text, title }) => setDigestText(id, text, title));
+
+// Имя от агента (поле title в файле дайджеста). Ставим, только пока человек не дал своё, и не
+// посреди переименования — иначе агент выдернул бы текст из-под курсора.
+function applyAutoTitle(s, title) {
+  s.autoTitle = title;
+  if (s.named || renaming) return;
+  const el = s.tab.querySelector('.label');
+  if (el.textContent === title) return;
+  el.textContent = title;
+  window.swarm.setTabName(s.id, title);   // тема в телеге зовётся так же, как вкладка
+  persistTabs();
+  if (s.id === activeId) renderCrewStrip();
+}
 
 // Знак бригады изнутри разговора — плавающая плашка поверх угла терминала, вне потока (см.
 // styles.css, «знак бригады изнутри»): в отличие от digest/gate её видимость ничего не сдвигает

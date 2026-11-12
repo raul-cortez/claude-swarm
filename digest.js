@@ -44,6 +44,19 @@
     return text.slice(0, clampMaxLen(maxLen));
   }
 
+  // Имя вкладки, которое агент кладёт в тот же файл рядом с дайджестом: {"title": "…"}. Карточка
+  // берёт его вместо имени папки, пока человек не переименовал вкладку сам (см. s.named в
+  // renderer.js). Одна строка и короткая: это заголовок карточки, а не второй дайджест — длинное
+  // имя съело бы ширину списка слева и всё равно обрезалось бы многоточием.
+  const TITLE_MAX = 40;
+  function readTitle(raw) {
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (_) { return ''; }
+    const t = String((parsed && parsed.title) || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= TITLE_MAX) return t;
+    return t.slice(0, TITLE_MAX - 1).trimEnd() + '…';
+  }
+
   // Заготовка поля «Что писать в дайджест» (Settings → Запуск) — по той же схеме, что ночные
   // тексты в night.js: поле не пустое, в нём лежит редактируемый текст, и «своим» он считается
   // по отличию от этой строки, а не по факту правки. Отсюда же берёт умолчание renderer при
@@ -53,5 +66,5 @@
       + 'разработки. Если жду от тебя решения, скажи это отдельно.';
   }
 
-  return { fileName, readText, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
+  return { fileName, readText, readTitle, TITLE_MAX, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
 });

@@ -880,6 +880,20 @@ test('digest.readText: берёт поле digest, режет по потолк�
   assert.strictEqual(digest.readText(JSON.stringify({})), '');
 });
 
+test('digest.readTitle: одна строка, до TITLE_MAX, пусто на мусоре и без поля', () => {
+  const digest = require('../digest');
+  assert.strictEqual(digest.readTitle(JSON.stringify({ title: '  Окно\n About ', digest: 'x' })), 'Окно About');
+  assert.strictEqual(digest.readTitle(JSON.stringify({ digest: 'x' })), '');
+  assert.strictEqual(digest.readTitle('не json'), '');
+  const long = digest.readTitle(JSON.stringify({ title: 'я'.repeat(100) }));
+  assert.strictEqual(long.length, digest.TITLE_MAX);
+  assert.ok(long.endsWith('…'));
+});
+
+test('digestNote просит у агента и имя вкладки (title)', () => {
+  assert.ok(/"title"/.test(H.digestNote({}, '/abs/.swarm-digest-x.json')));
+});
+
 test('digest.defaultNote: заготовка есть и это непустой текст', () => {
   const digest = require('../digest');
   assert.strictEqual(typeof digest.defaultNote(), 'string');
