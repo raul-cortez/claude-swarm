@@ -1,0 +1,30 @@
+/* статус: рамка / фон / полоска; свой цвет: то же. Только для кадров. */
+body.st-border .tab[class*=status-] { background: var(--tile) !important; border-color: color-mix(in srgb, var(--tab-c) 70%, transparent) !important; }
+body.st-stripe .tab[class*=status-] { background: var(--tile) !important; border-color: var(--hairline) !important; }
+body.st-stripe .tab::before, body.own-stripe .tab[data-own]::before { content: ''; position: absolute; left: -1px; top: 6px; bottom: 6px; width: 4px; border-radius: 0 3px 3px 0; }
+body.st-stripe .tab::before { background: var(--tab-c); }
+body.own-stripe .tab[data-own]::before { background: var(--own); }
+body.st-bg .tab[class*=status-] { background: color-mix(in srgb, var(--tab-c) 16%, var(--tile)) !important; border-color: var(--hairline) !important; }
+body.own-border .tab[data-own] { border-color: var(--own) !important; }
+body.own-bg .tab[data-own] { background: color-mix(in srgb, var(--own) 18%, var(--tile)) !important; }
+
+/* свёрнутая панель */
+body.layout-rail.rail-mini { grid-template-columns: 64px 1fr; }
+.rail-mini #tabs { padding: 8px 8px; gap: 8px; align-items: center; }
+.rail-mini .tab-group { padding: 4px 0 !important; background: transparent !important; border: 0 !important; width: 100%; display: flex; flex-direction: column; align-items: center; }
+.rail-mini .group-head { justify-content: center; padding: 0 0 4px !important; min-height: 0 !important; }
+.rail-mini .group-head > * { display: none !important; }
+.rail-mini .group-head::after { content: attr(data-mini); font-size: 9px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.rail-mini .group-tabs { display: flex !important; flex-direction: column; gap: 6px; align-items: center; }
+.rail-mini .tab { width: 42px; height: 42px; padding: 0 !important; justify-content: center; align-items: center; }
+.rail-mini .tab .body, .rail-mini .tab .tools, .rail-mini .tab .grip, .rail-mini .tab .ctx { display: none !important; }
+.rail-mini .tab .dot { position: absolute; top: 5px; right: 5px; margin: 0; width: 7px; height: 7px; }
+.rail-mini .tab::after { content: attr(data-ini); font-size: 13px; font-weight: 600; color: var(--text); }
+.rail-mini #new-session-folder .tx { display: none; }
+.rail-mini #new-session-folder { width: 42px; align-self: center; justify-content: center; }
+.rail-mini #pult-tab, .rail-mini .pult-tab { width: 42px; overflow: hidden; }
+.mini-toggle { position: fixed; left: 14px; bottom: 10px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 7px; background: rgba(255,255,255,.04); z-index: 5; }
+.rail-mini .pult-tab { width: 42px !important; height: 42px; padding: 0 !important; display: flex; align-items: center; justify-content: center; position: relative; align-self: center; }
+.rail-mini .pult-name { display: none; }
+.rail-mini .pult-tab::before { content: ''; width: 18px; height: 18px; background: var(--muted); -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>') center/contain no-repeat; }
+.rail-mini .pult-tab { overflow: visible !important; } .rail-mini .pult-count { position: absolute; top: -6px; right: -6px; transform: scale(.85); }
