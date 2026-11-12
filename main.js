@@ -5821,6 +5821,12 @@ ipcMain.handle('tab:menu', (_e, { id } = {}) => {
     label: 'Переименовать',
     click: () => safeSend('tab:renameRequest', { id: key }),
   }, {
+    // Тот же список, что у часов на заголовке папки, — но у вкладки-одиночки заголовка нет,
+    // и без этого пункта её прошлые разговоры было бы не открыть ничем.
+    label: 'Прошлые разговоры этой папки…',
+    enabled: !!d.cwd,
+    click: () => safeSend('tab:historyRequest', { id: key }),
+  }, {
     label: 'Ночной режим',
     type: 'checkbox',
     checked: !!d.auto,
@@ -8422,6 +8428,53 @@ ipcMain.handle('session:canResumeName', (_e, cwd, name) => {
     if (sessionHead(f.file).includes(`"customTitle":"${want}"`)) return true;
   }
   return false;
+});
+
+// --- прошлые разговоры папки ----------------------------------------------------------
+// Список того, что Клод хранит по этой папке, — во всех конфигах (см. projectDirs). Это и есть
+// «можно вернуться»: файл на диске = `--resume` его поднимет; удалит Клод файл по своему сроку
+// (cleanupPeriodDays, по умолчанию 30 дней) — пропадёт и строка, обещать ей нечего. Имя и
+// дайджест окно кладёт поверх из своих записей (renderer.js, swarm.history): стенограмма их не
+// знает — в ней наш служебный swarm-ярлык, а не имя вкладки. Для разговоров без записи
+// (открытых до этой функции или в голом терминале) имя — начало первой просьбы человека.
+const HISTORY_MAX = 80;
+const HISTORY_HEAD_BYTES = 64 * 1024;
+
+function readHead(file, bytes) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(bytes);
+    const n = fs.readSync(fd, buf, 0, bytes, 0);
+    return buf.slice(0, n).toString('utf8');
+  } catch (_) { return ''; }
+  finally { if (fd != null) { try { fs.closeSync(fd); } catch (_) {} } }
+}
+
+ipcMain.handle('history:scan', (_e, cwd) => {
+  if (!cwd) return [];
+  const files = [];
+  const seen = new Set();
+  for (const dir of projectDirs(cwd)) {
+    let names;
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')); } catch (_) { continue; }
+    for (const n of names) {
+      const id = n.slice(0, -'.jsonl'.length);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const file = path.join(dir, n);
+      try { files.push({ id, file, at: fs.statSync(file).mtimeMs }); } catch (_) {}
+    }
+  }
+  files.sort((a, b) => b.at - a.at);
+  const out = [];
+  for (const f of files) {
+    if (out.length >= HISTORY_MAX) break;
+    const head = transcript.historyHead(readHead(f.file, HISTORY_HEAD_BYTES), cwd);
+    if (!head) continue;              // чужая папка или пустой разговор — возвращаться не к чему
+    out.push({ id: f.id, at: f.at, prompt: head.prompt, title: head.title });
+  }
+  return out;
 });
 
 // --- IPC: keystrokes from the xterm in the renderer --------------------------

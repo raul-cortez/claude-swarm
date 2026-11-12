@@ -430,10 +430,46 @@ function searchEntries(entries, query, max = SEARCH_MAX) {
   return { total, hits: out };
 }
 
+// Начало стенограммы → строка для списка «Прошлые разговоры» (main.js history:scan). Берём
+// первую просьбу человека — по ней разговор узнаётся лучше всего, когда имени у него нет, — и
+// имя, если его дали руками (/rename): наш служебный swarm-ярлык именем не считается.
+// null — разговор не про эту папку (слаг мы угадываем, запись cwd внутри точна) или в нём
+// ни одной просьбы: открыть и закрыть пустую вкладку — не разговор, к которому возвращаются.
+const HISTORY_PROMPT_LEN = 140;
+
+function historyHead(text, cwd) {
+  const want = String(cwd || '').replace(/[\\/]+$/, '');
+  let seenCwd = false;
+  let prompt = '';
+  let title = '';
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    const t = line.trim();
+    if (!t || t[0] !== '{') continue;
+    let e;
+    try { e = JSON.parse(t); } catch (_) { continue; }
+    if (!seenCwd && e.cwd) {
+      seenCwd = true;
+      if (want && String(e.cwd).replace(/[\\/]+$/, '') !== want) return null;
+    }
+    if (e.type === 'custom-title' && e.customTitle && !/^swarm-/i.test(e.customTitle)) title = String(e.customTitle);
+    if (prompt || e.type !== 'user' || e.isMeta || e.isSidechain) continue;
+    const c = e.message && e.message.content;
+    const raw = typeof c === 'string' ? c
+      : Array.isArray(c) ? c.filter((b) => b && b.type === 'text').map((b) => b.text || '').join(' ') : '';
+    const one = raw.replace(/\s+/g, ' ').trim();
+    // Служебное: вывод команд (/model, /clear…) и предупреждения Клода приходят «от человека»,
+    // но человек этого не писал.
+    if (!one || one[0] === '<' || one.startsWith('Caveat:')) continue;
+    prompt = one.length > HISTORY_PROMPT_LEN ? one.slice(0, HISTORY_PROMPT_LEN - 1).trimEnd() + '…' : one;
+  }
+  return prompt ? { prompt, title } : null;
+}
+
 module.exports = {
   searchEntries, SEARCH_MAX,
   READY_DEBOUNCE_MS, BIND_MTIME_SLACK_MS, SCREEN_KEY_LEN, INJECTED_MIN, screenKey, pickByScreen,
   projectSlug, homeOfTranscript, parseEntries, blockTypes, entryText, lastMain, tsOf, isPastLife, classify, cwdOf, pickBinding, isInterrupt,
   belongsToTurn, turnText, currentTool, turnTokens,
   pickByInjected,
+  historyHead, HISTORY_PROMPT_LEN,
 };

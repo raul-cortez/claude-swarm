@@ -205,6 +205,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 }
 .group-add:hover { color: var(--accent); background: rgba(255, 255, 255, 0.06); }
 .group-add svg { width: 13px !important; height: 13px !important; }
+/* Часы прошлых разговоров стоят перед «+» и забирают его auto-отступ: пара жмётся вправо вместе. */
+.group-hist + .group-add { margin-left: 0; }
 .group-dots { display: none; align-items: center; gap: 4px; margin-left: 2px; }
 /* When dots are shown (collapsed), the "+" no longer eats the auto-margin. */
 .tab-group.collapsed .group-dots { margin-left: auto; }
@@ -2515,3 +2517,27 @@ body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
   user-select: text; cursor: text;
 }
 #find mark { background: color-mix(in srgb, var(--permission) 40%, transparent); color: inherit; border-radius: 2px; }
+
+/* --- прошлые разговоры папки (openHistoryMenu) ----------------------------- */
+.history-menu { min-width: 300px; max-width: 420px; }
+.hist-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: none; }
+.hist-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; width: 100%; }
+/* Без имени строку зовёт первая просьба человека — она длинная, ей две строки и обычный вес. */
+.hist-noname .hist-name {
+  font-weight: 500;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.hist-name { flex: 1; min-width: 0; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-when { flex: none; color: var(--muted); font-size: 11px; }
+.hist-about {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('swarm', {
   canResumeSession: (cwd, sessionId) => ipcRenderer.invoke('session:canResume', cwd, sessionId),
   // То же про имя swarm-* (вкладки, сохранённые до того, как мы стали помнить id разговора).
   canResumeName: (cwd, name) => ipcRenderer.invoke('session:canResumeName', cwd, name),
+  // Прошлые разговоры этой папки, что Клод ещё хранит на диске: [{ id, at, prompt, title }].
+  historyScan: (cwd) => ipcRenderer.invoke('history:scan', cwd),
 
   // A tab's Claude conversation changed (/clear, `claude` typed by hand, /resume in the
   // terminal). cb({ id, claudeSessionId }). Returns an unsubscribe fn.
@@ -337,6 +339,11 @@ contextBridge.exposeInMainWorld('swarm', {
   },
 
   // «Переименовать» из меню карточки — поле ввода живёт в окне, main только просит его открыть.
+  onHistoryRequest: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('tab:historyRequest', handler);
+    return () => ipcRenderer.removeListener('tab:historyRequest', handler);
+  },
   onRenameRequest: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('tab:renameRequest', handler);

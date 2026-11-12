@@ -1599,6 +1599,7 @@ function tabNamed(opts, label, folderName) {
     const esc = String(folderName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return !(label === 'claude' || new RegExp('^' + esc + '( \\d+)?$').test(label));
   }
+  if (typeof opts.named === 'boolean') return opts.named;   // разговор из истории несёт свою отметку
   return !!opts.name;
 }
 
@@ -4218,7 +4219,147 @@ function persistTabs() {
     }
   }
   localStorage.setItem('swarm.tabs', JSON.stringify(out));
+  rememberHistory();
 }
+
+// --- прошлые разговоры папки ---------------------------------------------------------
+// Свои записи о разговорах: имя вкладки, дайджест и чем она была запущена — по id разговора.
+// Стенограмма Клода этого не знает (имя в ней — служебный swarm-ярлык), а без команды запуска
+// разговор с личной подписки открылся бы рабочей и упёрся в «сессия не найдена». Список, что
+// показывать, даёт диск (main.js history:scan): запись без файла — разговор, который Клод уже
+// удалил, и обещать его нельзя. Потолок — чтобы запись не росла годами.
+const HISTORY_KEY = 'swarm.history';
+const HISTORY_KEEP = 400;
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}') || {}; } catch (_) { return {}; }
+}
+function rememberHistory() {
+  const h = loadHistory();
+  let changed = false;
+  for (const s of sessions.values()) {
+    if (!s.claudeSessionId || s.blank || !s.cwd) continue;
+    const rec = {
+      cwd: s.cwd,
+      name: s.tab.querySelector('.label').textContent,
+      named: !!s.named,
+      digest: s.digestText || (h[s.claudeSessionId] && h[s.claudeSessionId].digest) || '',
+      cmd: s.cmd || null,
+      flags: s.flags != null ? s.flags : null,
+    };
+    const old = h[s.claudeSessionId];
+    if (old && old.cwd === rec.cwd && old.name === rec.name && old.named === rec.named
+      && old.digest === rec.digest && old.cmd === rec.cmd && old.flags === rec.flags) continue;
+    h[s.claudeSessionId] = { ...rec, at: Date.now() };
+    changed = true;
+  }
+  if (!changed) return;
+  const ids = Object.keys(h);
+  if (ids.length > HISTORY_KEEP) {
+    ids.sort((a, b) => (h[b].at || 0) - (h[a].at || 0));
+    for (const id of ids.slice(HISTORY_KEEP)) delete h[id];
+  }
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (_) {}
+}
+
+function historyWhen(ms) {
+  const d = new Date(ms);
+  const now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (diff === 0) return 'сегодня ' + hm;
+  if (diff === 1) return 'вчера ' + hm;
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+let historyMenuEl = null;
+let historyMenuClose = null;
+async function openHistoryMenu(anchor, cwd) {
+  if (historyMenuClose) {
+    const again = historyMenuEl && historyMenuEl.dataset.cwd === cwd && historyMenuEl.__anchor === anchor;
+    historyMenuClose();
+    if (again) return;                 // повторный клик по тем же часам — закрыть
+  }
+  if (!historyMenuEl) {
+    historyMenuEl = document.createElement('div');
+    historyMenuEl.className = 'cmd-menu history-menu hidden';
+    document.body.appendChild(historyMenuEl);
+  }
+  const menu = historyMenuEl;
+  menu.dataset.cwd = cwd;
+  menu.__anchor = anchor;
+  menu.innerHTML = '<div class="cmd-empty">Ищу разговоры…</div>';
+  const outside = (ev) => { if (!menu.contains(ev.target) && !anchor.contains(ev.target)) close(); };
+  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  const close = () => {
+    menu.classList.add('hidden');
+    historyMenuClose = null;
+    document.removeEventListener('mousedown', outside);
+    document.removeEventListener('keydown', onKey, true);
+  };
+  historyMenuClose = close;
+  menu.classList.remove('hidden');
+  placeMenuUnder(menu, anchor);
+  setTimeout(() => document.addEventListener('mousedown', outside), 0);
+  document.addEventListener('keydown', onKey, true);
+
+  let found = [];
+  try { found = await window.swarm.historyScan(cwd); } catch (_) { found = []; }
+  if (historyMenuClose !== close) return;   // пока искали, меню закрыли или открыли другое
+  const open = new Set([...sessions.values()].map((x) => x.claudeSessionId).filter(Boolean));
+  const recs = loadHistory();
+  const rows = found.filter((f) => !open.has(f.id));
+  menu.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'cmd-sep';
+  head.textContent = 'Прошлые разговоры · ' + basename(cwd);
+  menu.appendChild(head);
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'cmd-empty';
+    empty.textContent = 'Других разговоров в этой папке нет. Claude хранит их 30 дней.';
+    menu.appendChild(empty);
+  }
+  for (const f of rows) {
+    const rec = recs[f.id] || null;
+    const name = (rec && rec.name) || f.title || f.prompt;
+    const about = (rec && rec.digest) || (name !== f.prompt ? f.prompt : '');
+    const b = document.createElement('button');
+    b.className = 'cmd-item hist-item' + (name === f.prompt ? ' hist-noname' : '');
+    b.innerHTML = '<span class="hist-top"><span class="hist-name"></span><span class="hist-when"></span></span><span class="hist-about"></span>';
+    b.querySelector('.hist-name').textContent = name;
+    b.querySelector('.hist-when').textContent = historyWhen(f.at);
+    b.querySelector('.hist-about').textContent = about;
+    b.querySelector('.hist-about').hidden = !about;
+    b.title = about || name;
+    b.addEventListener('click', () => { close(); resumeFromHistory(cwd, f, rec); });
+    menu.appendChild(b);
+  }
+  placeMenuUnder(menu, anchor);
+}
+
+// Открыть прошлый разговор новой вкладкой. Имя — то, что было у вкладки (или ничьё, если записи
+// нет: тогда его даст агент, как новой). Команда — та, которой разговор вели; без записи — как
+// открыты соседи по папке, иначе запуск по умолчанию.
+function resumeFromHistory(cwd, f, rec) {
+  const base = (rec && rec.cmd) ? { cmd: rec.cmd, flags: rec.flags != null ? rec.flags : '' }
+    : (() => { const c = folderChoice(cwd); return c && !c.blank && c.cmd ? c : { cmd: launch.cmd, flags: launch.flags }; })();
+  createSession({
+    cwd,
+    cmd: base.cmd,
+    flags: base.flags,
+    claudeSessionId: f.id,
+    resume: true,
+    name: rec && rec.name ? rec.name : undefined,
+    named: !!(rec && rec.named),
+  });
+}
+window.swarm.onHistoryRequest(({ id }) => {
+  const s = sessions.get(String(id));
+  if (!s || !s.cwd) return;
+  // Меню карточки родное и уже закрылось — вешаем список под саму карточку.
+  openHistoryMenu(s.tab, s.cwd);
+});
 
 // Sessions in display order, grouped into units (a folder or a loner) by cwd.
 function orderedUnits() {
@@ -4475,7 +4616,13 @@ function relayoutTabs() {
     add.title = 'Новая сессия в этой папке';
     add.innerHTML = ICONS.plus;
     add.addEventListener('click', (e) => { e.stopPropagation(); createSessionFrom(add, cwd, true); });
-    head.append(grip, chev, nameEl, count, dots, add);
+    // Часы — прошлые разговоры этой папки (см. openHistoryMenu).
+    const hist = document.createElement('span');
+    hist.className = 'group-add group-hist';
+    hist.title = 'Прошлые разговоры этой папки';
+    hist.innerHTML = ICONS.clock;
+    hist.addEventListener('click', (e) => { e.stopPropagation(); openHistoryMenu(hist, cwd); });
+    head.append(grip, chev, nameEl, count, dots, hist, add);
     head.addEventListener('click', () => toggleFolder(cwd));
 
     const inner = document.createElement('div');
@@ -7461,6 +7608,7 @@ function setDigestText(id, text, title) {
   const s = sessions.get(String(id));
   if (s) s.digestText = text || '';
   if (s && title) applyAutoTitle(s, title);
+  if (s && text) rememberHistory();
   if (id === activeId) renderDigestStrip();
 }
 window.swarm.onDigest(({ id, text, title }) => setDigestText(id, text, title));

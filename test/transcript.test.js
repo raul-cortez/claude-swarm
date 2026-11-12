@@ -532,6 +532,25 @@ test('поиск: потолок по числу реплик, счёт — по
   assert.strictEqual(r.hits.length, 2);
 });
 
+test('historyHead: первая просьба человека, служебное мимо, чужая папка и пустой разговор — null', () => {
+  const L = (o) => JSON.stringify(o);
+  const text = [
+    L({ type: 'custom-title', customTitle: 'swarm-shop-a1b2', sessionId: 'x' }),
+    L({ type: 'user', cwd: '/p/shop', isMeta: true, message: { content: 'Caveat: служебное' } }),
+    L({ type: 'user', cwd: '/p/shop', message: { content: '<command-name>/model</command-name>' } }),
+    L({ type: 'user', cwd: '/p/shop', message: { content: [{ type: 'text', text: 'поправь  даты\nв отчёте' }] } }),
+    L({ type: 'user', cwd: '/p/shop', message: { content: 'второе' } }),
+    '{"обрезанная строка',
+  ].join('\n');
+  assert.deepStrictEqual(T.historyHead(text, '/p/shop/'), { prompt: 'поправь даты в отчёте', title: '' });
+  assert.strictEqual(T.historyHead(text, '/p/blog'), null);
+  assert.strictEqual(T.historyHead(L({ type: 'user', cwd: '/p/shop', message: { content: '<x/>' } }), '/p/shop'), null);
+  const named = L({ type: 'custom-title', customTitle: 'Экспорт' }) + '\n' + L({ type: 'user', cwd: '/p/shop', message: { content: 'x'.repeat(300) } });
+  const h = T.historyHead(named, '/p/shop');
+  assert.strictEqual(h.title, 'Экспорт');
+  assert.strictEqual(h.prompt.length, T.HISTORY_PROMPT_LEN);
+});
+
 for (const [name, fn] of tests) {
   try { fn(); passed++; }
   catch (e) { console.error('FAIL: ' + name + '\n  ' + e.message); process.exitCode = 1; }
