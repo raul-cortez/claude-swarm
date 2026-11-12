@@ -7729,33 +7729,26 @@ function applyAutoTitle(s, title) {
   if (s.id === activeId) renderCrewStrip();
 }
 
-// Знак бригады изнутри разговора — плавающая плашка поверх угла терминала, вне потока (см.
-// styles.css, «знак бригады изнутри»): в отличие от digest/gate её видимость ничего не сдвигает
-// и не требует пересчёта отступов. Прораб и ребёнок называют друг друга по имени — та же
-// причина, по которой их видно на карточке (спека, «Карточка прораба»).
-const crewStripEl = document.getElementById('crew-strip');
-function renderCrewStrip() {
-  if (!crewStripEl) return;
-  const s = sessions.get(activeId);
-  const parent = s && s.parentId ? sessions.get(s.parentId) : null;
-  const label = s && s.crew ? 'Прораб бригады'
-    : parent ? `Бригада: ${parent.tab.querySelector('.label').textContent}`
-      : s && s.parentId ? 'Бригада' : '';
-  crewStripEl.hidden = !label;
-  if (label) {
-    crewStripEl.querySelector('.crew-strip-ic').innerHTML = ICONS.crew;
-    crewStripEl.querySelector('.crew-strip-tx').textContent = label;
-  }
-  // Плашка плавает поверх правого угла, а дайджест под ней идёт во всю ширину — без отступа
-  // она закрывала конец его строки. Ширина живая («Бригада: <имя прораба>»), поэтому меряем.
-  document.body.classList.toggle('has-crew-strip', !!label);
-  document.body.style.setProperty('--crew-strip-w', label ? (crewStripEl.offsetWidth || 150) + 'px' : '0px');   // 0 — сцена скрыта, берём с запасом
+// Знак бригады изнутри разговора — не отдельная плашка, а начало строки дайджеста: у прораба
+// «Прораб: …», у исполнителя «Бригада «имя прораба»: …». Плавающая плашка в углу терминала лежала
+// поверх дайджеста и текста терминала; в одной строке с текстом ей ложиться не на что (спека,
+// «Карточка прораба»: прораб и ребёнок называют друг друга по имени). Без дайджеста остаётся
+// одно это слово — полоска показывает, чья это вкладка.
+function crewLabel(s) {
+  if (!s) return '';
+  const parent = s.parentId ? sessions.get(s.parentId) : null;
+  return s.crew ? 'Прораб'
+    : parent ? `Бригада «${parent.tab.querySelector('.label').textContent}»`
+      : s.parentId ? 'Бригада' : '';
 }
+function renderCrewStrip() { renderDigestStrip(); }
 
 function renderDigestStrip() {
   if (!digestEl) return;
   const s = sessions.get(activeId);
-  const text = (s && s.digestText) || '';
+  const digest = (s && s.digestText) || '';
+  const crew = crewLabel(s);
+  const text = crew ? (digest ? `${crew}: ${digest}` : crew) : digest;
   const was = !digestEl.hidden;
   digestEl.hidden = !text;
   document.body.classList.toggle('has-digest', !!text);

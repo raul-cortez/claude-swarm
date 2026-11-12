@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(crew): the foreman label is part of the digest line («Прораб: …»), no more floating plate over the terminal
 - feat(tabs): own tab color from the card menu, shown on a lane of your choice (background, border or left stripe); status takes another lane or just the dot
 - feat(tabs): collapse the left panel to icons (⌘B or the button at the bottom left)
 - feat(tabs): past conversations of a folder

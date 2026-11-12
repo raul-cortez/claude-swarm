@@ -2323,31 +2323,6 @@ body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease
 }
 .link-tip.show { opacity: 1; }
 
-/* --- знак бригады изнутри разговора: плавающая плашка, вне потока -----------
-   Та же идея, что у капсулы кнопок карточки (styles.css, «Капсула лежит ПОВЕРХ КРОМКИ»):
-   появляется и исчезает, не сдвигая терминал и не требуя пересчёта отступов гейта/дайджеста
-   (в отличие от них — те раздвигают .term-holder и мерены стендом, см. комментарий там). */
-#crew-strip {
-  position: absolute;
-  top: 8px;
-  right: 14px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 7px;
-  border-radius: 999px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px -3px #000;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-#crew-strip[hidden] { display: none; }
-.crew-strip-ic { display: flex; color: var(--crew); }
-.crew-strip-ic svg { width: 13px; height: 13px; flex: none; }
-body.pult-on #crew-strip { top: 34px; }
-
 /* --- дайджест вкладки: полоска над терминалом ------------------------------
    Пара строк, которые агент сам пишет о том, чем занят (см. digestNote в
    hooks/swarm-signal.mjs) — видно, только открыв вкладку, а не листая список.
@@ -2377,9 +2352,6 @@ body.pult-on #crew-strip { top: 34px; }
   line-height: 1.4;
 }
 body.pult-on #digest-strip { top: 34px; }
-/* Плашка бригады (#crew-strip) лежит в том же углу — строка дайджеста обходит её: ширина
-   плашки + её отступ от края (14px) + зазор. */
-body.has-crew-strip #digest-strip { padding-right: calc(var(--crew-strip-w, 0px) + 28px); }
 /* --- граница владения: плашка над отданной вкладкой ------------------------
    Вкладку, отданную агенту, человек не печатает, и узнать об этом он должен ДО того, как
    наберёт фразу. Раньше здесь была модалка — она всплывала на каждое движение мыши (доклады
