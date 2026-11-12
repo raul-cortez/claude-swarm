@@ -311,6 +311,8 @@ const ICONS = {
   folder: SVG('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>'),
   // Lucide "panel-left" — свернуть / развернуть левую панель.
   panelLeft: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>'),
+  // Lucide «list-checks» — план вкладки.
+  plan: SVG('<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>'),
   chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
   // Стрелка «развернуть бригаду» в подвале прораба — вправо, туда, куда карточка растёт.
   chevronRight: SVG('<path d="m9 18 6-6-6-6"/>'),
@@ -4176,6 +4178,7 @@ function activate(id, opts) {
   window.swarm.tabWatched(id);
   renderGate();
   renderDigestStrip();
+  renderPlan();
   renderCrewStrip();
   // Пилюля открытого исполнителя подсвечена (.active) — перерисовать подвалы прорабов.
   for (const p of sessions.values()) if (p.crew) renderCrewDots(p);
@@ -4952,6 +4955,7 @@ function renderTermChrome() {
   termDockBtn.title = termPanel.dock === 'bottom' ? 'Переставить панель сбоку' : 'Переставить панель снизу';
   termPosBtn.innerHTML = termPanel.tabsPos === 'top' ? ICONS.tabsTop : ICONS.tabsLeft;
   termPosBtn.title = termPanel.tabsPos === 'top' ? 'Вкладки терминала — слева столбиком' : 'Вкладки терминала — сверху';
+  renderPlan();   // терминал встал сбоку или ушёл — плану может не хватить места (или хватить)
 }
 
 // Переименование вкладки терминала — двойной клик, как у агентской (attachRename), но без
@@ -5212,6 +5216,7 @@ window.swarm.onExit(({ id }) => {
     termSplitEl.classList.remove('dragging');
     document.body.style.cursor = '';
     localStorage.setItem(termSizeKey(), String(liveSize));
+    renderPlan();
   });
 })();
 
@@ -7763,6 +7768,128 @@ function renderDigestStrip() {
   if (text) document.documentElement.style.setProperty('--digest-h', digestEl.offsetHeight + 'px');
   if (was !== !!text) refitActive();  // полоска появилась/ушла — терминалу сменилась высота
 }
+// --- Панель плана справа ---------------------------------------------------
+// Витрина: план берётся из раздела «## План» файла работы вкладки (main его читает и разбирает,
+// сюда приходит готовое дерево), галки ставит агент, человек только смотрит. Ничего не пишем.
+// Вкладка без плана — кнопки нет, а открытая панель при переходе на неё закрывается сама и
+// возвращается, когда вернулись на вкладку с планом: помним «человек хотел её открытой»
+// (planWanted), а видна она только при плане и когда агенту остаётся место.
+const planBtn   = document.getElementById('plan-btn');
+const planPanel = document.getElementById('plan-panel');
+const planSplit = document.getElementById('plan-split');
+const planTree  = planPanel.querySelector('.pp-tree');
+const planFile  = document.getElementById('plan-file');
+const planById  = new Map();            // id вкладки → {tree, done, total, nowIndex, at}
+const PLAN_W_MIN = 220;
+const PLAN_AGENT_MIN = 480;             // уже этого агенту (~60 колонок) не оставляем — панель сворачивается в кнопку
+let planWanted = localStorage.getItem('swarm.planOpen') === '1';
+let planWidth = (() => {
+  const n = Number(localStorage.getItem('swarm.planW'));
+  return Number.isFinite(n) && n >= PLAN_W_MIN ? n : 300;
+})();
+let planDrawn = '';                     // что нарисовано в дереве (id + JSON): перерисовываем только при смене
+
+function planFits() {
+  const sideTerm = termPanel.open && termPanel.dock === 'side' ? termPanelEl.offsetWidth : 0;
+  return stageEl.clientWidth - planWidth - sideTerm >= PLAN_AGENT_MIN;
+}
+
+function planNode(n) {
+  const li = document.createElement('li');
+  li.className = n.state;
+  const row = document.createElement('div');
+  row.className = 'pp-row';
+  const bx = document.createElement('span');
+  bx.className = 'bx';
+  bx.textContent = n.state === 'done' ? '✓' : '';
+  const tx = document.createElement('span');
+  tx.className = 'tx';
+  tx.textContent = n.text;
+  row.append(bx, tx);
+  li.append(row);
+  if (n.children.length) {
+    const ul = document.createElement('ul');
+    for (const c of n.children) ul.append(planNode(c));
+    li.append(ul);
+  }
+  return li;
+}
+
+function renderPlan() {
+  const p = planById.get(activeId) || null;
+  planBtn.hidden = !p;
+  document.body.classList.toggle('has-plan', !!p);
+  const open = !!p && planWanted && planFits();
+  stageEl.classList.toggle('plan-open', open);
+  planPanel.hidden = !open;
+  planSplit.hidden = !open;
+  planBtn.classList.toggle('is-active', open);
+  if (!p) { planDrawn = ''; return; }
+  planBtn.innerHTML = `${ICONS.plan}<span>План</span><span class="bd">${p.done}/${p.total}</span>`;
+  planBtn.title = open ? 'Скрыть план' : planWanted && !planFits() ? 'Окно слишком узкое для плана' : 'Показать план';
+  if (!open) return;
+  planPanel.querySelector('.pp-n').textContent = `${p.done} из ${p.total}`;
+  const at = p.at ? new Date(p.at) : null;
+  planFile.textContent = at ? `Файл работы · обновлено ${at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : 'Файл работы';
+  const key = activeId + '|' + JSON.stringify(p.tree) + '|' + p.nowIndex;
+  if (key === planDrawn) return;
+  planDrawn = key;
+  planTree.textContent = '';
+  p.tree.forEach((n) => planTree.append(planNode(n)));
+}
+
+planBtn.addEventListener('click', () => {
+  planWanted = !(planWanted && planFits());
+  localStorage.setItem('swarm.planOpen', planWanted ? '1' : '0');
+  renderPlan();
+});
+planFile.addEventListener('click', () => { if (activeId) window.swarm.openWorkFile(activeId); });
+document.documentElement.style.setProperty('--plan-w', planWidth + 'px');
+
+window.swarm.onPlan(({ id, plan }) => {
+  if (plan) planById.set(String(id), plan); else planById.delete(String(id));
+  if (String(id) === activeId) renderPlan();
+});
+window.swarm.planRequest();
+
+// Ширина тянется разделителем. Живая ширина (--plan-live) двигает только саму панель; поле,
+// которое она резервирует в #stage, а с ним и терминал, меняются один раз — на отпускании:
+// каждое изменение ширины заставляет Claude Code перерисовать экран.
+(function initPlanSplit() {
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+  let liveW = 0;
+  planSplit.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = liveW = planWidth;
+    planSplit.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const max = Math.max(PLAN_W_MIN, stageEl.clientWidth - PLAN_AGENT_MIN);
+    liveW = Math.max(PLAN_W_MIN, Math.min(max, startW + (startX - e.clientX)));
+    document.documentElement.style.setProperty('--plan-live', liveW + 'px');
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    planSplit.classList.remove('dragging');
+    document.body.style.cursor = '';
+    planWidth = liveW;
+    localStorage.setItem('swarm.planW', String(planWidth));
+    document.documentElement.style.setProperty('--plan-w', planWidth + 'px');
+    document.documentElement.style.removeProperty('--plan-live');
+    renderPlan();
+  });
+})();
+
+// Окно сузили или сбоку встал терминал — панель сворачивается в кнопку или возвращается.
+// Смотрим на #stage целиком: его ширина не зависит от резервируемого панелью поля.
+new ResizeObserver(() => renderPlan()).observe(stageEl);
 try { JSON.parse(localStorage.getItem('swarm.collapsed') || '[]').forEach((c) => collapsedFolders.add(c)); } catch (_) {}
 restoreOrStart();
 restoreTermPanel();

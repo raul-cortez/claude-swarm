@@ -2612,3 +2612,67 @@ body.layout-rail.rail-mini { grid-template-columns: 64px 1fr; }
 .layout-rail.rail-mini .pult-tab .pult-count { position: absolute; top: -6px; right: -6px; margin: 0; }
 .layout-rail.rail-mini #new-session-folder { width: 42px; padding: 9px 0; align-self: center; }
 .layout-rail.rail-mini #new-session-folder .tx { display: none; }
+
+/* --- панель плана справа ----------------------------------------------------
+   Витрина плана из файла работы вкладки: только чтение, галки ставит агент. Панель — поверх
+   правого поля #stage: пока она открыта (.plan-open), #stage резервирует это поле отступом,
+   и всё остальное (агент, терминал ⌘J снизу или сбоку) сужается, а панель стоит на всю
+   высоту. --plan-w — ширина, зафиксированная отпусканием разделителя (по ней сужается
+   терминал, и он перерисовывается один раз); --plan-live — живая ширина самой панели во
+   время перетаскивания, терминал при этом не дёргается. */
+#stage.plan-open { padding-right: var(--plan-w, 300px); }
+#plan-btn {
+  position: absolute; top: 8px; right: 14px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 9px 0 7px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+  font-size: 11px; box-shadow: 0 2px 8px -3px #000; cursor: pointer;
+}
+#plan-btn[hidden] { display: none; }
+#plan-btn:hover { color: var(--text); }
+#plan-btn.is-active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+#plan-btn svg { width: 14px; height: 14px; }
+#plan-btn .bd {
+  background: var(--ready); color: #0b1a10; border-radius: 999px; padding: 0 5px;
+  font-weight: 600; font-variant-numeric: tabular-nums;
+}
+/* Дайджест обходит кнопку справа — как раньше обходил плашку прораба. */
+body.has-plan #digest-strip { padding-right: 130px; }
+#plan-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
+  width: var(--plan-live, var(--plan-w, 300px)); min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel); border-left: 1px solid var(--hairline);
+}
+#plan-panel[hidden] { display: none; }
+#plan-split {
+  position: absolute; top: 0; bottom: 0; right: calc(var(--plan-live, var(--plan-w, 300px)) - 2px);
+  width: 5px; z-index: 7; cursor: col-resize;
+}
+#plan-split[hidden] { display: none; }
+#plan-split:hover, #plan-split.dragging { background: var(--accent); }
+#plan-panel .pp-h {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  font-size: 12px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--hairline);
+}
+#plan-panel .pp-n { margin-left: auto; color: var(--muted); font-weight: 500; }
+#plan-panel .pp-tree { list-style: none; margin: 0; padding: 8px 10px; font-size: 12.5px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+#plan-panel .pp-tree ul { list-style: none; margin: 0; padding: 0; }
+#plan-panel li > .pp-row { display: flex; gap: 8px; padding: 5px 4px; color: var(--text); line-height: 1.35; }
+#plan-panel ul ul > li > .pp-row { padding-left: 26px; color: var(--muted); font-size: 12px; }
+#plan-panel ul ul ul > li > .pp-row { padding-left: 44px; }
+#plan-panel .tx { min-width: 0; overflow-wrap: anywhere; }
+#plan-panel li.done > .pp-row .tx { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, .25); }
+#plan-panel .bx {
+  flex: none; width: 14px; height: 14px; margin-top: 2px; box-sizing: border-box;
+  border: 1.5px solid var(--muted); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1;
+}
+#plan-panel li.done > .pp-row .bx { background: var(--ready); border-color: var(--ready); color: #0b1a10; }
+#plan-panel li.now > .pp-row .bx { border-color: var(--run); box-shadow: 0 0 0 3px color-mix(in srgb, var(--run) 25%, transparent); }
+#plan-panel li.now > .pp-row { background: color-mix(in srgb, var(--run) 8%, transparent); border-radius: 6px; }
+#plan-panel .pp-f {
+  flex: none; text-align: left; padding: 10px 14px; font-size: 11.5px; color: var(--muted);
+  background: transparent; border: 0; border-top: 1px solid var(--hairline); cursor: pointer;
+}
+#plan-panel .pp-f:hover { color: var(--text); }

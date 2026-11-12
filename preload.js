@@ -181,6 +181,14 @@ contextBridge.exposeInMainWorld('swarm', {
   setDigest: (opts) => ipcRenderer.send('settings:digest', opts),
   setDossier: (opts) => ipcRenderer.send('settings:dossier', opts),
   dossierSweep: (keys) => ipcRenderer.send('dossier:sweep', { keys }),
+  // Панель плана: разобранный раздел «## План» файла работы. Только чтение.
+  onPlan: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:plan', handler);
+    return () => ipcRenderer.removeListener('session:plan', handler);
+  },
+  planRequest: () => ipcRenderer.send('plan:request'),
+  openWorkFile: (id) => ipcRenderer.send('plan:open-work', { id }),
   onDigest: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('session:digest', handler);

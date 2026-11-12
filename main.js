@@ -205,6 +205,7 @@ const subs = require('./subs');                     // подписки: кар�
 const restart = require('./restart');               // самоперезапуск вкладки: когда пора и что спросить
 const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
+const plan = require('./plan');                      // план из файла работы: дерево шагов для правой панели
 const dossier = require('./dossier');                // досье вкладки: шаблоны, очередь из лога, наследство
 const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
@@ -6586,14 +6587,62 @@ function dossierTick(id, d) {
   const p = dossierEnsure(id, d);
   if (!p) return;
   let changed = dossierRefreshMark(p, d);
+  planTick(id, d, p);
   const lag = dossier.humanCountAfter(dossierEntries(d), d.dsMark || 0);
   const due = lag >= dossier.NUDGE_AFTER ? lag : 0;
   if (due !== (d.dsLag || 0)) { d.dsLag = due; changed = true; }
   if (changed) tgWriteModes();
 }
 
+// Панель плана — витрина: читаем раздел «## План» файла работы и отдаём окну разобранное дерево.
+// В файл ничего не пишем. Перечитываем только когда изменилась mtime; окну шлём только когда
+// разобранное изменилось (или плана не стало).
+function planSend(id, d, value) {
+  const json = JSON.stringify(value);
+  if (json === (d.planJson || 'null')) return;
+  d.planJson = json;
+  safeSend('session:plan', { id, plan: value });
+}
+
+function planTick(id, d, p) {
+  let st = null;
+  try { st = fs.statSync(p.work); } catch (_) { planSend(id, d, null); d.planMtime = 0; return; }
+  if (st.mtimeMs === d.planMtime) return;
+  d.planMtime = st.mtimeMs;
+  let text = '';
+  try { text = fs.readFileSync(p.work, 'utf8'); } catch (_) { return; }
+  const value = plan.parse(text);
+  planSend(id, d, value ? Object.assign({}, value, { at: st.mtimeMs }) : null);
+}
+
+// Окно перезагрузилось — оно не помнит планов; шлём всё, что есть.
+ipcMain.on('plan:request', () => {
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || !d.planJson || d.planJson === 'null') continue;
+    safeSend('session:plan', { id, plan: JSON.parse(d.planJson) });
+  }
+});
+
+// «Файл работы» внизу панели — открыть его так же, как пункт меню карточки.
+ipcMain.on('plan:open-work', (_e, { id } = {}) => {
+  const d = det.get(id);
+  if (!d || !DOSSIER_ENABLED || !dossierFor(id, d)) return;
+  const p = dossierEnsure(id, d);
+  if (!p) return;
+  shell.openPath(p.work).then((err) => { if (err) restartLog(`вкладка ${id}: не открылся ${p.work}: ${err}`); })
+    .catch(reportMainError);
+});
+
 setInterval(() => {
-  if (!DOSSIER_ENABLED) return;
+  if (!DOSSIER_ENABLED) {
+    // Досье выключили: плана нет, кнопка уходит.
+    for (const id of sessions.keys()) {
+      const d = det.get(id);
+      if (d && d.planJson && d.planJson !== 'null') planSend(id, d, null);
+    }
+    return;
+  }
   for (const id of sessions.keys()) {
     const d = det.get(id);
     if (!d || d.dead) continue;
