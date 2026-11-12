@@ -83,13 +83,15 @@ if (process.platform === 'linux') {
   app.setPath('userData', userData);
 }
 // Native macOS About reads CFBundleShortVersionString from the outer .app
-// (installer shell). After an asar-swap that stays stale — pin About to the
-// version inside package.json (same source as Settings / updater).
-app.setAboutPanelOptions({
-  applicationName: 'Swarm',
-  applicationVersion: app.getVersion(),
-  version: app.getVersion(),
-});
+// (installer shell), and app.getVersion() reads package.json from the bundle — both
+// stay on the version the app was INSTALLED with once updates land in payload/ next
+// to the settings. Pin About to the package.json beside this very file, the same
+// source as Settings and the updater (updater.runningVersion()).
+{
+  let running = app.getVersion();
+  try { running = require('./package.json').version || running; } catch (_) {}
+  app.setAboutPanelOptions({ applicationName: 'Swarm', applicationVersion: running, version: running });
+}
 // Prebuilt fork of node-pty. Load rules (Win vs Mac) live in pty-loader.js —
 // Windows stays on plain unpacked require; Unix gets a scoped spawn-helper
 // path fix. See that file's contract comment before changing either branch.
