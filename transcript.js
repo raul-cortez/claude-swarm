@@ -440,6 +440,7 @@ const HISTORY_PROMPT_LEN = 140;
 function historyHead(text, cwd, same) {
   const want = String(cwd || '').replace(/[\\/]+$/, '');
   let seenCwd = false;
+  let firstCwd = '';
   let prompt = '';
   let title = '';
   for (const line of String(text == null ? '' : text).split('\n')) {
@@ -449,6 +450,7 @@ function historyHead(text, cwd, same) {
     try { e = JSON.parse(t); } catch (_) { continue; }
     if (!seenCwd && e.cwd) {
       seenCwd = true;
+      firstCwd = String(e.cwd);
       const there = String(e.cwd).replace(/[\\/]+$/, '');
       if (want && there !== want && !(same && same(there, want))) return null;
     }
@@ -463,7 +465,7 @@ function historyHead(text, cwd, same) {
     if (!one || one[0] === '<' || one.startsWith('Caveat:')) continue;
     prompt = one.length > HISTORY_PROMPT_LEN ? one.slice(0, HISTORY_PROMPT_LEN - 1).trimEnd() + '…' : one;
   }
-  return prompt ? { prompt, title } : null;
+  return prompt ? { prompt, title, cwd: firstCwd } : null;
 }
 
 module.exports = {

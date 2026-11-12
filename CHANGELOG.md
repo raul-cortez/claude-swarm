@@ -7,7 +7,7 @@
 - feat(crew): the foreman label is part of the digest line («Прораб: …»), no more floating plate over the terminal
 - feat(tabs): own tab color from the card menu, shown on a lane of your choice (background, border or left stripe); status takes another lane or just the dot
 - feat(tabs): collapse the left panel to icons (⌘B or the button at the bottom left)
-- feat(tabs): past conversations of a folder
+- feat(tabs): past conversations in a window — search, a flat dated list, «this folder / all folders», keyboard; the agent keeps a short summary of each tab to find it by
 - feat(tabs): the agent names its tab from the task
 - fix(about): show the running version, not the installed one
 

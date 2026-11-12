@@ -535,7 +535,7 @@ test('поиск: потолок по числу реплик, счёт — по
 test('historyHead: папка, записанная иначе (регистр, симлинк), признаётся через предикат', () => {
   const line = JSON.stringify({ type: 'user', cwd: '/P/Shop', message: { content: 'привет' } });
   assert.strictEqual(T.historyHead(line, '/p/shop'), null);
-  assert.deepStrictEqual(T.historyHead(line, '/p/shop', (a, b) => a.toLowerCase() === b.toLowerCase()), { prompt: 'привет', title: '' });
+  assert.deepStrictEqual(T.historyHead(line, '/p/shop', (a, b) => a.toLowerCase() === b.toLowerCase()), { prompt: 'привет', title: '', cwd: '/P/Shop' });
 });
 
 test('historyHead: первая просьба человека, служебное мимо, чужая папка и пустой разговор — null', () => {
@@ -548,7 +548,7 @@ test('historyHead: первая просьба человека, служебн�
     L({ type: 'user', cwd: '/p/shop', message: { content: 'второе' } }),
     '{"обрезанная строка',
   ].join('\n');
-  assert.deepStrictEqual(T.historyHead(text, '/p/shop/'), { prompt: 'поправь даты в отчёте', title: '' });
+  assert.deepStrictEqual(T.historyHead(text, '/p/shop/'), { prompt: 'поправь даты в отчёте', title: '', cwd: '/p/shop' });
   assert.strictEqual(T.historyHead(text, '/p/blog'), null);
   assert.strictEqual(T.historyHead(L({ type: 'user', cwd: '/p/shop', message: { content: '<x/>' } }), '/p/shop'), null);
   const named = L({ type: 'custom-title', customTitle: 'Экспорт' }) + '\n' + L({ type: 'user', cwd: '/p/shop', message: { content: 'x'.repeat(300) } });

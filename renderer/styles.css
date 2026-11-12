@@ -2494,6 +2494,1677 @@ body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
 }
 #find mark { background: color-mix(in srgb, var(--permission) 40%, transparent); color: inherit; border-radius: 2px; }
 
+/* --- прошлые разговоры (openHistoryModal) -----------------------------------
+   Окно, а не меню: разговоров бывают сотни, им нужен поиск и обычный размер шрифта. */
+.modal.history-modal {
+  width: min(720px, 92vw); height: min(640px, 86vh);
+  padding: 0; display: flex; flex-direction: column; overflow: hidden;
+}
+.hm-head { display: flex; align-items: center; padding: 16px 18px 10px; }
+.hm-title { flex: 1; color: var(--text); font-size: 15px; font-weight: 600; }
+.hm-x { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 2px; display: flex; }
+.hm-x:hover { color: var(--text); }
+.hm-x svg { width: 16px; height: 16px; }
+.hm-search {
+  margin: 0 18px; padding: 9px 12px; border-radius: 8px; font-size: 13px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text); outline: none;
+}
+.hm-search:focus { border-color: var(--accent); }
+.hm-scope { display: flex; gap: 6px; padding: 10px 18px 8px; }
+.hm-scope button {
+  padding: 4px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+}
+.hm-scope button:hover { color: var(--text); }
+.hm-scope button.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 10px 8px; border-top: 1px solid var(--hairline); }
+.hm-note { padding: 28px 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.hm-item {
+  display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left;
+  padding: 9px 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text); cursor: pointer;
+  min-width: 0; overflow: hidden;
+}
+.hm-item.sel { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.hm-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.hm-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Без имени строку зовёт первая просьба человека — она длинная, ей обычный вес. */
+.hm-item.noname .hm-name { font-weight: 500; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hm-top { align-items: flex-start; width: 100%; }
+.hm-dir { flex: none; max-width: 160px; padding: 0 7px; border-radius: 999px; font-size: 11px; color: var(--muted); border: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-dir[hidden] { display: none; }
+.hm-when { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hm-about { color: var(--muted); font-size: 12.5px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hm-about[hidden] { display: none; }
+.hm-count, .hm-keys { flex: none; white-space: nowrap; }
+.hm-foot { display: flex; justify-content: space-between; gap: 12px; padding: 9px 18px; border-top: 1px solid var(--hairline); color: var(--muted); font-size: 11.5px; }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal {
+  width: min(430px, 90vw);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+.modal-title { color: var(--text); font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.modal-msg { color: var(--text); font-size: 13px; line-height: 1.5; margin-bottom: 18px; }
+.modal-msg code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+/* Neutral (teal) primary button for info dialogs — not the destructive red. */
+.modal-ok.neutral { border-color: var(--accent); color: var(--accent); }
+.modal-ok.neutral:hover { background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-actions button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.modal-cancel:hover { border-color: var(--muted); }
+.modal-ok { border-color: var(--danger); color: var(--danger); }
+.modal-ok:hover { background: color-mix(in srgb, var(--danger) 16%, var(--panel-2)); }
+
+/* --- Settings modal --------------------------------------------------------
+   Разделы КОЛОНКОЙ СЛЕВА, содержимое справа. Вкладками сверху семь разделов уже
+   не влезали в строку и ехали во второй ряд, а панели здесь длинные: колонка
+   разделов даёт каждой заголовок и место, и место остаётся на восьмой раздел.
+
+   Шрифт в настройках СИСТЕМНЫЙ, а не моноширинный, как во всём остальном
+   приложении. Настройки — это проза («Перезапускать агента, когда контекст
+   заполнится», абзацы про мост), а кириллица в SF Mono расползается и читается
+   по буквам. Моно остаётся тому, что и есть код: командам, путям, токену,
+   хоткеям — классы .set-code / .set-mono и <code>. Терминалы и карточки вкладок
+   не трогаем, там моно как было.
+
+   Высота ограничена: колонка разделов и «Сохранить/Отмена» стоят на месте, а
+   длинная панель листается внутри .set-body. */
+.modal.settings {
+  /* 900: два «Предпросмотра» и QR с подписью рядом не жмутся, а колонка текста
+     остаётся читаемой (строка не длиннее ~70 знаков). */
+  width: min(900px, 96vw);
+  /* Высота ФИКСИРОВАННАЯ, а не по содержимому: с колонкой разделов слева прыгающая
+     высота дёргала бы и её — щёлкнул «Клавиши», и список разделов подскочил. */
+  height: min(88vh, 740px);
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  /* Строка обязана быть ограничена, иначе она растёт по содержимому: панель
+     выдавливала подвал с «Сохранить» за край, а край обрезан overflow: hidden. */
+  grid-template-rows: minmax(0, 1fr);
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .modal.settings { grid-template-columns: 148px minmax(0, 1fr); }
+  .set-body { padding: 16px 16px 18px; }
+  .modal.settings .modal-actions { padding: 11px 16px; }
+}
+
+/* Колонка разделов. */
+.set-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px 14px;
+  background: color-mix(in srgb, var(--bg) 55%, var(--panel-2));
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.platform-darwin .set-tabs { padding-top: 16px; }
+.set-nav-h {
+  padding: 2px 10px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.set-tab {
+  -webkit-app-region: no-drag;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.set-tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+.set-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Правая половина: прокручиваемое содержимое + прибитый низ с кнопками. */
+.set-main {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  /* Контейнер для запросов ниже: узкое окно решается по ширине СОДЕРЖИМОГО, а не окна —
+     колонку разделов из ширины окна не вычесть. */
+  container-type: inline-size;
+}
+.set-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+  padding: 20px 22px 22px;
+}
+.set-body::-webkit-scrollbar { width: 8px; }
+.set-body::-webkit-scrollbar-track { background: transparent; }
+.set-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+.set-body::-webkit-scrollbar-thumb:hover { background: #2f3742; }
+.modal.settings .modal-actions {
+  flex: none;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 35%, var(--panel-2));
+}
+.modal.settings .modal-actions button { font-size: 13px; padding: 8px 16px; border-radius: 8px; }
+/* «Сохранить» — залитая кнопка: в модалке настроек это единственное действие,
+   которое что-то меняет, и его видно с другого конца окна. */
+.modal.settings .modal-ok.neutral {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #08201f;
+  font-weight: 600;
+}
+.modal.settings .modal-ok.neutral:hover { background: color-mix(in srgb, var(--accent) 86%, #fff); }
+
+/* Отступы в панели заданы ОДНИМ местом — gap контейнера, а не полями каждого элемента.
+   Пока каждая строчка отбивалась своим margin, панели разъезжались: одна и та же по смыслу
+   пара «галка + галка» стояла в «Запуске» на 14 пикселях, а во «Вкладках» на 7, и починить
+   это можно было только вручную и заново после каждой правки.
+   Три уровня и всё:
+     .set-panel — расстояние между группами;
+     .set-group — расстояние между настройками внутри группы;
+     .set-field — расстояние между меткой и её управлением. */
+.set-panel { display: flex; flex-direction: column; gap: 12px; }
+.set-panel.hidden { display: none; }
+.set-panel-h { display: flex; flex-direction: column; gap: 5px; margin: 0 0 2px; }
+.set-h { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+/* Ширину прозы НЕ режем: её и так держит окно настроек (900px минус колонка разделов), а
+   типографский предел в 68 символов поверх этого оставлял справа пустую треть панели —
+   человек видел не «удобную строку», а недоделанную вёрстку. Ограничение осталось бы
+   осмысленным на всю ширину экрана; здесь его роль уже играет контейнер. */
+.set-intro { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.set-intro b { color: var(--text); }
+
+/* Группа настроек — карточка с надзаголовком. Она и делает панель структурой, а не
+   списком: «Команды» отдельно от «Как ведёт себя агент», видно с первого взгляда. */
+.set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.set-group-h {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+#set-agent-block, #set-tg-extra { display: flex; flex-direction: column; gap: 12px; }
+#set-tg-prompt-box, #set-voice-manual-box { display: flex; flex-direction: column; gap: 8px; }
+/* Общий запрет на показ спрятанного: `display` из правил выше перебивает атрибут hidden,
+   а на нём держится половина панели «Телеграм» — шаги мастера, поля и блок диагностики. */
+.modal.settings [hidden] { display: none !important; }
+
+/* Одна настройка. Вопросик стоит СРАЗУ ЗА текстом, а не у правого края панели:
+   прижатый к краю, он собирался в колонку сирот, оторванных от своих строк. */
+.set-row { display: flex; align-items: flex-start; gap: 8px; }
+/* Строка с кнопкой: вопросик по центру кнопки, а не по её верхнему краю. */
+.set-row.is-center { align-items: center; }
+.set-row > .set-check, .set-row > .set-radio { flex: 0 1 auto; min-width: 0; }
+.set-check, .set-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.set-check-tx { flex: 1 1 auto; min-width: 0; }
+.set-check input, .set-radio input {
+  margin: 1px 0 0; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex: none;
+}
+.set-sub {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-left: 3px; padding-left: 15px; border-left: 1px solid var(--border);
+}
+.set-sub.disabled { opacity: 0.4; pointer-events: none; }
+/* Капсула карточки: до трёх кнопок — четвёртая галочка гаснет сама, а не ругается модалкой
+   (спека «Меню и кнопки на карточке», потолок три). «Переименование» показано серым НАВСЕГДА —
+   не переключатель, а объяснение, почему его нет в списке. */
+.set-check.is-disabled { opacity: 0.45; cursor: default; }
+.set-check.is-disabled input { cursor: default; }
+.set-hint-inline { color: var(--muted); font-size: 12px; align-self: center; }
+#set-tab-tools { flex-wrap: wrap; row-gap: 8px; column-gap: 16px; }
+/* Литерал в прозе — плашка, как <code>: «ждёт ответа», --permission-mode, /tabs.
+   Одним шрифтом с текстом они читались как часть фразы, а это имя, которое надо
+   набрать или узнать на экране. */
+.set-mono {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  padding: 1px 5px; border-radius: 4px;
+}
+/* То же самое, но для литерала ПО-РУССКИ: «готов», «ждёт ответа», «[тлг]». Плашка нужна по
+   той же причине — это не часть фразы, а слово, которое человек увидит на экране, — а моно
+   для кириллицы не годится: оно растаскивает слово по буквам. Отсюда две плашки вместо
+   одной с условием: шрифт по языку в CSS не выбирается. */
+.set-lit {
+  font-size: 12px; color: var(--text);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  padding: 1px 6px; border-radius: 4px;
+}
+
+.set-field { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+/* Компактное управление (селект, шаговик, ползунок) не занимает всю ширину — метка
+   слева, управление справа, пояснение под ними во всю строку. */
+.set-field.is-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 7px;
+}
+.set-field.is-row > .set-note { grid-column: 1 / -1; }
+.set-field.is-row > .set-input { width: auto; min-width: 210px; justify-self: end; }
+.set-field.is-row > .set-range { min-width: 230px; justify-self: end; }
+.set-field.is-row > .set-stepper { justify-self: end; }
+/* Узкое окно: метка и управление больше не влезают в одну строку — разворачиваем в
+   колонку, как обычное поле. И колонка разделов худеет, чтобы отдать место тексту. */
+@container (max-width: 420px) {
+  .set-field.is-row { display: flex; flex-direction: column; align-items: stretch; }
+  .set-field.is-row > .set-input,
+  .set-field.is-row > .set-range,
+  .set-field.is-row > .set-stepper { width: 100%; min-width: 0; justify-self: auto; }
+}
+
+/* Метка настройки и её вопросик — одной строкой. */
+.set-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.set-label { display: block; color: var(--text); font-size: 13px; font-weight: 500; margin: 0; }
+.set-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: color-mix(in srgb, var(--bg) 65%, var(--panel));
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.set-input::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+.set-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+/* Селекты со своей галкой: системная стрелка в тёмной теме выглядит чужой. */
+select.set-input {
+  appearance: none;
+  padding-right: 30px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%236b757e' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px;
+}
+/* Поля, в которых лежит код: команда, токен, путь, фразы вызова. */
+.set-input.set-code, .agent-cmd { font-family: var(--mono); font-size: 12.5px; }
+textarea.set-input { resize: vertical; min-height: 62px; line-height: 1.5; }
+.set-input.set-prose { font-size: 12.5px; line-height: 1.5; }
+/* Кнопки в строке умеют переноситься: на узком окне и на Windows (там шрифт шире) три
+   кнопки в ряд не влезали и уезжали за край. */
+.tg-row-wrap { flex-wrap: wrap; row-gap: 7px; }
+/* Подпись перед селектом, чтобы «Обычная, 148 МБ» не висело без объяснения, ЧТО это. */
+.set-inline {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--muted); font-size: 12px; white-space: nowrap;
+}
+.set-inline .set-select { width: auto; min-width: 0; flex: 0 1 auto; font-size: 12.5px; }
+/* .set-hint — ТЕКСТ ПОДСКАЗКИ, а не элемент панели: он лежит в разметке спрятанным и
+   всплывает в .set-tip по клику на вопросик. Видимые пояснения и живые статусы — это
+   .set-note, и разделение здесь жёсткое: пока обе роли носили один класс, любая правка
+   стилей подсказок дёргала и надписи, которые обязаны быть на виду. */
+.set-hint { display: none; }
+.set-note { display: block; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.set-note b { color: var(--text); }
+/* Показ выключен в Вид → эти настройки настраивают то, чего сейчас не видно нигде в
+   приложении — не просто приглушённая надпись, а заметная плашка с ходом прямо на галку. */
+.set-note-warn { color: var(--danger); margin-bottom: 10px; }
+.set-note-link {
+  padding: 0; border: none; background: none;
+  color: inherit; font: inherit; text-decoration: underline;
+  cursor: pointer;
+}
+.set-note-link:hover { opacity: 0.8; }
+/* Вопросик. Размер — с прицелом на попадание мышью, а не на красоту: 18px это меньше
+   рекомендуемых 24, но строка настройки высотой 20, и кружок крупнее ломал бы её ритм. */
+.set-q {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.set-q:hover { border-color: var(--accent); color: var(--accent); }
+/* Всплывающая подсказка: тот же вид, что у меню команд и веток — в приложении одна манера
+   всплывающих окон. Ширина уже: это проза, а не список, и длинная строка в ней не читается.
+   Шрифт задан явно: подсказка живёт не внутри .modal.settings, а рядом с ней. */
+.set-tip {
+  position: fixed;
+  z-index: 70;
+  max-width: 340px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  color: var(--muted);
+  font-family: var(--ui);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.set-tip.hidden { display: none; }
+.set-tip b { color: var(--text); }
+/* Ползунок с числом рядом (порог самоперезапуска). Число ведущее, а не подпись: настройка
+   читается против полоски контекста на вкладке, где стоит ровно это же число. Отсюда его
+   размер и моноширинность — чтобы при перетаскивании оно не дёргало ползунок шириной. */
+.set-range { display: flex; align-items: center; gap: 10px; }
+.set-range-input { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.set-range-input:disabled { cursor: default; opacity: 0.45; }
+.set-range-num {
+  min-width: 42px;
+  text-align: right;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.set-range-num.off { color: var(--muted); font-weight: 400; }
+.set-tip code, .set-note code, .modal.settings code {
+  font-family: var(--mono);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  padding: 1px 5px; border-radius: 4px; font-size: 11.5px; color: var(--text);
+}
+.set-field.hidden, #set-agent-block.hidden { display: none; }
+
+/* Launch panel — editable list of agents (cmd + flags + delete). */
+.agent-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-row { display: grid; grid-template-columns: 1fr 2rem; gap: 8px; align-items: center; }
+.agent-row .set-input { margin: 0; }
+.agent-del {
+  -webkit-app-region: no-drag; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  border-radius: 8px; height: 34px; font-size: 16px; line-height: 1;
+}
+.agent-del:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Radio rows in the launch panel — reuse .set-check spacing. */
+.set-radio { display: flex; align-items: flex-start; gap: 9px; padding: 0; cursor: pointer; color: var(--text); font-size: 13px; line-height: 1.45; }
+.set-radio input { margin-top: 1px; accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+/* Agent picker shown when opening a tab with several saved agents. */
+.pick-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.pick-item {
+  -webkit-app-region: no-drag; cursor: pointer; text-align: left;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  border-radius: 6px; padding: 10px 12px; font-family: var(--mono); font-size: 13px;
+}
+.pick-item:hover, .pick-item:focus { border-color: var(--accent); color: var(--accent); outline: none; }
+.pick-item.pick-blank { border-style: dashed; color: var(--muted); font-family: var(--ui); }
+.pick-item.pick-blank:hover, .pick-item.pick-blank:focus { border-color: var(--accent); color: var(--accent); }
+
+/* Keybinds panel — label + chord capture button + reset. */
+.kb-list { display: flex; flex-direction: column; gap: 8px; }
+.kb-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(7.5rem, auto) 1.75rem;
+  align-items: center;
+  gap: 8px;
+}
+.kb-label { font-size: 13px; color: var(--text); }
+.kb-chord {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 30px;
+  min-width: 7.5rem;
+}
+.kb-chord:hover { border-color: var(--accent); }
+.kb-chord.capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+.kb-chord.kb-err { color: #e06c75; border-color: #e06c75; }
+.kb-key {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-2, var(--panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 1px 0 var(--border);
+}
+.kb-sep { color: var(--muted); font-size: 11px; user-select: none; }
+.kb-reset {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.kb-reset:hover { color: var(--text); background: var(--panel); }
+
+/* Help modal — wider, scrollable, neutral (not the destructive-red confirm). */
+.modal.help { width: min(640px, 92vw); padding: 0; }
+.help-body {
+  max-height: min(72vh, 620px);
+  overflow-y: auto;
+  padding: 22px 24px 8px;
+}
+.help-body h3 { color: var(--text); font-size: 16px; margin: 0 0 6px; }
+.help-body h4 { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin: 18px 0 7px; }
+.help-body p { color: var(--text); font-size: 13px; line-height: 1.55; margin: 0 0 8px; }
+.help-body ul { margin: 0 0 8px; padding-left: 18px; }
+.help-body li { color: var(--text); font-size: 13px; line-height: 1.6; }
+.help-body b { color: var(--text); }
+.help-body code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.modal.help .modal-actions { padding: 12px 20px 16px; border-top: 1px solid var(--border); }
+.modal.help .help-close { border-color: var(--border); color: var(--text); }
+.modal.help .help-close:hover { border-color: var(--accent); }
+
+/* --- terminal stage ------------------------------------------------------- */
+/* Терминал — плавающая панель на фоне окна. Фон панели = фон темы терминала (--term-bg
+   ставит paintTermBg()), иначе светлая тема оказалась бы белым листом в тёмной рамке. */
+#stage {
+  position: relative;
+  background: var(--term-bg, var(--bg));
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.layout-rail #stage { margin: 8px 8px 0 2px; }
+.layout-top  #stage { margin: 0 8px; }
+.term-holder {
+  position: absolute;
+  /* Inset via position, NOT padding. FitAddon computes rows from the holder's
+     height MINUS the terminal element's OWN padding — it never subtracts the
+     holder's padding (and with box-sizing:border-box getComputedStyle reports
+     the padded height in full), so padding here made it compute too many rows
+     and the grid overflowed the bottom, clipping the last row(s). With inset the
+     holder itself is the smaller box: fit gets the true available height.
+     The 16px bottom gap also absorbs the ≤1-cell overshoot between fit steps
+     (the grid only changes by whole rows), landing it in #stage bg, not clipped. */
+  inset: 10px 14px;
+  padding: 0;
+  display: none;
+}
+.term-holder.active { display: block; }
+
+/* xterm's viewport forces an always-on scrollbar (overflow-y: scroll in the
+   vendored xterm.css). Chromium's default is light and shows as a white stripe
+   on the right. Style it dark to match the terminal. */
+.xterm-viewport::-webkit-scrollbar { width: 6px; }
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: #2f3742; }
+
+/* Was #stage:empty — the pult strip lives inside the stage now, so :empty never
+   matches. relayoutTabs() toggles .no-sessions instead. Hangs on #stage-agents, not
+   #stage: on #stage the inset:0 layer also lay over the docked terminal panel and ate
+   its clicks — with no agent tabs left, the last terminal tab's × couldn't be pressed.
+   pointer-events:none so a hint never swallows a click again. */
+body.no-sessions #stage-agents::after {
+  pointer-events: none;
+  content: "Сессий нет — нажмите ＋, чтобы начать";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+/* --- dockable terminal panel -----------------------------------------------
+   A plain-shell panel, not tied to any agent tab (⌘J). Lives INSIDE #stage
+   (see the index.html comment on #stage) precisely so it never needs a
+   second grid-template edit for layout-rail/layout-top — #stage itself just
+   becomes a flex row (side dock) or column (bottom dock) with #stage-agents
+   and #term-panel as its two items, #term-split the draggable divider.
+   Sizes are CSS custom properties so dragging only rewrites one value. */
+/* #stage is ALWAYS a flex container, even with the panel closed (the default,
+   most common state) — #stage-agents only gets its 1 1 auto sizing from a flex
+   parent. Closed, #term-split/#term-panel are `[hidden]` (not flex items at
+   all), so #stage-agents is the sole item and fills #stage exactly like the
+   old plain-block #stage used to (there its content just filled the box by
+   being absolutely positioned; here it's flex-stretch doing the same job). If
+   this rule were scoped to .termpanel-open only, #stage-agents would collapse
+   to 0 height whenever the panel is closed: it has no in-flow content of its
+   own (pult-strip/gate-strip/.term-holder are all position:absolute), so an
+   un-stretched auto-height block resolves to 0 — every agent terminal with it.
+   Direction only matters once #term-panel is an actual second flex item. */
+#stage { display: flex; flex-direction: column; }
+#stage.termpanel-open.termpanel-side { flex-direction: row; }
+
+#stage-agents {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#term-split { flex: 0 0 auto; background: var(--border); }
+#stage.termpanel-open.termpanel-bottom #term-split { height: 5px; margin: -2px 0; cursor: row-resize; z-index: 5; }
+#stage.termpanel-open.termpanel-side #term-split { width: 5px; margin: 0 -2px; cursor: col-resize; z-index: 5; }
+#term-split:hover, #term-split.dragging { background: var(--accent); }
+
+#term-panel {
+  flex: 0 0 auto;
+  display: flex;
+  overflow: hidden;
+  background: var(--panel);
+}
+/* The bare #term-panel rule above (ID, specificity 0,1,0,0) otherwise beats the
+   UA `[hidden] { display: none }` rule (0,0,1,0): closed, it collapsed to a
+   stray content-sized strip pinned to the top of #stage instead of vanishing. */
+#term-panel[hidden] { display: none; }
+#stage.termpanel-open.termpanel-bottom #term-panel { height: var(--term-h, 260px); border-top: 1px solid var(--border); }
+#stage.termpanel-open.termpanel-side #term-panel { width: var(--term-w, 380px); border-left: 1px solid var(--border); }
+#term-panel.tp-tabs-top { flex-direction: column; }
+#term-panel.tp-tabs-left { flex-direction: row; }
+
+#term-tabs-row { flex: 0 0 auto; display: flex; background: var(--panel-2); }
+.tp-tabs-top #term-tabs-row { flex-direction: row; align-items: center; border-bottom: 1px solid var(--border); }
+.tp-tabs-left #term-tabs-row { flex-direction: column; width: 148px; border-right: 1px solid var(--border); }
+
+#term-tabs { display: flex; gap: 4px; padding: 6px; overflow: auto; min-width: 0; }
+/* Top dock: the strip is a row, so the tab list grows to fill it (controls sit
+   at its end). Left dock: the strip is a column the full panel height — if the
+   list also grew there, one short tab would stretch across it, stranding the
+   controls at the very bottom with a dead gap above them. It only grows enough
+   for its own tabs there; a long list still scrolls (min-height:auto zeroes
+   via overflow:auto). */
+.tp-tabs-top #term-tabs { flex: 1 1 auto; flex-direction: row; }
+.tp-tabs-left #term-tabs { flex: 0 1 auto; flex-direction: column; }
+
+/* Controls stay a row even when the tab strip itself runs vertically (tabs-left):
+   four 24px icons fit the 148px column on their side with room to spare, and
+   stacking them ate a third of that column's height for nothing. */
+#term-tabs-ctl { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px; }
+
+.tp-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.tp-tabs-left .tp-tab { justify-content: space-between; }
+.tp-tab:hover { background: var(--panel); color: var(--text); }
+.tp-tab.active { background: var(--panel); color: var(--text); }
+.tp-tab .tp-label { overflow: hidden; text-overflow: ellipsis; }
+.tp-tab .tp-close { display: flex; flex: none; opacity: 0; color: var(--muted); border-radius: 4px; padding: 1px; }
+.tp-tab:hover .tp-close, .tp-tab.active .tp-close { opacity: 1; }
+.tp-tab .tp-close:hover { color: var(--danger); background: rgba(255, 255, 255, 0.06); }
+.tp-tab .tp-close svg { width: 12px; height: 12px; }
+
+.tp-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tp-ctl:hover { background: var(--panel); color: var(--text); }
+.tp-ctl svg { width: 14px; height: 14px; }
+
+#term-panel-body { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+/* Panel terminals reuse .term-holder as-is (styles.css above: position/inset/
+   display) — same shape as an agent terminal, just parented here instead of
+   #stage-agents. */
+
+#term-panel-btn.is-active { color: var(--accent); }
+
+/* --- bottom git status bar ------------------------------------------------ */
+#statusbar {
+  grid-column: 1 / -1;           /* span the full window width under everything */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 6px 0 10px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+}
+/* On the pult you're not looking at any single session, so the branch/diff of
+   "the active session" is misleading — hide them (id beats the [hidden] rule). */
+body.pult-on #git-branch,
+body.pult-on #git-diff,
+body.pult-on #git-unmerged,
+body.pult-on #git-msg { display: none; }
+.git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.git-branch:hover { color: var(--text); background: var(--panel-2); }
+.git-branch[hidden] { display: none; }
+.git-branch .git-ic { display: inline-flex; width: 13px; height: 13px; }
+.git-branch .git-ic svg { width: 13px; height: 13px; }
+.git-branch .git-track { color: var(--accent); letter-spacing: 0.02em; }
+/* Worktree mark: small on purpose — the details are in the branch's tooltip. */
+.git-branch .git-wt {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 13px;
+  padding: 0 3px;
+  margin-right: -2px;
+  border-radius: 3px;
+  /* Neutral: every bright colour in the bar already means a status (teal — «ждёт»). */
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+.git-branch .git-wt[hidden] { display: none; }
+.git-msg { color: var(--waiting); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Diff counter — sits next to the branch, same muted bar language. */
+.git-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.git-diff:hover { background: var(--panel-2); }
+.git-diff[hidden] { display: none; }
+.git-diff .d-add { color: var(--ready); }
+.git-diff .d-del { color: var(--danger); }
+.git-diff .d-add:empty, .git-diff .d-del:empty { display: none; }
+
+/* «3 не влиты» — the worktree's commits its base doesn't have yet. */
+.git-unmerged {
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.git-unmerged b { color: var(--text); font-weight: 600; }
+.git-unmerged:hover { color: var(--text); background: var(--panel-2); }
+.git-unmerged[hidden] { display: none; }
+
+/* --- diff overlay --------------------------------------------------------- */
+.modal.diff {
+  width: min(1100px, 94vw);
+  height: min(760px, 88vh);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.diff-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.diff-head .diff-title { color: var(--text); font-size: 14px; font-weight: 600; }
+/* Распорка живёт здесь, а не на .diff-stale: та кнопка почти всегда hidden, и
+   вместе с ней пропадал margin-left:auto — крестик съезжал к счётчику. */
+.diff-head .diff-sum { font-family: var(--mono); font-size: 12px; margin-right: auto; }
+.diff-head .diff-sum .d-add { color: var(--ready); }
+.diff-head .diff-sum .d-del { color: var(--danger); margin-left: 6px; }
+.diff-head .diff-stale {
+  border: 1px solid var(--border); background: transparent;
+  color: var(--waiting); font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+}
+.diff-head .diff-stale[hidden] { display: none; }
+.diff-head .diff-close {
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 16px; cursor: pointer; padding: 0 4px;
+}
+.diff-head .diff-close:hover { color: var(--text); }
+
+.diff-body { display: flex; flex: 1; min-height: 0; }
+.diff-tree {
+  width: 260px; flex: none; overflow: auto;
+  border-right: 1px solid var(--border); padding: 8px 0;
+}
+.diff-pane { flex: 1; min-width: 0; overflow: auto; }
+
+.diff-node { padding: 3px 10px; font-size: 12px; }
+.diff-node.dir { color: var(--muted); }
+.diff-file {
+  display: flex; align-items: baseline; gap: 6px; width: 100%;
+  border: 0; background: transparent; text-align: left; cursor: pointer;
+  padding: 3px 10px; font-size: 12px; color: var(--text); font-family: var(--mono);
+}
+.diff-file:hover { background: var(--panel-2); }
+.diff-file.active { background: var(--panel-2); color: var(--accent); }
+.diff-file .f-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-file .f-add { color: var(--ready); }
+.diff-file .f-del { color: var(--danger); }
+.diff-file .f-tag {
+  color: var(--muted); font-size: 10px; border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 3px;
+}
+.diff-empty { color: var(--muted); font-size: 12px; padding: 16px; }
+
+/* As wide as the longest line, but never narrower than the pane — so the row
+   backgrounds (add/del) and the hunk header keep covering the full line when
+   the pane is scrolled sideways. */
+.diff-doc { width: max-content; min-width: 100%; }
+
+.diff-hunk {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--muted); background: var(--panel);
+  padding: 4px 0; border-top: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+}
+/* Keeps the "@@ …" caption at the left edge instead of scrolling out of sight. */
+.diff-hunk > span { display: inline-block; position: sticky; left: 0; padding: 0 10px; }
+.diff-line {
+  --row-tint: transparent;
+  display: flex; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  white-space: pre; color: var(--text);
+}
+/* The gutter stays pinned while the code scrolls under it, so it needs an opaque
+   base (the modal's own colour) plus this row's tint on top of it. */
+.diff-line .ln {
+  flex: none; width: 44px; text-align: right; padding-right: 8px;
+  color: var(--muted); user-select: none;
+  position: sticky; left: 0;
+  background: linear-gradient(var(--row-tint), var(--row-tint)), var(--panel-2);
+}
+.diff-line .tx { flex: none; padding-right: 10px; }
+.diff-line.add { --row-tint: color-mix(in srgb, var(--ready) 14%, transparent); background: var(--row-tint); }
+.diff-line.del { --row-tint: color-mix(in srgb, var(--danger) 14%, transparent); background: var(--row-tint); }
+.diff-line.meta { color: var(--muted); font-style: italic; }
+.diff-more {
+  color: var(--muted); font-size: 11px; padding: 10px;
+  border-top: 1px solid var(--border);
+}
+.diff-open {
+  border: 1px solid var(--border); background: transparent; color: var(--text);
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer; margin-left: 8px;
+}
+.diff-open:hover { border-color: var(--accent); color: var(--accent); }
+
+/* --- settings: appearance tab -------------------------------------------- */
+/* Плитки тем (.theme-grid/.theme-swatch/.theme-pal) убраны вместе с сеткой: пять
+   полосок из палитры не отвечали на единственный вопрос — что каким цветом будет.
+   Тема выбирается селектом, а видно её в предпросмотре ниже. */
+
+.set-stepper { display: flex; align-items: center; gap: 12px; }
+
+/* Предпросмотр карточек в настройках. Id-специфичность здесь нужна, чтобы
+   перебить .layout-top .tab: превью само носит класс layout-top, но карточки в
+   нём должны делить ширину поровну, а не жить по --tab-min-w/--tab-max-w. */
+.tab-preview {
+  display: flex;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  /* чуть больше сверху/справа — угловой крестик карточки вылезает за её край */
+  padding: 12px;
+  overflow-x: auto;
+}
+/* rail-раскладка в превью — вертикальный стек, как реальный сайдбар */
+.tab-preview.layout-rail { flex-direction: column; align-items: stretch; }
+/* Ширину/высоту карточек в превью больше НЕ переопределяем — они ведут себя
+   1:1 с боем (жёсткая ширина в top, растяжка по колонке в rail). Крестик
+   появляется на hover, как в приложении. */
+#set-tab-preview .tab { cursor: default; }
+
+.color-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.color-cell { display: inline-flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.color-cell input[type="color"] {
+  width: 38px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.step-btn {
+  width: 29px; height: 29px; border: 1px solid var(--border); border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 55%, var(--panel)); color: var(--text); font-size: 16px; line-height: 1;
+  cursor: pointer;
+}
+.step-btn:hover { border-color: var(--accent); color: var(--accent); }
+.step-val { min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+
+/* Предпросмотр терминала — несколько строк, а не полоска: он показывает роли цветов
+   (путь, ветка, успех, предупреждение, ошибка, курсор), и в одну строку они не влезают. */
+.term-preview {
+  padding: 11px 13px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg);
+  font-family: var(--mono); font-size: 12px; line-height: 1.65;
+  white-space: pre; overflow-x: auto;
+}
+.term-preview .prev-cur { font-weight: 700; }
+
+/* --- error indicator ("!") + logs modal ---------------------------------- */
+.log-indicator {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--danger); color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-radius: 6px; padding: 2px 7px; margin-right: 4px;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.log-indicator[hidden] { display: none; }
+.log-indicator:hover { background: color-mix(in srgb, var(--danger) 26%, transparent); }
+/* Всё прочитано: лог никуда не делся, но и внимания больше не требует. */
+.log-indicator.quiet {
+  border-color: var(--border); color: var(--muted); background: transparent; font-weight: 600;
+}
+.log-indicator.quiet:hover { background: color-mix(in srgb, var(--muted) 14%, transparent); }
+
+.modal.logs { width: min(680px, 94vw); }
+.logs-body {
+  max-height: 52vh; overflow-y: auto; margin-bottom: 16px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.logs-empty { padding: 16px; color: var(--muted); font-size: 13px; }
+.logs-row { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.logs-row:last-child { border-bottom: none; }
+.logs-meta { display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.logs-row.level-error .logs-meta { color: var(--danger); }
+.logs-msg {
+  font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.modal.logs .logs-copy { border-color: var(--accent); color: var(--accent); }
+
+
+/* --- «ночной режим» pill -------------------------------------------------- */
+/* Выключенный режим — обычная кнопка бара (тихая, как «команды» и «настройки»), включённый
+   светится жёлтым: это не украшение, а единственный признак, что итоги всех вкладок сейчас
+   уезжают в телегу. Снимается только руками, поэтому и должен бросаться в глаза. */
+/* «Где я сейчас» — иконка в строке состояния, выбор в списке по клику. */
+.presence-pill {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; color: var(--muted);
+  background: transparent;
+  border-radius: 6px; padding: 3px 6px; margin-right: 4px;
+  cursor: pointer;
+}
+.presence-pill[hidden] { display: none; }
+.presence-pill:hover { color: var(--text); background: var(--panel-2); }
+.presence-pill.is-on {
+  border-color: var(--permission); color: var(--permission);
+  background: color-mix(in srgb, var(--permission) 14%, transparent);
+}
+.presence-pill.is-on:hover { background: color-mix(in srgb, var(--permission) 26%, transparent); }
+.presence-pill svg { width: 13px; height: 13px; display: block; }
+
+/* «Я за телефоном» — красим ВСЮ нижнюю панель, а не только иконку. Возвращаясь за
+   стол, человек не разглядывает значки: он должен увидеть, что приложение ещё считает
+   его ушедшим (и потому пишет в телегу и не даёт маку спать), одним взглядом на окно.
+   Класс вешает renderPresencePill; цвет тот же янтарный, что у иконки, чтобы взгляд
+   вёл от панели к ней — именно ею положение и переключают обратно. */
+body.presence-phone #statusbar {
+  background: color-mix(in srgb, var(--permission) 16%, var(--panel));
+  border-top-color: color-mix(in srgb, var(--permission) 55%, var(--border));
+  color: color-mix(in srgb, var(--permission) 45%, var(--muted));
+}
+/* На крашеной панели прозрачная иконка сливается с фоном — под ней нужна своя
+   подложка, иначе подсветка «где я» пропадает ровно там, где она и нужна. */
+body.presence-phone .presence-pill.is-on {
+  background: color-mix(in srgb, var(--permission) 22%, var(--panel));
+  border-color: var(--permission);
+}
+
+/* «Ночь» — та же схема, что у телефона, но ГРОМЧЕ: 20% против 16%. Смысл цвета не в том,
+   чтобы что-то показать ночью — ночью никто не смотрит. Он нужен утром: человек садится за
+   стол, а вкладки всё ещё решают за него молча. Ночь снимается руками, значит «забыл снять» —
+   самый вероятный промах.
+   Класс вешает не «где я», а счёт вкладок: ночь — это когда отданы ВСЕ (см. renderNightPill). */
+body.night-all #statusbar {
+  background: color-mix(in srgb, var(--night) 20%, var(--panel));
+  border-top-color: color-mix(in srgb, var(--night) 60%, var(--border));
+  color: color-mix(in srgb, var(--night) 45%, var(--muted));
+}
+body.night-all .night-pill {
+  background: color-mix(in srgb, var(--night) 24%, var(--panel));
+  border-color: var(--night);
+}
+
+/* Значок мандата: сколько вкладок работает без человека и не забыт ли включённый ночной режим.
+   Вид как у значка обновления (тот же размер и место), цвет — ночной. */
+/* Луна — ЗНАЧОК, а не плашка с подписью. Подпись («3 вкладки в ночном») висела в панели
+   постоянно и была размером с кнопку: отвечала на вопрос, который человек задаёт раз в час, и
+   занимала место всё остальное время. Число теперь в подсказке и в пунктах списка. */
+.night-pill {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; color: var(--muted);
+  background: transparent;
+  border-radius: 6px; padding: 3px; margin-right: 2px;
+  cursor: pointer;
+}
+.night-pill[hidden] { display: none; }
+.night-pill .ic { display: inline-flex; }
+.night-pill .ic svg { width: 14px; height: 14px; }
+.night-pill:hover { color: var(--night); background: color-mix(in srgb, var(--night) 14%, transparent); }
+/* Отдана хоть одна — луна горит ночным. Отданы все — ещё и подложка: панель в этот момент и
+   так синяя, но значок остаётся понятным, если смотреть на угол. */
+.night-pill:not(.is-quiet) { color: var(--night); }
+.night-pill.is-all {
+  border-color: color-mix(in srgb, var(--night) 55%, var(--border));
+  background: color-mix(in srgb, var(--night) 22%, transparent);
+}
+/* Печатают, а ночь не снята — самый вероятный промах. Значок в этот момент обведён ярко:
+   панель крашеная, но за клавиатурой человек смотрит в терминал, а не на её край. */
+.night-pill.is-nag { border-color: var(--night); background: color-mix(in srgb, var(--night) 34%, transparent); }
+
+/* Список у луны шире общего: его пункты называют режим по имени («включить ночной режим у
+   всех вкладок»), и в 340px такая строка ломается пополам ровно посередине названия. */
+#night-menu { min-width: 22rem; max-width: 24rem; }
+
+/* Пункт списка: иконка, название, пояснение под ними. */
+.presence-item { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; align-items: center; }
+.presence-item .ic { display: inline-flex; color: var(--muted); }
+.presence-item .ic svg { width: 13px; height: 13px; }
+.presence-item .cmd-hint { grid-column: 2; margin: 0; color: var(--muted); font-size: 11px; }
+.presence-item.is-now .cmd-name::after { content: ' ✓'; }
+.presence-item.is-now .ic { color: var(--permission); }
+.presence-item:disabled { cursor: default; opacity: .55; }
+.presence-item:disabled:hover { background: transparent; }
+
+/* --- расход подписки в нижней панели -------------------------------------------
+   Пилюля на подписку: одно число — то окно, что ближе к концу. Тихая до 75%, янтарная
+   рамка от 75%, красная от 90% — те же пороги, что у ворот на подагентов, чтобы панель
+   и хук не спорили. Цвет не единственный признак: рядом всегда стоит само число, а время
+   до сброса вылезает текстом, когда окно поджало. */
+.usage-pills { display: inline-flex; align-items: center; gap: 2px; margin-right: 2px; }
+.usage-pills[hidden] { display: none; }
+.geo-flag { -webkit-app-region: no-drag; flex: none; font-size: 13px; line-height: 1; margin-right: 4px; cursor: default; }
+.geo-flag[hidden] { display: none; }
+.usage-pill .u-flag { font-size: 12px; line-height: 1; margin-right: 4px; }
+.usage-pill {
+  -webkit-app-region: no-drag; flex: none; white-space: nowrap; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  border-radius: 6px; padding: 2px 7px;
+  font-family: var(--mono); font-size: 11px;
+}
+.usage-pill:hover { color: var(--text); background: var(--panel-2); }
+.usage-pill .u-alias { opacity: .75; }
+.usage-pill .u-sep { opacity: .45; }
+.usage-pill .u-lab { opacity: .6; }
+.usage-pill .u-num { font-variant-numeric: tabular-nums; }
+.usage-pill .u-num.tight, .usage-pill .u-eta.tight { color: var(--permission); }
+.usage-pill .u-num.crit, .usage-pill .u-eta.crit { color: var(--danger); }
+.usage-pill .u-eta { opacity: .85; display: inline-flex; align-items: center; gap: 3px; }
+.usage-pill .u-eta svg { width: 10px; height: 10px; }
+.usage-pill .u-ic { display: inline-flex; opacity: .7; }
+.usage-pill .u-ic svg { width: 12px; height: 12px; }
+.usage-pill.is-tight {
+  border-color: color-mix(in srgb, var(--permission) 45%, var(--border));
+  background: color-mix(in srgb, var(--permission) 12%, transparent);
+}
+.usage-pill.is-crit {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+/* Окно, которое уже должно было сброситься, а свежего снимка так и не пришло (см. subs.js
+   windowRow().stale) — число заведомо неверное, поэтому вместо него «—», приглушённая. */
+.usage-pill .u-num.stale, .usage-pill .u-lab.stale { opacity: .55; }
+/* Разделитель справа от каждой подписки, последней тоже (не между окнами одной — там u-sep). Отдельный
+   элемент, а не border на .usage-pill: у пилюли border-radius, и одиночная граница на
+   скруглённом углу визуально гнётся. */
+.u-divider { width: 1px; align-self: stretch; background: var(--border); flex: none; margin: 0 3px; }
+
+/* Список по клику — РАССКАЗ, а не пульт: ни галочек, ни настроек. Строка на окно: сколько
+   израсходовано и когда обновится, часами (в панели стоит отсчёт, здесь — время на стене). */
+#subs-menu { min-width: 21rem; max-width: 26rem; }
+#subs-menu .u-row { padding: 7px 11px 9px; }
+#subs-menu .u-row + .u-row { border-top: 1px solid var(--border); }
+#subs-menu .u-who {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text); margin-bottom: 4px;
+}
+#subs-menu .u-off { color: var(--muted); font-family: var(--ui); font-size: 10.5px; opacity: .8; }
+#subs-menu .u-win {
+  display: grid; grid-template-columns: 4.5rem 2.6rem 1fr; gap: 8px; align-items: baseline;
+  font-size: 11.5px; color: var(--muted); padding: 1px 0;
+}
+#subs-menu .u-win .u-lab { font-family: var(--mono); font-size: 11px; opacity: .75; }
+#subs-menu .u-win .u-num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+#subs-menu .u-win .u-num.tight { color: var(--permission); }
+#subs-menu .u-win .u-num.crit { color: var(--danger); }
+#subs-menu .u-win .u-num.stale { color: var(--muted); }
+#subs-menu .u-when { color: var(--muted); font-size: 11.5px; }
+
+/* --- страница «Подписки» -------------------------------------------------------
+   Карточка на подписку: строка запуска, имя, галка про панель. Живых чисел на самой карточке
+   нет — настройка не сводка. Форма панели видна в общем предпросмотре ниже списка карточек:
+   настоящими числами, если уже пришли, иначе условными (пунктирная рамка, .is-demo). */
+.subs-list { display: flex; flex-direction: column; gap: 10px; }
+.sub-row {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel));
+}
+.sub-row .sub-main { display: flex; align-items: center; gap: 8px; }
+.sub-row .sub-line { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.sub-row .sub-name { width: 9rem; flex: none; }
+.sub-row .sub-main .agent-del { flex: none; }
+.sub-row .sub-bar-row { margin-top: 8px; }
+/* Форма прокси под галочкой «использовать прокси»: подписи слева, поля справа. Отступ слева —
+   под текст галочки, чтобы форма читалась как её продолжение, а не как новый блок карточки. */
+.sub-row .sub-proxy {
+  margin: 8px 0 0 26px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center;
+}
+.sub-row .sub-proxy[hidden] { display: none; }
+.sub-row .sub-proxy-k { color: var(--muted); font-size: 12px; }
+.sub-row .sub-proxy-type { width: 9rem; }
+.sub-row .sub-proxy-hp { display: flex; gap: 8px; }
+.sub-row .sub-proxy-host { flex: 1; min-width: 0; }
+.sub-row .sub-proxy-port { width: 6rem; flex: none; }
+.sub-row .sub-proxy-note { grid-column: 1 / -1; font-size: 11px; color: var(--danger); }
+.sub-row .sub-proxy-note[hidden] { display: none; }
+.sub-row .sub-proxy-all-row { grid-column: 1 / -1; margin-top: 2px; }
+.sub-row .sub-proxy-all-row[hidden] { display: none; }
+.sub-row .sub-proxy-hint { grid-column: 1 / -1; margin: -4px 0 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.sub-row .sub-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.sub-row .sub-note[hidden] { display: none; }
+.subs-preview {
+  display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+  min-height: 30px; padding: 6px 8px; margin: 6px 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+}
+.subs-preview .subs-empty { color: var(--muted); font-size: 11.5px; margin-right: auto; }
+/* Пилюли здесь не кликаются — это форма, а не панель, поэтому курсор и подсветка при наведении
+   были бы враньём про интерактивность. */
+.subs-preview .usage-pill { cursor: default; }
+.subs-preview .usage-pill:hover { color: var(--muted); background: transparent; }
+/* Условные цифры (ещё не пришёл ни один настоящий ответ агента) — пунктир вместо сплошной
+   рамки и приглушённые числа, чтобы не путать с настоящим расходом. */
+.subs-preview .usage-pill.is-demo { border-style: dashed; opacity: .8; }
+
+/* Подсказка под именем подписки в окне выбора агента: имя крупно, строка запуска тускло. */
+.pick-item .pick-sub { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+/* --- update pill + modal ------------------------------------------------- */
+.update-pill {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 6px; padding: 2px 8px; margin-right: 4px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  /* Не сжимаемся и не переносимся: в узком окне уступать должен git-msg — у него на это
+     есть многоточие, а у пилюли текст обрезало бы посередине слова. Замерено стендом: без
+     этого в окне 420px «↻ 0.40.0 — при перезапуске» теряла 53px из 178. */
+  flex: none; white-space: nowrap;
+}
+.update-pill[hidden] { display: none; }
+.update-pill:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+
+.modal.update { width: min(460px, 92vw); }
+.modal.update .upd-notes { white-space: pre-wrap; }
+.upd-progress { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-bottom: 16px; }
+.upd-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s ease; }
+
+.set-check-btn {
+  -webkit-app-region: no-drag; cursor: pointer;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 45%, var(--panel)); color: var(--text);
+  border-radius: 8px; padding: 7px 13px; font-size: 12.5px;
+}
+.set-check-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* Кнопка-действие внутри поля или группы: сама по себе, а не в ряду с вводом. Ширину
+   не тянет — и поле, и группа теперь flex-колонки, и без этого кнопка растягивалась бы
+   во всю карточку. */
+.set-field > .set-check-btn,
+.set-group > .set-check-btn { align-self: flex-start; }
+.set-check-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* Без margin-top: кнопка стоит в .tg-row (display:flex; align-items:center), а там
+   верхнее поле не отодвигает соседей, а сдвигает саму кнопку вниз на половину — она
+   центрируется в пространстве ЗА ВЫЧЕТОМ своих полей. Отступ остался от времён, когда
+   кнопка стояла на отдельной строке, и превратился в перекос на 5px. */
+.upd-go-btn { border-color: var(--accent); color: var(--accent); }
+
+/* --- Телеграм: токен, привязка чата --------------------------------------- */
+.tg-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.tg-row .set-input { flex: 1; min-width: 0; }
+.tg-row .set-check-btn { flex: none; }
+.tg-state { margin-top: 7px; font-size: 12px; color: var(--muted); }
+.tg-state.is-good { color: var(--ready); }
+.tg-state.is-bad  { color: var(--danger); }
+/* QR + подписи рядом: код читается глазом, ссылка — клик с этого же мака. */
+.tg-pair { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+.tg-qr {
+  flex: none; width: 148px; height: 148px; border-radius: 6px;
+  background: #fff; padding: 6px;      /* сканеру нужен светлый фон и поля */
+  image-rendering: pixelated;          /* GIF из main — не мылить при масштабе */
+}
+.tg-pair-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tg-code {
+  font-family: var(--mono); font-size: 20px; letter-spacing: 2px; color: var(--text);
+  user-select: all;                    /* один клик — и код выделен целиком */
+}
+.tg-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+.tg-link:hover { text-decoration: underline; }
+
+/* Мастер настройки: три шага, у каждого свой знак состояния. Смысл рамок — показать,
+   что шагов конечное число и они идут по порядку: раньше это была сплошная стена текста,
+   в которой не видно, где ты сейчас и сколько осталось. */
+.tg-step {
+  background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 13px 16px 15px;
+}
+.tg-step-head { display: flex; align-items: center; gap: 8px; }
+.tg-step-n {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--border); color: var(--text); font-size: 11px; font-weight: 600;
+}
+.tg-step-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.tg-step-mark { margin-left: auto; font-size: 13px; color: var(--muted); }
+.tg-step-mark.is-good { color: var(--ready); }
+.tg-step-mark.is-bad  { color: var(--danger); }
+.tg-step-body { margin-top: 8px; }
+
+/* Список требований к группе. Все пункты сразу, а не первая же беда: чинить их удобнее
+   пачкой, не бегая между Телеграмом и кнопкой «проверить». */
+.tg-checks { list-style: none; margin: 9px 0 0; padding: 0; }
+.tg-check {
+  display: flex; gap: 7px; align-items: baseline;
+  font-size: 12px; color: var(--muted); padding: 1px 0;
+}
+.tg-check-mark { flex: none; width: 12px; text-align: center; }
+.tg-check.is-good .tg-check-mark { color: var(--ready); }
+.tg-check.is-bad  { color: var(--text); }
+.tg-check.is-bad  .tg-check-mark { color: var(--danger); }
+.tg-check.is-warn .tg-check-mark { color: var(--waiting); }
+
+
+/* --- pult: queue strip over the stage ------------------------------------- */
+#pult-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+  height: 34px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+body.pult-on #pult-strip { display: flex; }
+/* Push the terminal below the strip. Keeps the 6px inset of .term-holder. */
+body.pult-on .term-holder { inset: 40px 6px 6px; }
+/* Nobody waiting: hide the terminal, show the note. Beats .term-holder.active
+   on specificity, so no !important. */
+body.pult-on.pult-empty .term-holder.active { display: none; }
+
+#pult-empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+body.pult-on.pult-empty #pult-empty { display: flex; }
+/* Вкладок нет вовсе — и тогда записок было ДВЕ, ровно одна поверх другой: обе висят в
+   #stage по inset:0 и обе центрированы, так что «Никто не ждёт ответа» ложилось прямо на
+   подсказку пустой сцены. Убираем пультовую: без единой вкладки она не сообщает ничего —
+   ждать некому по определению, — а подсказка сцены говорит, что делать дальше. */
+body.pult-on.pult-empty.no-sessions #pult-empty { display: none; }
+
+.pult-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pult-chip:hover { border-color: var(--accent); }
+.pult-chip.picked { border-color: var(--accent); background: var(--panel); }
+.pult-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--waiting); flex: none; }
+.pult-chip .pult-name { font-weight: 600; }
+.pult-chip .pult-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* WHY it's calling: разрешение (amber) vs вопрос (teal). Small, before the timer. */
+.pult-chip .pult-kind {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: #101418;
+  background: var(--waiting);
+}
+.pult-chip.kind-permission .pult-kind { background: var(--permission); }
+.pult-chip.kind-permission .dot { background: var(--permission); }
+
+/* --- pult: auto-handoff cue ------------------------------------------------
+   Only when the queue advances BY ITSELF (you answered, the next agent took the
+   terminal). Manual picks — a chip, the Пульт tab, ⌘0, ⌘1–9 — stay instant and
+   silent: you already know where you're going. One colour drives all three
+   pieces (plaque, ring, chip pulse); amber for a permission prompt. */
+body.pult-handoff { --handoff-c: var(--waiting); }
+body.pult-handoff.handoff-permission { --handoff-c: var(--permission); }
+
+#pult-flash {
+  position: absolute;
+  top: 48px;                 /* clears the 34px strip + the holder's 6px inset */
+  left: 50%;
+  z-index: 4;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 18px;
+  border: 1px solid var(--handoff-c);
+  border-radius: 10px;
+  /* Opaque: it lands on top of live terminal text, and a see-through plaque
+     turns both into noise. */
+  background: var(--panel);
+  box-shadow: 0 10px 30px -8px #000;
+  text-align: center;
+  /* Answer the new agent straight away — the plaque must not eat that click or
+     keystroke while it fades. */
+  pointer-events: none;
+}
+body.pult-handoff #pult-flash {
+  display: flex;
+  animation: pult-flash 1200ms ease-out forwards;
+}
+.pf-head { display: flex; align-items: baseline; gap: 8px; }
+.pf-arrow { color: var(--handoff-c); font-size: 15px; }
+.pf-name { font-size: 17px; font-weight: 700; color: var(--text); }
+.pf-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pf-kind {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: #101418;
+  background: var(--handoff-c);
+}
+@keyframes pult-flash {
+  0%   { opacity: 0; transform: translate(-50%, -10px); }
+  10%  { opacity: 1; transform: translate(-50%, 0); }
+  70%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -6px); }
+}
+
+/* Ring around the terminal that just took over. Sits in the 6px stage gutter,
+   so it costs the grid nothing — no refit. */
+body.pult-handoff .term-holder.active { animation: pult-handoff-ring 1200ms ease-out forwards; }
+@keyframes pult-handoff-ring {
+  0%   { box-shadow: 0 0 0 2px var(--handoff-c), 0 0 24px -4px var(--handoff-c); }
+  70%  { box-shadow: 0 0 0 2px var(--handoff-c), 0 0 24px -4px var(--handoff-c); }
+  100% { box-shadow: 0 0 0 2px transparent, 0 0 24px -4px transparent; }
+}
+
+/* Ties the plaque back to its place in the queue. */
+.pult-chip.handoff { --handoff-c: var(--waiting); animation: pult-chip-pulse 1200ms ease-out forwards; }
+.pult-chip.handoff.kind-permission { --handoff-c: var(--permission); }
+@keyframes pult-chip-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--handoff-c) 60%, transparent); }
+  100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* Pinned first in #tabs, above every folder group. Not a .tab — that class is a
+   grid with dot/label/ctx/sub slots this doesn't have. */
+.pult-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  /* No own margin: spacing comes from #tabs' gap, and in the top layout an extra
+     bottom margin left the Пульт box short of the stretched folder cards. */
+  /* Отступы и кегль — по тем же переменным, что у карточек, а не своими числами.
+     Плитка лежит в #tabs рядом с ними, а у ряда align-items:stretch — значит высоту
+     ряда задаёт САМЫЙ ВЫСОКИЙ элемент, и карточки растягиваются под него. Пока здесь
+     стояли 7px и 12px, «компактная» плотность не давала ничего: карточки хотели 36px,
+     плитка требовала 45px, и ряд выходил ровно как в «обычной» — человек выбирал
+     компактность и не видел разницы. */
+  padding: var(--tab-pad-y) var(--tab-pad-x);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--tile);
+  color: var(--text);
+  font-size: var(--tab-label-size);
+  font-weight: 500;
+  cursor: pointer;
+}
+.pult-tab:hover { border-color: var(--accent); }
+.pult-tab.active { border-color: var(--accent); }
+.pult-tab .pult-count {
+  margin-left: auto;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--waiting);
+  color: #101418;
+  /* Кегль второй строки карточки — по той же причине, что и gap выше: высота плитки
+     должна совпадать с высотой карточки во всех плотностях, а не только в «обычной». */
+  font-size: var(--tab-sub-size);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.pult-tab .pult-count[hidden] { display: none; }
+/* В раскладке «табы сверху» каунтер уходит под слово «Пульт», а его место
+   зарезервировано всегда (visibility вместо display) — появление счётчика не
+   раздвигает вкладку. В rail остаётся строкой со счётчиком справа. */
+.layout-top .pult-tab {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  /* Ровно как у карточки между именем и статусом (.tab .body), и это не косметика:
+     плитка обязана быть той же высоты, что карточки, иначе ряд встаёт по ней. С 3px
+     она была на 3px выше и продолжала бы задавать высоту даже с общими отступами. */
+  gap: 1px;
+}
+/* Под словом каунтер выравнивается по центру вкладки, а не по её левому краю. */
+.layout-top .pult-tab .pult-count { margin-left: 0; align-self: center; }
+.layout-top .pult-tab .pult-count[hidden] { display: block; visibility: hidden; }
+.upd-status { margin-top: 8px; }
+
+/* Hover hint over a terminal link: "⌘/Ctrl+клик — открыть ссылку". Positioned in
+   JS where the cursor enters the link, anchored bottom-left so it sits above. */
+.link-tip {
+  position: fixed;
+  z-index: 200;
+  transform: translateY(-100%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 90ms ease;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+.link-tip.show { opacity: 1; }
+
+/* --- дайджест вкладки: полоска над терминалом ------------------------------
+   Пара строк, которые агент сам пишет о том, чем занят (см. digestNote в
+   hooks/swarm-signal.mjs) — видно, только открыв вкладку, а не листая список.
+   Ровно ДВЕ строки (line-clamp, см. .digest-text), а не одна с многоточием, —
+   «пара строк» и задумывалась как две. Высота теперь по содержимому (было
+   30px под одну строку), поэтому все сдвиги ниже (.term-holder.digested,
+   body.has-digest #gate-strip и их pult-варианты) меряются заново стендом,
+   а не копируются с высоты гейта, как было для однострочной версии. */
+#digest-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 16px 8px;
+  background: var(--term-bg, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--muted);
+}
+#digest-strip[hidden] { display: none; }
+.digest-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+}
+body.pult-on #digest-strip { top: 34px; }
+/* --- граница владения: плашка над отданной вкладкой ------------------------
+   Вкладку, отданную агенту, человек не печатает, и узнать об этом он должен ДО того, как
+   наберёт фразу. Раньше здесь была модалка — она всплывала на каждое движение мыши (доклады
+   мыши приходят тем же путём, что печать) и держала весь сворм, пока её не закроешь. Плашка
+   говорит то же самое, но ничего не отнимает: читать, листать и уходить на другие вкладки
+   можно как обычно. Место то же, что у пультовой полосы, и цвет тот же, что у карточки. */
+#gate-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  background: color-mix(in srgb, var(--night) 16%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--night) 60%, var(--border));
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--text) 78%, var(--night));
+}
+#gate-strip[hidden] { display: none; }
+/* Под пультовой полосой, а не поверх неё: в пульте видна та же чужая вкладка. */
+body.pult-on #gate-strip { top: 34px; }
+.gate-moon { display: flex; flex: none; color: var(--night); }
+.gate-moon svg { width: 13px; height: 13px; }
+/* Уступает кнопке: в узком окне сжимается текст, а не то, чем эту вкладку забирают. */
+.gate-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-take {
+  flex: none;
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--night);
+  background: color-mix(in srgb, var(--night) 18%, transparent);
+  color: color-mix(in srgb, var(--night) 45%, var(--text));
+}
+.gate-take:hover { background: color-mix(in srgb, var(--night) 34%, transparent); }
+/* Заморозка по региону — та же плашка, но не ночная: забирать нечего, кнопки и луны нет. */
+#gate-strip.is-geo {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
+  border-bottom-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: color-mix(in srgb, var(--text) 82%, var(--danger));
+}
+#gate-strip.is-geo .gate-moon { display: none; }
+#gate-strip.is-geo .gate-take[hidden] { display: none; }
+/* Попробовали напечатать в чужую вкладку: нажатие не ушло никуда, и сказать об этом надо
+   заметно — но без окна поперёк экрана. Плашка сама и есть ответ, ей только прибавляется
+   света и один короткий толчок. */
+#gate-strip.is-blocked {
+  background: color-mix(in srgb, var(--night) 34%, var(--panel));
+  border-bottom-color: var(--night);
+  color: var(--text);
+  animation: gate-blocked 200ms ease-out 2;
+}
+@keyframes gate-blocked {
+  0%, 100% { transform: none; }
+  50%      { transform: translateY(1px); }
+}
+/* Терминал уезжает вниз на высоту плашки и притухает: «эта вкладка не моя» читается раньше,
+   чем прочитан текст. Притухает НЕ настолько, чтобы мешать читать: за отданной вкладкой
+   следят глазами, ради этого её и открывают. */
+.term-holder.gated {
+  top: 42px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--night) 40%, transparent);
+}
+body.pult-on .term-holder.gated { top: 76px; }
+.term-holder.gated .xterm { opacity: 0.62; }
+/* Дайджест — одна или две строки (line-clamp в #digest-strip), высота живая, а не
+   фиксированная. --digest-h ставит renderDigestStrip() в renderer.js по РЕАЛЬНОЙ высоте
+   полоски после каждой смены текста; 58px здесь — только запасное значение на случай, если
+   переменная ещё не пришла (первая отрисовка). Раньше здесь стояло голое число, снятое
+   стендом под двухстрочный текст, — короткий однострочный дайджест кончался раньше, чем
+   «начиналась» зарезервированная под него высота, и до плашки/терминала оставался зазор.
+   Комбинация (.digested.gated) сильнее любого из двух правил по специфичности (три
+   класса против двух), порядок здесь не имеет значения. */
+.term-holder.digested { top: var(--digest-h, 58px); }
+body.pult-on .term-holder.digested { top: calc(34px + var(--digest-h, 58px)); }
+.term-holder.digested.gated { top: calc(var(--digest-h, 58px) + 42px); }
+body.pult-on .term-holder.digested.gated { top: calc(34px + var(--digest-h, 58px) + 42px); }
+/* Дайджест — первая полоска, гейт под ней: про смысл вкладки говорим раньше, чем про
+   право печатать. */
+body.has-digest #gate-strip { top: var(--digest-h, 58px); }
+body.has-digest.pult-on #gate-strip { top: calc(34px + var(--digest-h, 58px)); }
+
+/* Регион: заглушка поверх всего окна, выше модалок — под ней ничего нажать нельзя. */
+
+/* --- ⌘F: поиск по вкладке ---------------------------------------------------
+   Плавающее поле в правом верхнем углу терминала, по которому ищет (координаты ставит
+   openFind). Под полем — найденные реплики разговора или строки терминала. */
+#find {
+  position: fixed;
+  z-index: 40;
+  width: min(460px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-size: 12px;
+}
+#find[hidden] { display: none; }
+.find-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; }
+.find-input {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 13px; padding: 3px 0;
+}
+.find-input::placeholder { color: var(--muted); }
+.find-count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.find-close {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.find-close:hover { color: var(--text); background: var(--panel-2); }
+.find-close svg { width: 12px; height: 12px; }
+.find-list { overflow-y: auto; min-height: 0; }
+.find-list:not(:empty) { border-top: 1px solid var(--border); }
+.find-item { padding: 7px 10px; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.find-item:last-child { border-bottom: none; }
+.find-item:hover { background: var(--panel-2); }
+.find-item.cur { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+.find-meta { display: flex; gap: 8px; margin-bottom: 3px; color: var(--muted); font-size: 11px; }
+.find-who { color: var(--text); }
+.find-who.is-me { color: var(--accent); }
+.find-snip {
+  color: var(--text); line-height: 1.4; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.find-item.cur .find-snip { display: none; }   /* развёрнута — отрывок дублировал бы начало */
+.find-full {
+  margin-top: 2px; max-height: 320px; overflow-y: auto;
+  color: var(--text); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; cursor: text;
+}
+#find mark { background: color-mix(in srgb, var(--permission) 40%, transparent); color: inherit; border-radius: 2px; }
+
 /* --- прошлые разговоры папки (openHistoryMenu) ----------------------------- */
 .history-menu { min-width: 300px; max-width: 420px; }
 .hist-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: none; }

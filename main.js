@@ -6378,12 +6378,14 @@ function digestTick(id, d) {
   try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return; }
   const text = digest.readText(raw, DIGEST_MAX_LEN);
   const title = digest.readTitle(raw);
-  if (text === (d.digestText || '') && title === (d.digestTitle || '')) return;
+  const summary = digest.readSummary(raw);
+  if (text === (d.digestText || '') && title === (d.digestTitle || '') && summary === (d.digestSummary || '')) return;
   d.digestText = text;
   d.digestTitle = title;
+  d.digestSummary = summary;
   // Имя едет вместе с текстом: применять его или нет, решает карточка — только она знает,
   // переименовал ли человек вкладку сам.
-  safeSend('session:digest', { id, text, title });
+  safeSend('session:digest', { id, text, title, summary });
   // Дайджест — единственное в реестре, что рассказывает соседям О ЗАДАЧЕ, а не о вкладке.
   writeTabsMap();
 }
@@ -8510,7 +8512,9 @@ ipcMain.handle('session:canResumeName', (_e, cwd, name) => {
 // дайджест окно кладёт поверх из своих записей (renderer.js, swarm.history): стенограмма их не
 // знает — в ней наш служебный swarm-ярлык, а не имя вкладки. Для разговоров без записи
 // (открытых до этой функции или в голом терминале) имя — начало первой просьбы человека.
-const HISTORY_MAX = 80;
+// Окно истории листается и ищется, так что потолок большой; он нужен только чтобы чтение голов
+// файлов не растянулось на секунды у того, кто копил разговоры годами.
+const HISTORY_MAX = 400;
 const HISTORY_HEAD_STEPS = [64 * 1024, 1024 * 1024, 4 * 1024 * 1024];
 
 // Та же ли это папка: слэши на конце не в счёт, на маке и в Windows регистр тоже, а симлинк
@@ -8535,11 +8539,26 @@ function readHead(file, bytes) {
   finally { if (fd != null) { try { fs.closeSync(fd); } catch (_) {} } }
 }
 
+// Пустой cwd — все папки: каталоги проектов во всех конфигах, папка разговора берётся из его же
+// записи (cwd внутри точен, слаг каталога — только догадка).
+function allProjectDirs() {
+  const dirs = [];
+  for (const root of configRoots()) {
+    const base = path.join(root, 'projects');
+    let names = [];
+    try { names = fs.readdirSync(base); } catch (_) { continue; }
+    for (const n of names) {
+      const dir = path.join(base, n);
+      try { if (fs.statSync(dir).isDirectory() && !dirs.includes(dir)) dirs.push(dir); } catch (_) {}
+    }
+  }
+  return dirs;
+}
+
 ipcMain.handle('history:scan', (_e, cwd) => {
-  if (!cwd) return [];
   const files = [];
   const seen = new Set();
-  for (const dir of projectDirs(cwd)) {
+  for (const dir of (cwd ? projectDirs(cwd) : allProjectDirs())) {
     let names;
     try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')); } catch (_) { continue; }
     for (const n of names) {
@@ -8562,7 +8581,9 @@ ipcMain.handle('history:scan', (_e, cwd) => {
       if (head || f.size <= bytes) break;
     }
     if (!head) continue;              // чужая папка или пустой разговор — возвращаться не к чему
-    out.push({ id: f.id, at: f.at, prompt: head.prompt, title: head.title });
+    const where = cwd || head.cwd;
+    if (!where || (!cwd && !fs.existsSync(where))) continue;   // папки больше нет — открыть нечего
+    out.push({ id: f.id, at: f.at, prompt: head.prompt, title: head.title, cwd: where });
   }
   return out;
 });

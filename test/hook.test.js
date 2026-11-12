@@ -796,6 +796,8 @@ test('свежей сессии сворм называет тот файл да
   assert.ok(!out.hookSpecificOutput.additionalContext.includes(digest.fileName(sid)),
     'резолвнутое имя в текст не попадает');
   assert.match(out.hookSpecificOutput.additionalContext, /дайджест вкладки/);
+  assert.match(out.hookSpecificOutput.additionalContext, /"summary"/, 'третье поле — саммари для истории');
+  assert.match(out.hookSpecificOutput.additionalContext, /до 280 знаков/);
 });
 
 test('выключенный дайджест молчит, включённый перезапуск + дайджест печатают обе строки', () => {

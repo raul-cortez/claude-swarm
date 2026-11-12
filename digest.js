@@ -57,6 +57,19 @@
     return t.slice(0, TITLE_MAX - 1).trimEnd() + '…';
   }
 
+  // Саммари вкладки — третье поле того же файла: {"summary": "…"}. Дайджест говорит, что идёт
+  // СЕЙЧАС, саммари — чем вкладка занималась вообще; по нему человек потом находит разговор в
+  // истории, не открывая его. Одно-два предложения, поэтому потолок жёсткий и не зависит от
+  // настройки длины дайджеста.
+  const SUMMARY_MAX = 280;
+  function readSummary(raw) {
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (_) { return ''; }
+    const t = String((parsed && parsed.summary) || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= SUMMARY_MAX) return t;
+    return t.slice(0, SUMMARY_MAX - 1).trimEnd() + '…';
+  }
+
   // Заготовка поля «Что писать в дайджест» (Settings → Запуск) — по той же схеме, что ночные
   // тексты в night.js: поле не пустое, в нём лежит редактируемый текст, и «своим» он считается
   // по отличию от этой строки, а не по факту правки. Отсюда же берёт умолчание renderer при
@@ -66,5 +79,5 @@
       + 'разработки. Если жду от тебя решения, скажи это отдельно.';
   }
 
-  return { fileName, readText, readTitle, TITLE_MAX, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
+  return { fileName, readText, readTitle, readSummary, SUMMARY_MAX, TITLE_MAX, DEFAULT_LEN, MIN_LEN, MAX_LEN, clampMaxLen, defaultNote };
 });

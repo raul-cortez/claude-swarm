@@ -4329,12 +4329,13 @@ function rememberHistory() {
       named: !!s.named,
       color: s.color || null,
       digest: s.digestText || (h[s.claudeSessionId] && h[s.claudeSessionId].digest) || '',
+      summary: s.summaryText || (h[s.claudeSessionId] && h[s.claudeSessionId].summary) || '',
       cmd: s.cmd || null,
       flags: s.flags != null ? s.flags : null,
     };
     const old = h[s.claudeSessionId];
     if (old && old.cwd === rec.cwd && old.name === rec.name && old.named === rec.named && (old.color || null) === rec.color
-      && old.digest === rec.digest && old.cmd === rec.cmd && old.flags === rec.flags) continue;
+      && old.digest === rec.digest && (old.summary || '') === rec.summary && old.cmd === rec.cmd && old.flags === rec.flags) continue;
     h[s.claudeSessionId] = { ...rec, at: Date.now() };
     changed = true;
   }
@@ -4347,86 +4348,133 @@ function rememberHistory() {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (_) {}
 }
 
-function historyWhen(ms) {
-  const d = new Date(ms);
-  const now = new Date();
-  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((day(now) - day(d)) / 86400000);
-  const hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  if (diff === 0) return 'сегодня ' + hm;
-  if (diff === 1) return 'вчера ' + hm;
-  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-}
+// Окно прошлых разговоров: поиск сверху, плоский список с датами, переключатель «эта папка / все папки».
+// Строки и поиск — renderer/historyview.js (там тест), здесь только DOM. Разговоры, уже
+// открытые во вкладках, в списке не показываются.
+const HISTORYVIEW = window.SWARM_HISTORYVIEW;
+let historyModalClose = null;
+async function openHistoryModal(cwd) {
+  if (historyModalClose) historyModalClose();
+  let scope = localStorage.getItem('swarm.historyScope') === 'all' ? 'all' : 'folder';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal history-modal" role="dialog" aria-label="Прошлые разговоры">
+      <div class="hm-head">
+        <span class="hm-title">Прошлые разговоры</span>
+        <button class="hm-x" type="button" title="Закрыть (Esc)"></button>
+      </div>
+      <input class="hm-search" type="text" placeholder="Поиск по названию, описанию, первой просьбе…" spellcheck="false">
+      <div class="hm-scope">
+        <button type="button" data-scope="folder"></button>
+        <button type="button" data-scope="all">Все папки</button>
+      </div>
+      <div class="hm-list"></div>
+      <div class="hm-foot"><span class="hm-count"></span><span class="hm-keys">↑↓ — выбрать · Enter — открыть · Esc — закрыть</span></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const $ = (sel) => overlay.querySelector(sel);
+  const searchEl = $('.hm-search');
+  const listEl = $('.hm-list');
+  $('.hm-x').innerHTML = ICONS.close;
+  $('[data-scope="folder"]').textContent = 'Эта папка · ' + basename(cwd);
+  const found = { folder: null, all: null };     // что отдал диск, по областям; null — ещё не грузили
+  let buttons = [];                               // видимые строки по порядку, для стрелок
+  let sel = -1;
 
-let historyMenuEl = null;
-let historyMenuClose = null;
-async function openHistoryMenu(anchor, cwd) {
-  if (historyMenuClose) {
-    const again = historyMenuEl && historyMenuEl.dataset.cwd === cwd && historyMenuEl.__anchor === anchor;
-    historyMenuClose();
-    if (again) return;                 // повторный клик по тем же часам — закрыть
-  }
-  if (!historyMenuEl) {
-    historyMenuEl = document.createElement('div');
-    historyMenuEl.className = 'cmd-menu history-menu hidden';
-    document.body.appendChild(historyMenuEl);
-  }
-  const menu = historyMenuEl;
-  menu.dataset.cwd = cwd;
-  menu.__anchor = anchor;
-  menu.innerHTML = '<div class="cmd-empty">Ищу разговоры…</div>';
-  // Клик по самой карточке-якорю меню закрывает (карточка при этом активируется); кнопку-якорь
-  // пропускаем: её собственный клик повторно зовёт openHistoryMenu, и тот закрывает сам.
-  const ownsClick = (ev) => anchor.contains(ev.target) && !anchor.classList.contains('tab');
-  const outside = (ev) => { if (!menu.contains(ev.target) && !ownsClick(ev)) close(); };
-  let closed = false;
-  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => {
-    closed = true;
-    menu.classList.add('hidden');
-    if (historyMenuClose === close) historyMenuClose = null;
-    document.removeEventListener('mousedown', outside);
     document.removeEventListener('keydown', onKey, true);
+    overlay.remove();
+    if (historyModalClose === close) historyModalClose = null;
   };
-  historyMenuClose = close;
-  menu.classList.remove('hidden');
-  placeMenuUnder(menu, anchor);
-  setTimeout(() => document.addEventListener('mousedown', outside), 0);
-  document.addEventListener('keydown', onKey, true);
+  historyModalClose = close;
 
-  let found = [];
-  try { found = await window.swarm.historyScan(cwd); } catch (_) { found = []; }
-  if (historyMenuClose !== close) return;   // пока искали, меню закрыли или открыли другое
-  const open = new Set([...sessions.values()].map((x) => x.claudeSessionId).filter(Boolean));
-  const recs = loadHistory();
-  const rows = found.filter((f) => !open.has(f.id));
-  menu.innerHTML = '';
-  const head = document.createElement('div');
-  head.className = 'cmd-sep';
-  head.textContent = 'Прошлые разговоры · ' + basename(cwd);
-  menu.appendChild(head);
-  if (!rows.length) {
-    const empty = document.createElement('div');
-    empty.className = 'cmd-empty';
-    empty.textContent = 'Других разговоров в этой папке нет. Claude хранит их 30 дней.';
-    menu.appendChild(empty);
-  }
-  for (const f of rows) {
-    const rec = recs[f.id] || null;
-    const name = (rec && rec.name) || f.title || f.prompt;
-    const about = (rec && rec.digest) || (name !== f.prompt ? f.prompt : '');
-    const b = document.createElement('button');
-    b.className = 'cmd-item hist-item' + (name === f.prompt ? ' hist-noname' : '');
-    b.innerHTML = '<span class="hist-top"><span class="hist-name"></span><span class="hist-when"></span></span><span class="hist-about"></span>';
-    b.querySelector('.hist-name').textContent = name;
-    b.querySelector('.hist-when').textContent = historyWhen(f.at);
-    b.querySelector('.hist-about').textContent = about;
-    b.querySelector('.hist-about').hidden = !about;
-    b.title = about || name;
-    b.addEventListener('click', () => { close(); resumeFromHistory(cwd, f, rec); });
-    menu.appendChild(b);
-  }
-  placeMenuUnder(menu, anchor);
+  const mark = (i, scroll) => {
+    if (buttons[sel]) buttons[sel].classList.remove('sel');
+    sel = buttons.length ? Math.max(0, Math.min(buttons.length - 1, i)) : -1;
+    if (buttons[sel]) {
+      buttons[sel].classList.add('sel');
+      if (scroll) buttons[sel].scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  const render = () => {
+    for (const b of overlay.querySelectorAll('[data-scope]')) b.classList.toggle('on', b.dataset.scope === scope);
+    listEl.textContent = '';
+    buttons = [];
+    const list = found[scope];
+    const count = $('.hm-count');
+    const note = (text) => {
+      const d = document.createElement('div');
+      d.className = 'hm-note';
+      d.textContent = text;
+      listEl.appendChild(d);
+    };
+    if (!list) { count.textContent = ''; note('Ищу разговоры…'); return; }
+    const open = new Set([...sessions.values()].map((x) => x.claudeSessionId).filter(Boolean));
+    const recs = loadHistory();
+    const all = list.filter((f) => !open.has(f.id)).map((f) => HISTORYVIEW.row(f, recs[f.id])).sort((a, b) => b.at - a.at);
+    const rows = HISTORYVIEW.filter(all, searchEl.value);
+    count.textContent = searchEl.value.trim() && all.length !== rows.length
+      ? `Найдено ${rows.length} из ${all.length}`
+      : `${all.length} ${plural(all.length, 'разговор', 'разговора', 'разговоров')}`;
+    if (!rows.length) {
+      note(all.length ? 'Ничего не нашлось.'
+        : scope === 'folder' ? 'В этой папке других разговоров нет. Claude хранит их 30 дней — попробуйте «Все папки».'
+          : 'Других разговоров нет. Claude хранит их 30 дней.');
+      return;
+    }
+    for (const r of rows) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'hm-item' + (r.noname ? ' noname' : '');
+      b.innerHTML = '<span class="hm-top"><span class="hm-name"></span><span class="hm-dir"></span><span class="hm-when"></span></span><span class="hm-about"></span>';
+      b.querySelector('.hm-name').textContent = r.name;
+      const dir = b.querySelector('.hm-dir');
+      dir.textContent = basename(r.cwd);
+      dir.hidden = scope !== 'all';
+      b.querySelector('.hm-when').textContent = HISTORYVIEW.when(r.at);
+      const about = b.querySelector('.hm-about');
+      about.textContent = r.about;
+      about.hidden = !r.about;
+      b.addEventListener('click', () => { close(); resumeFromHistory(r.cwd, r, recs[r.id] || null); });
+      b.addEventListener('mousemove', () => { const i = buttons.indexOf(b); if (i !== sel) mark(i, false); });
+      listEl.appendChild(b);
+      buttons.push(b);
+    }
+    sel = -1;
+    mark(0, false);
+  };
+
+  const load = async (want) => {
+    if (found[want]) return;
+    let list = [];
+    try { list = await window.swarm.historyScan(want === 'all' ? '' : cwd); } catch (_) { list = []; }
+    found[want] = Array.isArray(list) ? list : [];
+    if (historyModalClose === close && scope === want) render();
+  };
+  const setScope = (want) => {
+    scope = want;
+    localStorage.setItem('swarm.historyScope', want);
+    render();
+    load(want);
+  };
+
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); mark(sel + 1, true); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); mark(sel - 1, true); return; }
+    if (ev.key === 'Enter' && buttons[sel]) { ev.preventDefault(); buttons[sel].click(); }
+  };
+  document.addEventListener('keydown', onKey, true);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+  $('.hm-x').addEventListener('click', close);
+  for (const b of overlay.querySelectorAll('[data-scope]')) b.addEventListener('click', () => { setScope(b.dataset.scope); searchEl.focus(); });
+  searchEl.addEventListener('input', () => render());
+
+  render();
+  searchEl.focus();
+  load(scope);
 }
 
 // Открыть прошлый разговор новой вкладкой. Имя — то, что было у вкладки (или ничьё, если записи
@@ -4449,9 +4497,7 @@ function resumeFromHistory(cwd, f, rec) {
 window.swarm.onHistoryRequest(({ id }) => {
   const s = sessions.get(String(id));
   if (!s || !s.cwd) return;
-  // Меню карточки родное и уже закрылось — вешаем список под саму карточку.
-  // Карточки может не быть в ленте (свёрнутая папка, подвал бригады) — тогда якорь вся лента.
-  openHistoryMenu(s.tab.getClientRects().length ? s.tab : tabsEl, s.cwd);
+  openHistoryModal(s.cwd);
 });
 
 // Sessions in display order, grouped into units (a folder or a loner) by cwd.
@@ -4710,12 +4756,12 @@ function relayoutTabs() {
     add.title = 'Новая сессия в этой папке';
     add.innerHTML = ICONS.plus;
     add.addEventListener('click', (e) => { e.stopPropagation(); createSessionFrom(add, cwd, true); });
-    // Часы — прошлые разговоры этой папки (см. openHistoryMenu).
+    // Часы — прошлые разговоры этой папки (см. openHistoryModal).
     const hist = document.createElement('span');
     hist.className = 'group-add group-hist';
     hist.title = 'Прошлые разговоры этой папки';
     hist.innerHTML = ICONS.clock;
-    hist.addEventListener('click', (e) => { e.stopPropagation(); openHistoryMenu(hist, cwd); });
+    hist.addEventListener('click', (e) => { e.stopPropagation(); openHistoryModal(cwd); });
     head.append(grip, chev, nameEl, count, dots, hist, add);
     head.addEventListener('click', () => toggleFolder(cwd));
 
@@ -7779,14 +7825,15 @@ window.swarm.onRestartNote(({ id, text }) => restartJournal(id, text));
 // Дайджест вкладки: пара строк, которые агент сам пишет о том, чем занят, — main присылает их
 // из файла в рабочей папке (digest.js). Текст держим на КАЖДОЙ сессии (event может прийти для
 // неактивной вкладки), а рисуем — только для активной: полоска одна на сцену, как у гейта.
-function setDigestText(id, text, title) {
+function setDigestText(id, text, title, summary) {
   const s = sessions.get(String(id));
   if (s) s.digestText = text || '';
+  if (s && summary != null) s.summaryText = summary;
   if (s && title) applyAutoTitle(s, title);
-  if (s && text) rememberHistory();
+  if (s && (text || summary)) rememberHistory();
   if (id === activeId) renderDigestStrip();
 }
-window.swarm.onDigest(({ id, text, title }) => setDigestText(id, text, title));
+window.swarm.onDigest(({ id, text, title, summary }) => setDigestText(id, text, title, summary));
 
 // Имя от агента (поле title в файле дайджеста). Ставим, только пока человек не дал своё, и не
 // посреди переименования — иначе агент выдернул бы текст из-под курсора.
