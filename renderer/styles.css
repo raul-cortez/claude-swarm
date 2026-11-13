@@ -4327,7 +4327,15 @@ body.has-plan #digest-strip { padding-right: 130px; }
 #plan-panel li > .pp-row { display: flex; gap: 8px; padding: 5px 4px; color: var(--text); line-height: 1.35; }
 #plan-panel ul ul > li > .pp-row { padding-left: 26px; color: var(--muted); font-size: 12px; }
 #plan-panel ul ul ul > li > .pp-row { padding-left: 44px; }
-#plan-panel .tx { min-width: 0; overflow-wrap: anywhere; }
+#plan-panel .tx { min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+/* Пункт с подпунктами: счётчик и стрелка справа, клик по строке сворачивает. */
+#plan-panel .pp-row.has-kids { cursor: pointer; border-radius: 6px; }
+#plan-panel .pp-row.has-kids:hover { background: rgba(255, 255, 255, .04); }
+#plan-panel .pp-sub { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+#plan-panel .pp-chev { flex: none; display: inline-flex; color: var(--muted); margin-top: 2px; }
+#plan-panel .pp-chev svg { width: 12px; height: 12px; transition: transform .15s ease; }
+#plan-panel li.folded > .pp-row .pp-chev svg { transform: rotate(-90deg); }
+#plan-panel li.folded > ul { display: none; }
 #plan-panel li.done > .pp-row .tx { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, .25); }
 #plan-panel .bx {
   flex: none; width: 14px; height: 14px; margin-top: 2px; box-sizing: border-box;
