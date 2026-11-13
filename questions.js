@@ -1,11 +1,13 @@
 'use strict';
-// questions.js — the tab's questions to the person and their answers, for the «Вопросы» side panel.
+// questions.js — questions and answers of a tab in both directions, for the «Вопросы» side panel.
 //
-// A question asked while the agent keeps working gets lost in the scroll: the person answers
-// it, and a screen later neither of them can find what was decided. Two sources feed the list:
+// An answer given mid-work gets lost in the scroll, whichever side asked: the person asks, the
+// agent answers and goes on working, and a screen later the answer is hard to find; the agent
+// asks, the person answers, and later both have to ask again. Two sources feed the list:
 //
-//   questions.md (in the tab's folder, next to the dossier) — the agent's own record of the
-//     questions it asked in prose, one per item, with the answer written under each. Only the
+//   questions.md (in the tab's folder, next to the dossier) — the agent's own record, one item
+//     per question with the answer under it: its questions to the person in prose, and the
+//     person's questions to it («- Человек: …», answered by the agent, compressed). Only the
 //     agent can split «three questions in one message, one reply to all three» into pairs, so
 //     the file is its job, done in the same step as the dossier.
 //   the transcript — questions asked with options (AskUserQuestion). Claude records the
@@ -31,6 +33,7 @@
       '# Вопросы вкладки',
       '',
       '<!-- Каждый твой вопрос человеку — отдельным пунктом «- вопрос», одной строкой.',
+      '     Вопрос человека тебе — пунктом «- Человек: вопрос», ответ под ним — твой, сжато.',
       '     Ответ — строкой ниже с отступом: «  → ответ». Снят без ответа — «  → снят: почему».',
       '     Новые — в конец, старые не удаляй. Вопросы с вариантами записывает приложение само. -->',
       '',
@@ -39,8 +42,10 @@
 
   const RE_ITEM = /^[-*+]\s+(.*)$/;
   const RE_ANSWER = /^(?:→|->|=>|ответ\s*:)\s*(.*)$/i;
+  // The person asked, the agent answers. No marker — the agent asked (the file's older format).
+  const RE_PERSON = /^человек\s*:\s*/i;
 
-  // [{q, a}] in file order; a === null — no answer yet. A top-level list item opens a question;
+  // [{q, a, who}] in file order; a === null — no answer yet; who — 'agent' or 'person', who asked. A top-level list item opens a question;
   // indented lines continue it, and the first one starting with an arrow opens the answer (later
   // indented lines continue the answer).
   function parseFile(text) {
@@ -55,9 +60,11 @@
       const top = !/^\s/.test(raw);
       const m = top ? RE_ITEM.exec(raw) : null;
       if (m) {
-        const q = m[1].trim();
+        let q = m[1].trim();
+        const who = RE_PERSON.test(q) ? 'person' : 'agent';
+        if (who === 'person') q = q.replace(RE_PERSON, '').trim();
         if (!q) { cur = null; continue; }
-        cur = { q, a: null };
+        cur = { q, a: null, who };
         out.push(cur);
         inAnswer = false;
         continue;
@@ -155,7 +162,10 @@
     return { box: out.slice(-BOX_KEEP), pending, open };
   }
 
-  function keyOf(q) { return String(q).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function keyOf(q, who) {
+    const k = String(q).replace(/\s+/g, ' ').trim().toLowerCase();
+    return who === 'person' ? 'person:' + k : k;
+  }
 
   // Stamp file items with the moment they were first seen. seen: {key: {at, aAt}}. `now` — this
   // read; `firstRead` — no stamps yet at all (an old file, a lost state): spread the items just
@@ -166,27 +176,29 @@
     const firstRead = !Object.keys(prev).length;
     const base = Number.isFinite(fallback) && fallback > 0 ? fallback : now;
     const out = items.map((it, idx) => {
-      const k = keyOf(it.q);
+      const k = keyOf(it.q, it.who);
       const s = prev[k] || next[k] || {};
       const at = s.at || (firstRead ? base - (items.length - idx) * 1000 : now);
       const aAt = it.a === null ? 0 : (s.aAt || (firstRead ? at : now));
       next[k] = { at, aAt: aAt || undefined };
-      return { q: it.q, a: it.a, at, aAt };
+      return { q: it.q, a: it.a, who: it.who || 'agent', at, aAt };
     });
     return { items: out, seen: next };
   }
 
   // The list the panel shows: newest first, one timeline — the person answers out of order, so
   // there is no «waiting» block on top; a waiting question stays in its place and is marked.
+  // `waiting` counts only the agent's questions: that's where the person is waited for. The
+  // person's own unanswered question is the agent's debt, and it shows as such, not as a call.
   // Returns null when there's nothing to show.
   function merge(fileItems, box, open) {
     const all = []
-      .concat((fileItems || []).map((x) => ({ q: x.q, a: x.a, at: x.at, aAt: x.aAt || 0, src: 'text' })))
-      .concat((box || []).map((x) => ({ q: x.q, a: x.a, at: x.at, aAt: x.aAt || 0, src: 'box' })))
-      .concat((open || []).map((x) => ({ q: x.q, a: null, at: x.at, aAt: 0, src: 'box' })));
+      .concat((fileItems || []).map((x) => ({ q: x.q, a: x.a, who: x.who || 'agent', at: x.at, aAt: x.aAt || 0, src: 'text' })))
+      .concat((box || []).map((x) => ({ q: x.q, a: x.a, who: 'agent', at: x.at, aAt: x.aAt || 0, src: 'box' })))
+      .concat((open || []).map((x) => ({ q: x.q, a: null, who: 'agent', at: x.at, aAt: 0, src: 'box' })));
     if (!all.length) return null;
     all.sort((x, y) => y.at - x.at);
-    return { items: all, waiting: all.filter((x) => x.a === null).length, total: all.length };
+    return { items: all, waiting: all.filter((x) => x.a === null && x.who === 'agent').length, total: all.length };
   }
 
   return { FILE, BOX_KEEP, template, parseFile, boxEvents, absorbBox, stamp, merge, keyOf };

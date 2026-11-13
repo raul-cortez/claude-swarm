@@ -8027,18 +8027,24 @@ function qaWhen(ms) {
   return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}, ${hhmm(ms)}`;
 }
 
+// Кто спрашивал — в строке времени: «Ты спросил · 14:32», «Агент спросил · 14:32». Ждёт человека
+// только вопрос агента — он и выделен рамкой; свой вопрос без ответа — долг агента, тихо.
 function qaItem(it) {
   const li = document.createElement('li');
-  if (it.a === null) li.className = 'wait';
+  const mine = it.who === 'person';
+  li.className = mine ? 'mine' : '';
+  if (it.a === null && !mine) li.classList.add('wait');
+  if (it.a === null && mine) li.classList.add('owed');
   const q = document.createElement('div');
   q.className = 'q';
   q.textContent = it.q;
   const a = document.createElement('div');
   a.className = 'a';
-  a.textContent = it.a === null ? 'ждёт ответа' : it.a;
+  a.textContent = it.a !== null ? it.a : mine ? 'агент ещё не ответил' : 'ждёт ответа';
   const t = document.createElement('div');
   t.className = 't';
-  t.textContent = qaWhen(it.a === null ? it.at : (it.aAt || it.at));
+  const when = qaWhen(it.a === null ? it.at : (it.aAt || it.at));
+  t.textContent = (mine ? 'Ты спросил' : 'Агент спросил') + (when ? ' · ' + when : '');
   li.append(q, a, t);
   return li;
 }

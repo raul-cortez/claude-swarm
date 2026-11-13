@@ -4373,6 +4373,10 @@ body.has-plan #digest-strip { padding-right: calc(var(--panel-btn-w, 120px) + 24
 }
 #plan-panel .qa-list li.wait .a { border-left-color: var(--waiting); color: var(--waiting); }
 #plan-panel .qa-list .t { margin-top: 4px; font-size: 10.5px; color: var(--muted); opacity: .75; }
+/* Свой вопрос человека: ответ агента — акцентной чертой, а не «готово», чтобы направление
+   читалось с одного взгляда; без ответа — тихо, курсивом: это долг агента, а не зов. */
+#plan-panel .qa-list li.mine .a { border-left-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+#plan-panel .qa-list li.owed .a { border-left-color: var(--hairline); font-style: italic; }
 #plan-panel .pp-foot { margin-top: auto; flex: none; display: flex; border-top: 1px solid var(--hairline); }
 #plan-panel .pp-tree ul { list-style: none; margin: 0; padding: 0; }
 #plan-panel li > .pp-row { display: flex; gap: 8px; padding: 5px 4px; color: var(--text); line-height: 1.35; }

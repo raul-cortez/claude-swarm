@@ -15,22 +15,22 @@ test('пустой шаблон — вопросов нет', () => {
 test('вопрос без ответа и с ответом', () => {
   const t = Q.template() + '- Апи старое выключаем?\n  → Через неделю\n- СБП сразу или через сутки?\n';
   assert.deepStrictEqual(Q.parseFile(t), [
-    { q: 'Апи старое выключаем?', a: 'Через неделю' },
-    { q: 'СБП сразу или через сутки?', a: null },
+    { q: 'Апи старое выключаем?', a: 'Через неделю', who: 'agent' },
+    { q: 'СБП сразу или через сутки?', a: null, who: 'agent' },
   ]);
 });
 
 test('продолжение строк: вопрос до стрелки, ответ после', () => {
   const t = '- Длинный вопрос,\n  который продолжается\n  -> да,\n  но с оговоркой\n';
-  assert.deepStrictEqual(Q.parseFile(t), [{ q: 'Длинный вопрос, который продолжается', a: 'да, но с оговоркой' }]);
+  assert.deepStrictEqual(Q.parseFile(t), [{ q: 'Длинный вопрос, который продолжается', a: 'да, но с оговоркой', who: 'agent' }]);
 });
 
 test('«Ответ:» тоже ответ; пустая стрелка — ответ без слов', () => {
-  assert.deepStrictEqual(Q.parseFile('* a?\n  Ответ: нет\n- b?\n  →\n'), [{ q: 'a?', a: 'нет' }, { q: 'b?', a: '—' }]);
+  assert.deepStrictEqual(Q.parseFile('* a?\n  Ответ: нет\n- b?\n  →\n'), [{ q: 'a?', a: 'нет', who: 'agent' }, { q: 'b?', a: '—', who: 'agent' }]);
 });
 
 test('пункт с отступом — не новый вопрос, а продолжение', () => {
-  assert.deepStrictEqual(Q.parseFile('- a?\n  - деталь\n'), [{ q: 'a? - деталь', a: null }]);
+  assert.deepStrictEqual(Q.parseFile('- a?\n  - деталь\n'), [{ q: 'a? - деталь', a: null, who: 'agent' }]);
 });
 
 const ask = (id, at, qs) => ({ type: 'assistant', timestamp: new Date(at).toISOString(),
@@ -99,6 +99,24 @@ test('лента: новые сверху, ждущие на своём мест
   assert.strictEqual(m.waiting, 2);
   assert.strictEqual(m.total, 4);
   assert.strictEqual(Q.merge([], [], []), null);
+});
+
+test('вопрос человека: метка «Человек:» снимается, ответ — агента', () => {
+  assert.deepStrictEqual(Q.parseFile('- Человек: Зачем удалять старый?\n  → Две иконки одного приложения\n- человек:что дальше?\n'), [
+    { q: 'Зачем удалять старый?', a: 'Две иконки одного приложения', who: 'person' },
+    { q: 'что дальше?', a: null, who: 'person' },
+  ]);
+});
+
+test('лента: вопрос человека без ответа не зовёт человека', () => {
+  const m = Q.merge([{ q: 'мой?', a: null, who: 'person', at: 2 }, { q: 'твой?', a: null, who: 'agent', at: 1 }], [], []);
+  assert.strictEqual(m.waiting, 1);
+  assert.deepStrictEqual(m.items.map((x) => x.who), ['person', 'agent']);
+});
+
+test('штампы: одинаковый текст с разных сторон — разные вопросы', () => {
+  const r = Q.stamp([{ q: 'да?', a: 'да', who: 'agent' }, { q: 'да?', a: null, who: 'person' }], { 'да?': { at: 5, aAt: 6 } }, 100, 50);
+  assert.deepStrictEqual(r.items.map((x) => [x.who, x.at, x.aAt]), [['agent', 5, 6], ['person', 100, 0]]);
 });
 
 for (const [name, fn] of tests) {
