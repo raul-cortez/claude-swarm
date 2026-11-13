@@ -53,19 +53,30 @@
            its own. Filled by flashHandoff(); pointer-none so you can start typing
            the answer straight through it. -->
       <div id="pult-flash"></div>
-      <!-- Кнопка плана: плавает в правом верхнем углу, есть только у вкладки с планом в
-           файле работы (раздел «## План»). Заполняет renderPlan(). -->
+      <!-- Кнопка правой панели: плавает в правом верхнем углу, есть только у вкладки, где есть
+           что показать — план в файле работы (раздел «## План») или вопросы человеку. На ней
+           счётчик плана и число вопросов, ждущих ответа. Заполняет renderPlan(). -->
       <button id="plan-btn" type="button" hidden></button>
     </div>
 
-    <!-- Панель плана справа: витрина, только чтение. Лежит поверх правого поля #stage
+    <!-- Правая панель: витрина, только чтение. Лежит поверх правого поля #stage
          (оно резервируется отступом, пока панель открыта) — на всю высоту, рядом с чем бы
-         ни стоял терминал ⌘J. Заполняет renderPlan(). -->
-    <div id="plan-split" hidden title="Потянуть — изменить ширину плана"></div>
+         ни стоял терминал ⌘J. Аккордеон: план из файла работы и вопросы человеку с ответами
+         (одна лента по времени, ждущий ответа выделен на своём месте). Заполняет renderPlan(). -->
+    <div id="plan-split" hidden title="Потянуть — изменить ширину панели"></div>
     <aside id="plan-panel" hidden>
-      <div class="pp-h"><span>План</span><span class="pp-n"></span></div>
-      <ul class="pp-tree"></ul>
-      <button id="plan-file" class="pp-f" type="button" title="Открыть файл работы"></button>
+      <section id="acc-plan" class="acc">
+        <div class="acc-h" role="button" tabindex="0"><span>План</span><span class="n pp-n"></span><span class="cv"></span></div>
+        <div class="acc-b"><ul class="pp-tree"></ul></div>
+      </section>
+      <section id="acc-qa" class="acc">
+        <div class="acc-h" role="button" tabindex="0"><span>Вопросы</span><span class="n qa-n"></span><span class="cv"></span></div>
+        <div class="acc-b"><ul class="qa-list"></ul></div>
+      </section>
+      <div class="pp-foot">
+        <button id="plan-file" class="pp-f" type="button" title="Открыть файл работы"></button>
+        <button id="qa-file" class="pp-f" type="button" title="Открыть файл вопросов">Файл вопросов</button>
+      </div>
     </aside>
 
     <!-- Пристыковываемая панель терминала (⌘J) — обычная оболочка, не привязанная

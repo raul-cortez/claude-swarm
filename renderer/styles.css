@@ -4302,8 +4302,15 @@ body.layout-rail.rail-mini { grid-template-columns: 64px 1fr; }
   background: var(--ready); color: #0b1a10; border-radius: 999px; padding: 0 5px;
   font-weight: 600; font-variant-numeric: tabular-nums;
 }
-/* Дайджест обходит кнопку справа — как раньше обходил плашку прораба. */
-body.has-plan #digest-strip { padding-right: 130px; }
+/* Ждущие ответа вопросы — цветом «ждёт»; просто число вопросов (когда плана нет) — тихо. */
+#plan-btn .qd {
+  background: var(--waiting); color: #062321; border-radius: 999px; padding: 0 6px;
+  font-weight: 600; font-variant-numeric: tabular-nums;
+}
+#plan-btn .qn { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Дайджест обходит кнопку справа — как раньше обходил плашку прораба. Ширина кнопки
+   плавает (план, вопросы), её кладёт renderPlan. */
+body.has-plan #digest-strip { padding-right: calc(var(--panel-btn-w, 120px) + 24px); }
 #plan-panel {
   position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
   width: var(--plan-live, var(--plan-w, 300px)); min-width: 0;
@@ -4317,12 +4324,51 @@ body.has-plan #digest-strip { padding-right: 130px; }
 }
 #plan-split[hidden] { display: none; }
 #plan-split:hover, #plan-split.dragging { background: var(--accent); }
-#plan-panel .pp-h {
-  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-  font-size: 12px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--hairline);
+/* Аккордеон: секция «План» и секция «Вопросы». Раскрытые делят высоту; план не растягивается
+   больше своего содержимого, вопросы забирают остаток. Каждая прокручивается сама. */
+#plan-panel .acc { display: flex; flex-direction: column; min-height: 0; flex: none; border-bottom: 1px solid var(--hairline); }
+#plan-panel .acc[hidden] { display: none; }
+#plan-panel #acc-plan.open { flex: 0 1 auto; }
+#plan-panel #acc-qa.open { flex: 1 1 auto; min-height: 120px; }
+#plan-panel .acc-h {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer; user-select: none;
 }
-#plan-panel .pp-n { margin-left: auto; color: var(--muted); font-weight: 500; }
-#plan-panel .pp-tree { list-style: none; margin: 0; padding: 8px 10px; font-size: 12.5px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+#plan-panel .acc-h:hover { background: rgba(255, 255, 255, .03); }
+#plan-panel .acc-h:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+#plan-panel .acc.open > .acc-h { border-bottom: 1px solid var(--hairline); }
+#plan-panel .acc-h .n { margin-left: auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+#plan-panel .acc-h .wt { color: var(--waiting); font-weight: 600; }
+#plan-panel .acc-h .wt:hover { text-decoration: underline; }
+#plan-panel .acc-h .cv { display: inline-flex; width: 12px; height: 12px; color: var(--muted); }
+#plan-panel .acc-h .cv::before {
+  content: ''; width: 6px; height: 6px; margin: 2px 0 0 3px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); transition: transform .15s ease;
+}
+#plan-panel .acc:not(.open) .acc-h .cv::before { transform: rotate(-45deg); margin: 3px 0 0 1px; }
+#plan-panel .acc-b { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+#plan-panel .acc:not(.open) > .acc-b { display: none; }
+#plan-panel .pp-tree { list-style: none; margin: 0; padding: 8px 10px; font-size: 12.5px; }
+/* Вопросы: одна лента по времени, новые сверху. Ждущий ответа — в рамке цвета «ждёт» на своём
+   месте: человек отвечает не по порядку, отдельного блока «ждут» нет. */
+#plan-panel .qa-list { list-style: none; margin: 0; padding: 8px 10px; font-size: 12.5px; }
+#plan-panel .qa-list li { padding: 8px 8px 9px; }
+#plan-panel .qa-list li + li:not(.wait) { border-top: 1px solid var(--hairline); }
+#plan-panel .qa-list li.wait {
+  margin: 4px 0; border-radius: 6px;
+  background: color-mix(in srgb, var(--waiting) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--waiting) 35%, transparent);
+}
+#plan-panel .qa-list li.wait + li { border-top: 0; }
+#plan-panel .qa-list .q { color: var(--text); line-height: 1.4; overflow-wrap: anywhere; }
+#plan-panel .qa-list .a {
+  margin-top: 5px; padding-left: 9px; line-height: 1.4; overflow-wrap: anywhere; color: var(--muted);
+  border-left: 2px solid color-mix(in srgb, var(--ready) 60%, transparent);
+}
+#plan-panel .qa-list li.wait .a { border-left-color: var(--waiting); color: var(--waiting); }
+#plan-panel .qa-list .t { margin-top: 4px; font-size: 10.5px; color: var(--muted); opacity: .75; }
+#plan-panel .pp-foot { margin-top: auto; flex: none; display: flex; border-top: 1px solid var(--hairline); }
 #plan-panel .pp-tree ul { list-style: none; margin: 0; padding: 0; }
 #plan-panel li > .pp-row { display: flex; gap: 8px; padding: 5px 4px; color: var(--text); line-height: 1.35; }
 #plan-panel ul ul > li > .pp-row { padding-left: 26px; color: var(--muted); font-size: 12px; }
@@ -4347,6 +4393,8 @@ body.has-plan #digest-strip { padding-right: 130px; }
 #plan-panel li.now > .pp-row { background: color-mix(in srgb, var(--run) 8%, transparent); border-radius: 6px; }
 #plan-panel .pp-f {
   flex: none; text-align: left; padding: 10px 14px; font-size: 11.5px; color: var(--muted);
-  background: transparent; border: 0; border-top: 1px solid var(--hairline); cursor: pointer;
+  background: transparent; border: 0; cursor: pointer;
 }
+#plan-panel .pp-f[hidden] { display: none; }
+#plan-panel #qa-file { margin-left: auto; }
 #plan-panel .pp-f:hover { color: var(--text); }

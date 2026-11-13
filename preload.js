@@ -189,6 +189,14 @@ contextBridge.exposeInMainWorld('swarm', {
   },
   planRequest: () => ipcRenderer.send('plan:request'),
   openWorkFile: (id) => ipcRenderer.send('plan:open-work', { id }),
+  // Вопросы вкладки: вопросы человеку и ответы, лента для второй секции панели. Только чтение.
+  onQa: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('session:qa', handler);
+    return () => ipcRenderer.removeListener('session:qa', handler);
+  },
+  qaRequest: () => ipcRenderer.send('qa:request'),
+  openQuestionsFile: (id) => ipcRenderer.send('qa:open-file', { id }),
   onDigest: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('session:digest', handler);

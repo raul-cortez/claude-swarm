@@ -314,6 +314,8 @@ const ICONS = {
   // Lucide «list-checks» — план вкладки.
   plan: SVG('<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>'),
   chevron: SVG('<path d="m6 9 6 6 6-6"/>'),
+  // Lucide «panel-right» — правая панель вкладки (план и вопросы).
+  panelRight: SVG('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>'),
   // Стрелка «развернуть бригаду» в подвале прораба — вправо, туда, куда карточка растёт.
   chevronRight: SVG('<path d="m9 18 6-6-6-6"/>'),
   branch: SVG('<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>'),
@@ -7938,6 +7940,13 @@ const planSplit = document.getElementById('plan-split');
 const planTree  = planPanel.querySelector('.pp-tree');
 const planFile  = document.getElementById('plan-file');
 const planById  = new Map();            // id вкладки → {tree, done, total, nowIndex, at}
+// Вторая секция — вопросы человеку и ответы (main: questions.js). Одна лента, новые сверху.
+const qaFile    = document.getElementById('qa-file');
+const qaList    = planPanel.querySelector('.qa-list');
+const qaById    = new Map();            // id вкладки → {items: [{q, a, at, aAt, src}], waiting, total}
+const accPlan   = document.getElementById('acc-plan');
+const accQa     = document.getElementById('acc-qa');
+let qaDrawn = '';
 const PLAN_W_MIN = 220;
 const PLAN_AGENT_MIN = 480;             // уже этого агенту (~60 колонок) не оставляем — панель сворачивается в кнопку
 let planWanted = localStorage.getItem('swarm.planOpen') === '1';
@@ -7998,27 +8007,111 @@ function planNode(n, trail = '') {
   return li;
 }
 
+// Секции аккордеона: раскрыта ли — общее на все вкладки, как и сама панель.
+const accOpen = (name) => localStorage.getItem('swarm.acc.' + name) !== '0';
+function accToggle(name, sec) {
+  const open = !accOpen(name);
+  localStorage.setItem('swarm.acc.' + name, open ? '1' : '0');
+  sec.classList.toggle('open', open);
+}
+
+const hhmm = (ms) => new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+// «14:32» сегодня, «вчера, 18:40», дальше — «12.11, 18:40».
+function qaWhen(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(new Date()) - day(d)) / 86400e3);
+  if (diff <= 0) return hhmm(ms);
+  if (diff === 1) return `вчера, ${hhmm(ms)}`;
+  return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}, ${hhmm(ms)}`;
+}
+
+function qaItem(it) {
+  const li = document.createElement('li');
+  if (it.a === null) li.className = 'wait';
+  const q = document.createElement('div');
+  q.className = 'q';
+  q.textContent = it.q;
+  const a = document.createElement('div');
+  a.className = 'a';
+  a.textContent = it.a === null ? 'ждёт ответа' : it.a;
+  const t = document.createElement('div');
+  t.className = 't';
+  t.textContent = qaWhen(it.a === null ? it.at : (it.aAt || it.at));
+  li.append(q, a, t);
+  return li;
+}
+
+function renderQa(q, open) {
+  accQa.hidden = !q;
+  qaFile.hidden = !q;
+  if (!q) { qaDrawn = ''; return; }
+  const n = accQa.querySelector('.qa-n');
+  n.innerHTML = q.waiting
+    ? `<span class="wt" title="Показать вопрос, который ждёт ответа">${q.waiting} ждёт</span> · ${q.total}`
+    : String(q.total);
+  if (!open) return;
+  const key = activeId + '|' + JSON.stringify(q.items);
+  if (key === qaDrawn) return;
+  qaDrawn = key;
+  qaList.textContent = '';
+  q.items.forEach((it) => qaList.append(qaItem(it)));
+}
+
 function renderPlan() {
   const p = planById.get(activeId) || null;
-  planBtn.hidden = !p;
-  document.body.classList.toggle('has-plan', !!p);
-  const open = !!p && planWanted && planFits();
+  const q = qaById.get(activeId) || null;
+  const has = !!(p || q);
+  planBtn.hidden = !has;
+  document.body.classList.toggle('has-plan', has);
+  const open = has && planWanted && planFits();
   stageEl.classList.toggle('plan-open', open);
   planPanel.hidden = !open;
   planSplit.hidden = !open;
   planBtn.classList.toggle('is-active', open);
-  if (!p) { planDrawn = ''; return; }
-  planBtn.innerHTML = `${ICONS.plan}<span>План</span><span class="bd">${p.done}/${p.total}</span>`;
-  planBtn.title = open ? 'Скрыть план' : planWanted && !planFits() ? 'Окно слишком узкое для плана' : 'Показать план';
+  if (!has) { planDrawn = ''; qaDrawn = ''; return; }
+  // Кнопка: счётчик плана и число вопросов, ждущих ответа. Вопросы без ждущих на кнопке не
+  // видны, пока есть план, — иначе она росла бы ради того, что уже решено.
+  let html = ICONS.panelRight;
+  if (p) html += `<span>План</span><span class="bd">${p.done}/${p.total}</span>`;
+  if (q && q.waiting) html += `<span>Вопросы</span><span class="qd">${q.waiting}</span>`;
+  else if (q && !p) html += `<span>Вопросы</span><span class="qn">${q.total}</span>`;
+  planBtn.innerHTML = html;
+  document.documentElement.style.setProperty('--panel-btn-w', (planBtn.offsetWidth || 120) + 'px');
+  planBtn.title = open ? 'Скрыть панель' : planWanted && !planFits() ? 'Окно слишком узкое для панели' : 'Показать панель';
   if (!open) return;
-  planPanel.querySelector('.pp-n').textContent = `${p.done} из ${p.total}`;
-  const at = p.at ? new Date(p.at) : null;
-  planFile.textContent = at ? `Файл работы · обновлено ${at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : 'Файл работы';
+  // Секции: видна та, где есть что показать; раскрыта — как оставил человек.
+  accPlan.hidden = !p;
+  planFile.hidden = !p;
+  accPlan.classList.toggle('open', accOpen('plan'));
+  accQa.classList.toggle('open', accOpen('qa'));
+  renderQa(q, accOpen('qa'));
+  if (!p) { planDrawn = ''; return; }
+  accPlan.querySelector('.pp-n').textContent = `${p.done} из ${p.total}`;
+  planFile.textContent = p.at ? `Файл работы · обновлено ${hhmm(p.at)}` : 'Файл работы';
   const key = activeId + '|' + JSON.stringify(p.tree) + '|' + p.nowIndex;
   if (key === planDrawn) return;
   planDrawn = key;
   planTree.textContent = '';
   p.tree.forEach((n) => planTree.append(planNode(n)));
+}
+
+for (const [name, sec] of [['plan', accPlan], ['qa', accQa]]) {
+  const h = sec.querySelector('.acc-h');
+  h.addEventListener('click', (e) => {
+    // «N ждёт» — не свернуть секцию, а показать ждущий вопрос.
+    if (name === 'qa' && e.target.closest('.wt')) {
+      if (!accOpen('qa')) accToggle('qa', sec);
+      renderPlan();
+      const w = qaList.querySelector('li.wait');
+      if (w) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    accToggle(name, sec);
+    renderPlan();
+  });
+  h.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.click(); } });
 }
 
 planBtn.addEventListener('click', () => {
@@ -8027,6 +8120,7 @@ planBtn.addEventListener('click', () => {
   renderPlan();
 });
 planFile.addEventListener('click', () => { if (activeId) window.swarm.openWorkFile(activeId); });
+qaFile.addEventListener('click', () => { if (activeId) window.swarm.openQuestionsFile(activeId); });
 document.documentElement.style.setProperty('--plan-w', planWidth + 'px');
 
 window.swarm.onPlan(({ id, plan }) => {
@@ -8034,6 +8128,11 @@ window.swarm.onPlan(({ id, plan }) => {
   if (String(id) === activeId) renderPlan();
 });
 window.swarm.planRequest();
+window.swarm.onQa(({ id, qa }) => {
+  if (qa) qaById.set(String(id), qa); else qaById.delete(String(id));
+  if (String(id) === activeId) renderPlan();
+});
+window.swarm.qaRequest();
 
 // Ширина тянется разделителем. Живая ширина (--plan-live) двигает только саму панель; поле,
 // которое она резервирует в #stage, а с ним и терминал, меняются один раз — на отпускании:

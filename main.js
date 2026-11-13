@@ -206,6 +206,7 @@ const restart = require('./restart');               // самоперезапу�
 const peers = require('./peers');                    // визитка вкладки для соседних сессий
 const digest = require('./digest');                  // дайджест вкладки: имя файла и разбор содержимого
 const plan = require('./plan');                      // план из файла работы: дерево шагов для правой панели
+const questions = require('./questions');            // вопросы человеку и ответы: вторая секция правой панели
 const dossier = require('./dossier');                // досье вкладки: шаблоны, очередь из лога, наследство
 const hire = require('./hire');                      // найм по просьбе прораба: имя файла, разбор заявки, потолок
 const deadtab = require('./deadtab');                // упавший агент в живой оболочке: разбор и гашение мыши
@@ -3260,7 +3261,7 @@ function tgWriteModes() {
   for (const [tid, d] of det) {
     if (!d || d.dead) continue;
     const p = dossierFor(tid, d);
-    if (p) tabs[tid] = { dossier: p.dossier, work: p.work, inherit: p.inherit, lag: d.dsLag || 0, blank: !!d.dsBlank };
+    if (p) tabs[tid] = { dossier: p.dossier, work: p.work, questions: p.questions, inherit: p.inherit, lag: d.dsLag || 0, blank: !!d.dsBlank };
   }
   const body = JSON.stringify({
     sessions: ids.sort(), auto: auto.sort(), presence: tgPresence, nightRule: TG.nightRule || '',
@@ -6480,6 +6481,7 @@ function dossierPaths(id, d) {
     dir,
     dossier: path.join(dir, dossier.FILES.dossier),
     work: path.join(dir, dossier.FILES.work),
+    questions: path.join(dir, questions.FILE),
     inherit: path.join(dir, dossier.FILES.inherit),
     state: path.join(dir, dossier.FILES.state),
     history: path.join(dir, dossier.HISTORY),
@@ -6520,10 +6522,16 @@ function dossierEnsure(id, d) {
     const tp = dossier.templates();
     if (!fs.existsSync(p.dossier)) fs.writeFileSync(p.dossier, tp.dossier);
     if (!fs.existsSync(p.work)) fs.writeFileSync(p.work, tp.work);
+    if (!fs.existsSync(p.questions)) fs.writeFileSync(p.questions, questions.template());
   } catch (e) { reportMainError(e); return null; }
   const st = dossierLoadState(p);
   if (!st.mark) { st.mark = Date.now(); dossierSaveState(p, st); }
   d.dsMark = st.mark;
+  d.qaBox = Array.isArray(st.qaBox) ? st.qaBox : [];
+  d.qaSeen = st.qaSeen && typeof st.qaSeen === 'object' ? st.qaSeen : {};
+  d.qaPending = [];
+  d.qaOpen = [];
+  d.qaStatePath = p.state;
   // Базой служит то, что лежит сейчас: первая же правка агента (а пишет он бриф в первом ходе,
   // раньше любого такта) — это уже изменение, и отметка по ней сдвигается.
   try {
@@ -6565,7 +6573,9 @@ function dossierEntries(d) {
   const part = dossier.splitLines(d.dsTrRest, chunk);
   d.dsTrRest = part.rest;
   d.dsTrOffset = size;
-  const fresh = dossier.parseLines(part.text).map(dossier.compact).filter(Boolean);
+  const raw = dossier.parseLines(part.text);
+  qaAbsorbBox(d, raw);
+  const fresh = raw.map(dossier.compact).filter(Boolean);
   d.dsTrEntries = d.dsTrEntries.concat(fresh);
   if (d.dsTrEntries.length > DOSSIER_KEEP_RECORDS) d.dsTrEntries = d.dsTrEntries.slice(-DOSSIER_KEEP_RECORDS);
   return d.dsTrEntries;
@@ -6661,6 +6671,89 @@ ipcMain.on('plan:open-work', (_e, { id } = {}) => {
   shell.openPath(p.work).then((err) => { if (err) restartLog(`вкладка ${id}: не открылся ${p.work}: ${err}`); })
     .catch(reportMainError);
 });
+
+// --- Вопросы вкладки (questions.js) ----------------------------------------------
+// Вторая секция правой панели: вопросы человеку и ответы. Вопросы текстом агент ведёт в
+// questions.md рядом с досье; вопросы с вариантами берём из журнала сами (qaAbsorbBox из
+// dossierEntries — тот же инкрементальный проход по журналу, что у досье). Отвеченные пары
+// с вариантами и моменты появления вопросов из файла живут в state.json вкладки.
+// Такт — QA_TICK_MS, а не 30 секунд досье: «ждёт ответа» должно появляться, пока вопрос свежий.
+const QA_TICK_MS = 3000;
+
+function qaSave(d, patch) {
+  if (!d.qaStatePath) return;
+  let st = {};
+  try { st = JSON.parse(fs.readFileSync(d.qaStatePath, 'utf8')) || {}; } catch (_) { st = {}; }
+  try { fs.writeFileSync(d.qaStatePath, JSON.stringify(Object.assign(st, patch))); } catch (e) { reportMainError(e); }
+}
+
+function qaAbsorbBox(d, raw) {
+  if (!d.dsReady) return;
+  const ev = questions.boxEvents(raw, d.qaPending || []);
+  if (!ev.asks.length && !(d.qaPending || []).length) return;
+  const r = questions.absorbBox(d.qaBox || [], ev);
+  const boxChanged = r.box.length !== (d.qaBox || []).length;
+  d.qaBox = r.box;
+  d.qaPending = r.pending;
+  d.qaOpen = r.open;
+  if (boxChanged) qaSave(d, { qaBox: d.qaBox });
+}
+
+function qaSend(id, d, value) {
+  const json = JSON.stringify(value);
+  if (json === (d.qaJson || 'null')) return;
+  d.qaJson = json;
+  safeSend('session:qa', { id, qa: value });
+}
+
+function qaTick(id, d, p) {
+  dossierEntries(d);                       // новые строки журнала → вопросы с вариантами
+  let st = null;
+  try { st = fs.statSync(p.questions); } catch (_) { st = null; }
+  if (!st) { d.qaFile = []; d.qaMtime = 0; }
+  else if (st.mtimeMs !== d.qaMtime) {
+    d.qaMtime = st.mtimeMs;
+    let text = '';
+    try { text = fs.readFileSync(p.questions, 'utf8'); } catch (_) { text = ''; }
+    const r = questions.stamp(questions.parseFile(text), d.qaSeen, Date.now(), st.mtimeMs);
+    d.qaFile = r.items;
+    if (JSON.stringify(r.seen) !== JSON.stringify(d.qaSeen || {})) { d.qaSeen = r.seen; qaSave(d, { qaSeen: r.seen }); }
+  }
+  qaSend(id, d, questions.merge(d.qaFile || [], d.qaBox || [], d.qaOpen || []));
+}
+
+ipcMain.on('qa:request', () => {
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || !d.qaJson || d.qaJson === 'null') continue;
+    safeSend('session:qa', { id, qa: JSON.parse(d.qaJson) });
+  }
+});
+
+ipcMain.on('qa:open-file', (_e, { id } = {}) => {
+  const d = det.get(id);
+  if (!d || !DOSSIER_ENABLED || !dossierFor(id, d)) return;
+  const p = dossierEnsure(id, d);
+  if (!p) return;
+  shell.openPath(p.questions).then((err) => { if (err) restartLog(`вкладка ${id}: не открылся ${p.questions}: ${err}`); })
+    .catch(reportMainError);
+});
+
+setInterval(() => {
+  for (const id of sessions.keys()) {
+    const d = det.get(id);
+    if (!d || d.dead || !d.tabKey) continue;
+    if (!DOSSIER_ENABLED) {
+      d.qaMtime = 0;
+      if (d.qaJson && d.qaJson !== 'null') qaSend(id, d, null);
+      continue;
+    }
+    try {
+      const p = dossierEnsure(id, d);
+      if (p) qaTick(id, d, p);
+    } catch (e) { reportMainError(e); }
+  }
+}, QA_TICK_MS);
 
 setInterval(() => {
   if (!DOSSIER_ENABLED) {

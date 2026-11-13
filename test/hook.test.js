@@ -1194,6 +1194,26 @@ test('досье: на старте называет оба файла абсо�
   assert.ok(/панели «План»/.test(ctx) && /\[ \], \[x\] или \[>\]/.test(ctx), 'формат отметок назван: приложение разбирает раздел для панели плана');
 });
 
+test('вопросы: на старте назван файл вопросов и его формат — тот, что разбирает questions.js', () => {
+  const Q = require('../questions');
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null,
+    dossierEx({ questions: '/u/tabs/k/questions.md' }));
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes('Вопросы /u/tabs/k/questions.md'));
+  assert.ok(/три файла/.test(ctx));
+  assert.ok(/AskUserQuestion\) сюда не пиши/.test(ctx), 'вопросы с вариантами пишет приложение, агент их не дублирует');
+  // Пример из текста правила разбирается модулем приложения.
+  assert.deepStrictEqual(Q.parseFile('- вопрос\n  → ответ\n- другой\n  → снят: почему\n'),
+    [{ q: 'вопрос', a: 'ответ' }, { q: 'другой', a: 'снят: почему' }]);
+  assert.ok(ctx.includes('«- вопрос»') && ctx.includes('«  → ответ»'));
+});
+
+test('вопросы: без пути от приложения (старая версия) — о файле молчим', () => {
+  const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx());
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(!/questions\.md/.test(ctx) && /два файла/.test(ctx));
+});
+
 test('досье: самоперезапуск без handoff, с файлом работы', () => {
   const out = H.outputFor({ hook_event_name: 'SessionStart', session_id: 's', cwd: '/tmp' }, H.loadMatcher(() => null), [], null, dossierEx());
   const ctx = out.hookSpecificOutput.additionalContext;
