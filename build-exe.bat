@@ -1,5 +1,5 @@
 @echo off
-title Swarm - build installer
+title Svarmo - build installer
 cd /d "%~dp0"
 
 REM Mirrors for Electron and electron-builder tools - GitHub often drops the

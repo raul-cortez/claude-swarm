@@ -78,7 +78,7 @@
 > проверить разработчика» — карантин вешает браузер, которым качали. Снимается один раз:
 >
 > ```bash
-> xattr -dr com.apple.quarantine /Applications/Swarm.app
+> xattr -dr com.apple.quarantine /Applications/Svarmo.app
 > ```
 >
 > Без терминала: попробовать открыть Svarmo, получить отказ, затем в **Системные
@@ -484,7 +484,7 @@ Claude Code не виден login-шеллу. Svarmo запускает ровн
 Снимите карантин — см. предупреждение в [«Установке»](#установка):
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Swarm.app
+xattr -dr com.apple.quarantine /Applications/Svarmo.app
 ```
 
 </details>

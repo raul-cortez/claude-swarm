@@ -1,5 +1,5 @@
 @echo off
-title Swarm
+title Svarmo
 cd /d "%~dp0"
 
 REM Mirror for the Electron binary - GitHub often drops the connection.
@@ -24,7 +24,7 @@ call npm install
 if errorlevel 1 goto install_failed
 
 :run
-echo === Starting Swarm ===
+echo === Starting Svarmo ===
 call npm start
 pause
 exit /b 0
