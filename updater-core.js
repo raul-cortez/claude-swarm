@@ -75,10 +75,10 @@ function validateManifest(obj) {
   };
 }
 
-// Как стоит Swarm на Linux — от этого зависит, чем его обновлять полностью:
+// Как стоит Svarmo на Linux — от этого зависит, чем его обновлять полностью:
 //   'appimage' — запущен сам AppImage (рантайм выставляет $APPIMAGE): новый AppImage рядом;
 //   'deb'      — пакет в /opt: новый .deb, его откроет Discover или центр приложений;
-//   'unpacked' — папка от install.sh: Swarm сам скачивает AppImage и раскладывает его на
+//   'unpacked' — папка от install.sh: Svarmo сам скачивает AppImage и раскладывает его на
 //                место прежней папки. Предложить такому человеку AppImage в «Загрузках»
 //                значило бы обновить не ту копию: ярлык в меню продолжал бы запускать старую.
 function linuxInstallKind(execPath, appImageEnv) {

@@ -73,7 +73,7 @@ test('the screen wipe speaks each shell own way and still runs the command', () 
   }
 });
 
-test('tabEnv стирает метки Клод-сессии, запустившей сворм', () => {
+test('tabEnv стирает метки Клод-сессии, запустившей Svarmo', () => {
   const parent = {
     PATH: '/usr/bin',
     CLAUDE_CODE_CHILD_SESSION: '1',      // из-за неё Клод не пишет журнал

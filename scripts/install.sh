@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — установка Swarm на macOS и Linux одной командой.
+# install.sh — установка Svarmo на macOS и Linux одной командой.
 #
 # Зачем отдельный установщик, когда есть dmg. Карантин («не удалось проверить
 # разработчика») вешает на файл не система сама по себе, а приложение, которое его
@@ -12,14 +12,14 @@
 # файлом он просто не смонтируется.
 #
 # Запуск:
-#   curl -fsSL https://raw.githubusercontent.com/raul-cortez/claude-swarm/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/raul-cortez/svarmo/main/scripts/install.sh | sh
 #
 # Куда ставит: на маке — /Программы, если туда можно писать, иначе ~/Applications; на Linux —
 # ~/.local/share/swarm, с ярлыком в меню и командой `swarm`. Переопределяется переменной
 # SWARM_DEST (этим же пользуются проверки).
 set -eu
 
-REPO=raul-cortez/claude-swarm
+REPO=raul-cortez/svarmo
 MANIFEST="https://github.com/$REPO/releases/latest/download/manifest.json"
 
 die() { printf '✗ %s\n' "$*" >&2; exit 1; }
@@ -41,7 +41,7 @@ fetch() {
 # Обновления это не трогает: они ложатся в папку настроек, а не в папку приложения.
 install_linux() {
   [ "$(uname -m)" = "x86_64" ] || die "сборки для Linux есть только под x86_64 (у вас $(uname -m))"
-  # Своя подпапка внутри DEST, как Swarm.app на маке: ниже она удаляется целиком, и
+  # Своя подпапка внутри DEST, как Svarmo.app на маке: ниже она удаляется целиком, и
   # указанный руками SWARM_DEST=$HOME не должен этим стать.
   DEST="${SWARM_DEST:-${XDG_DATA_HOME:-$HOME/.local/share}}/swarm"
   apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
@@ -49,7 +49,7 @@ install_linux() {
 
   # По пути, а не по имени: `swarm` зовут и чужие программы, и мешать они не должны.
   if pgrep -f "$DEST/swarm" >/dev/null 2>&1; then
-    die "Swarm сейчас запущен — закройте его и повторите"
+    die "Svarmo сейчас запущен — закройте его и повторите"
   fi
 
   step "узнаю последнюю версию"
@@ -60,7 +60,7 @@ install_linux() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
 
-  step "качаю Swarm ${ver:-}"
+  step "качаю Svarmo ${ver:-}"
   fetch "$url" "$tmp/swarm.AppImage" || die "не скачался AppImage"
   chmod +x "$tmp/swarm.AppImage"
 
@@ -91,7 +91,7 @@ LAUNCH
   cat > "$apps/swarm.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Swarm
+Name=Svarmo
 Comment=Several Claude Code sessions in tabs
 Exec="$bindir/swarm" %U
 Icon=$icon
@@ -103,7 +103,7 @@ DESKTOP
   command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 >/dev/null 2>&1 || true
   command -v kbuildsycoca5 >/dev/null 2>&1 && kbuildsycoca5 >/dev/null 2>&1 || true
 
-  printf '\n✔ Готово: Swarm есть в меню приложений\n'
+  printf '\n✔ Готово: Svarmo есть в меню приложений\n'
   printf '  Из терминала: swarm\n'
   case ":$PATH:" in *":$bindir:"*) ;; *) printf '  (папки %s нет в PATH — запускайте из меню или полным путём)\n' "$bindir" ;; esac
   printf '  Нужен установленный Claude Code — проверьте командой: claude --version\n'
@@ -123,8 +123,8 @@ fi
 mkdir -p "$DEST"
 
 # Подменять файлы работающего приложения нельзя: оно живёт в них прямо сейчас.
-if pgrep -x Swarm >/dev/null 2>&1; then
-  die "Swarm сейчас запущен — закройте его и повторите"
+if pgrep -x Svarmo >/dev/null 2>&1; then
+  die "Svarmo сейчас запущен — закройте его и повторите"
 fi
 
 step "узнаю последнюю версию"
@@ -140,7 +140,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "качаю Swarm ${ver:-}"
+step "качаю Svarmo ${ver:-}"
 fetch "$url" "$tmp/swarm.dmg" || die "не скачался образ"
 
 step "распаковываю"

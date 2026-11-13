@@ -26,8 +26,8 @@ if (process.platform !== 'darwin') {
 
 // Работающее приложение подменять нельзя — оно прямо сейчас выполняется из этих файлов.
 try {
-  execFileSync('/usr/bin/pgrep', ['-x', 'Swarm'], { stdio: 'ignore' });
-  die('Swarm сейчас запущен — закройте его и повторите');
+  execFileSync('/usr/bin/pgrep', ['-x', 'Svarmo'], { stdio: 'ignore' });
+  die('Svarmo сейчас запущен — закройте его и повторите');
 } catch (e) {
   if (e && e.status !== 1) throw e;   // status 1 у pgrep = «не найдено», это и нужно
 }

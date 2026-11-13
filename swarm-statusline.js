@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// swarm-statusline.js — the statusline Claude Swarm injects into every Claude
+// swarm-statusline.js — the statusline Svarmo injects into every Claude
 // session it launches (via `--settings`, see main.js). It exists so the context
 // progress bar on each tab works OUT OF THE BOX: the app can't measure context
 // itself, it scrapes a "NN%" out of the statusline text — and stock Claude prints
@@ -28,7 +28,7 @@ const os = require('os');
 // --- чужая строка статуса: не «или-или», а «и то, и другое» -------------------
 // Слот statusLine у Клода один, и наш файл (--settings) идёт верхним слоем — значит
 // СВОЯ строка человека в свормовских вкладках просто не показывалась. Раньше это лечили
-// галкой «своя строка статуса Swarm»: выключил — вернул себе свою, но вместе с ней потерял
+// галкой «своя строка статуса Svarmo»: выключил — вернул себе свою, но вместе с ней потерял
 // полоску контекста, лимиты и САМ ПЕРЕЗАПУСК ПО КОНТЕКСТУ, потому что процент заполнения
 // приходит только отсюда. То есть выбор был между своей строкой и работающим приложением.
 //

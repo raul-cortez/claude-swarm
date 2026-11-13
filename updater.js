@@ -184,7 +184,7 @@ function linuxKind() {
 }
 
 // Полное обновление. Обычно — установщик в «Загрузки», дальше человек ставит его сам. Но
-// папку от install.sh никакой установщик не обновит, поэтому её Swarm меняет сам и просит
+// папку от install.sh никакой установщик не обновит, поэтому её Svarmo меняет сам и просит
 // перезапуск ({ relaunch: true }): скачать AppImage, распаковать рядом и поменять папки местами.
 // На Linux файлы работающей программы можно убирать — процесс держит их до выхода.
 async function downloadInstaller(url, filename, onProgress) {
@@ -233,7 +233,7 @@ async function reinstallUnpacked(url, onProgress) {
 // настоящий повод, диск-образ. Он размонтируется, и приложение исчезнет вместе с ним.
 function maybeRelocate() {
   if (!app.isPackaged || process.platform !== 'darwin') return false;
-  const bundle = app.getPath('exe').split('/Contents/')[0]; // .../Swarm.app
+  const bundle = app.getPath('exe').split('/Contents/')[0]; // .../Svarmo.app
   if (!bundle.startsWith('/Volumes/')) return false;
   const declinedFlag = path.join(app.getPath('userData'), 'relocate-declined');
   if (fs.existsSync(declinedFlag)) return false;
@@ -243,7 +243,7 @@ function maybeRelocate() {
     buttons: ['Не сейчас', 'Переместить'],
     defaultId: 1, cancelId: 0,
     title: 'Установка',
-    message: 'Переместить Claude Swarm в «Программы» (~/Applications)?',
+    message: 'Переместить Svarmo в «Программы» (~/Applications)?',
     detail: 'Сейчас приложение запущено с диск-образа — он размонтируется, и приложение пропадёт. Оно перезапустится из новой папки.',
   });
   if (choice !== 1) { try { fs.writeFileSync(declinedFlag, '1'); } catch (_) {} return false; }

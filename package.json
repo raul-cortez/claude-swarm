@@ -3,7 +3,7 @@
   "version": "0.83.2",
   "private": true,
   "description": "Minimal Electron GUI for several Claude Code sessions in tabs.",
-  "repository": "github:raul-cortez/claude-swarm",
+  "repository": "github:raul-cortez/svarmo",
   "main": "bootstrap.js",
   "desktopName": "swarm.desktop",
   "scripts": {
@@ -18,9 +18,9 @@
   "license": "MIT",
   "build": {
     "appId": "io.swarm.claude-swarm-lite",
-    "productName": "Swarm",
+    "productName": "Svarmo",
     "npmRebuild": false,
-    "artifactName": "swarm-${version}-${arch}.${ext}",
+    "artifactName": "svarmo-${version}-${arch}.${ext}",
     "files": [
       "bootstrap.js",
       "boot-core.js",
@@ -92,7 +92,7 @@
       "synopsis": "Several Claude Code sessions in tabs",
       "maintainer": "raul-cortez <raul-cortez@users.noreply.github.com>",
       "executableName": "swarm",
-      "artifactName": "swarm-${version}-x64.${ext}"
+      "artifactName": "svarmo-${version}-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,

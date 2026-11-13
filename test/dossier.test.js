@@ -67,10 +67,16 @@ test('undelivered: a bare dequeue takes the front, whatever it is (measured orde
 });
 
 test('undelivered: crew texts are kept and signed, the restart ask is not', () => {
-  const es = [enqueue(1, '[сворм] Вопрос от исполнителя «a»: можно?'), enqueue(2, '[сворм] Контекст этой вкладки заполнен на 30%')];
-  assert.deepStrictEqual(D.undelivered(es).map((u) => [u.who, u.text.slice(0, 12)]), [['swarm', '[сворм] Вопр']]);
+  const es = [enqueue(1, '[svarmo] Вопрос от исполнителя «a»: можно?'), enqueue(2, '[svarmo] Контекст этой вкладки заполнен на 30%')];
+  assert.deepStrictEqual(D.undelivered(es).map((u) => [u.who, u.text.slice(0, 13)]), [['swarm', '[svarmo] Вопр']]);
   const txt = D.inheritText({ how: 'restart', undelivered: D.undelivered(es), tail: { items: [], dropped: 0 } });
-  assert.ok(txt.includes('**Сворм**'));
+  assert.ok(txt.includes('**Svarmo**'));
+});
+
+// Старые стенограммы несут прежнюю метку «[сворм]» — их строки тоже наши, не человека.
+test('the old [сворм] mark is still recognised as ours', () => {
+  assert.strictEqual(D.kindOf('[сворм] Вопрос от исполнителя «a»: можно?'), 'swarm');
+  assert.strictEqual(D.kindOf('[сворм] Контекст этой вкладки заполнен на 30%'), 'restart');
 });
 
 test('the restart ask pattern matches what restart.js actually types', () => {
@@ -108,8 +114,8 @@ test('humanMessage: prompts and queued commands count, noise does not', () => {
 test('humanMessage: origin other than human, notices, swarm texts are not the person', () => {
   assert.strictEqual(D.humanMessage({ ...human(1, 'x'), origin: { kind: 'task-notification' } }), null);
   assert.ok(D.humanMessage({ ...human(1, 'x'), origin: { kind: 'human' } }));
-  assert.strictEqual(D.humanMessage(human(1, '[сворм] Контекст этой вкладки заполнен на 30%')), null);
-  assert.strictEqual(D.humanMessage(human(1, '\n\n<pasted_content id="6d74">\n[сворм] Контекст')), null);
+  assert.strictEqual(D.humanMessage(human(1, '[svarmo] Контекст этой вкладки заполнен на 30%')), null);
+  assert.strictEqual(D.humanMessage(human(1, '\n\n<pasted_content id="6d74">\n[svarmo] Контекст')), null);
   assert.strictEqual(D.humanMessage(queued(1, '<task-notification>\n<task-id>a</task-id>')), null);
   assert.strictEqual(D.humanMessage({ ...queued(1, 'x'), origin: { kind: 'task-notification' } }), null);
 });

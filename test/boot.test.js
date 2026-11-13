@@ -42,7 +42,7 @@ test('указатель не уводит загрузку из своей па
   }
 });
 
-test('одна неудачная попытка версию не хоронит — так выходит вторая копия сворма', () => {
+test('одна неудачная попытка версию не хоронит — так выходит вторая копия Svarmo', () => {
   const d = core.decideBoot(state({ pointer: pointer(), marker: { version: '0.31.0', attempts: 1 } }));
   assert.strictEqual(d.kind, 'payload');
   assert.strictEqual(d.attempt, 2);           // считаем дальше

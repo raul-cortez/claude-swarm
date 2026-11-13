@@ -131,14 +131,16 @@
   // Not the person, though it travels the same queue: background-task and subagent notices
   // (`<task-notification>`, `<agent-message …>` — enqueued and delivered like a typed message;
   // a real transcript had 40 enqueues, two of them typed), and our own texts typed into the
-  // terminal (restart ask, crew notices) — they start with «[сворм]», possibly inside the
+  // terminal (restart ask, crew notices) — they start with «[svarmo]», possibly inside the
   // bracketed-paste wrapper.
   const RE_WRAP = /^(?:<pasted_content[^>]*>\s*)?/;
   const RE_NOTICE = /^(?:<pasted_content[^>]*>\s*)?<(?:task-notification|agent-message|[a-z-]+-notification)\b/;
-  const RE_SWARM = /^(?:<pasted_content[^>]*>\s*)?\[сворм\]/;
+  // Метка наших строк. До переименования (0.84) она была «[сворм]» — старые стенограммы
+  // по-прежнему её несут, поэтому узнаём обе.
+  const RE_SWARM = /^(?:<pasted_content[^>]*>\s*)?\[(?:сворм|svarmo)\]/i;
   // Our restart ask and its reminder: addressed to the session that is leaving — the next one
   // must not answer them again. Pinned against restart.askText / askAgainText by a test.
-  const RE_RESTART_ASK = /^(?:<pasted_content[^>]*>\s*)?\[сворм\] (?:Контекст этой вкладки заполнен|Всё ещё жду ответ на просьбу о перезапуске)/;
+  const RE_RESTART_ASK = /^(?:<pasted_content[^>]*>\s*)?\[(?:сворм|svarmo)\] (?:Контекст этой вкладки заполнен|Всё ещё жду ответ на просьбу о перезапуске)/;
 
   // Who put a text into the conversation: 'person' | 'swarm' (our own texts — crew questions,
   // «close the crew»: they still need an answer) | 'notice' (background tasks, subagents) |
@@ -199,7 +201,7 @@
   }
 
   // Our own crew texts in the conversation (not the restart ask): the tail shows them signed
-  // «Сворм», and they may be dropped for length like the agent's prose.
+  // «Svarmo», and they may be dropped for length like the agent's prose.
   function swarmMessage(e) {
     const s = said(e);
     return s && s.kind === 'swarm' ? { at: s.at, text: s.text } : null;
@@ -326,10 +328,10 @@
     if (und.length) {
       out.push('');
       out.push('## Недоставленное');
-      out.push('Это набрали, пока прошлая сессия работала, и до неё оно так и не дошло. Начни с этого — но просьбы что-то сделать сначала подтверди у человека. «Человек» — его слова; «Сворм» — сообщения бригады (вопрос исполнителя и т.п.), отвечай на них в бригаду, а не человеку.');
+      out.push('Это набрали, пока прошлая сессия работала, и до неё оно так и не дошло. Начни с этого — но просьбы что-то сделать сначала подтверди у человека. «Человек» — его слова; «Svarmo» — сообщения бригады (вопрос исполнителя и т.п.), отвечай на них в бригаду, а не человеку.');
       for (const u of und) {
         out.push('');
-        out.push(`**${u.who === 'swarm' ? 'Сворм' : 'Человек'}** (${hhmm(u.at)}):`);
+        out.push(`**${u.who === 'swarm' ? 'Svarmo' : 'Человек'}** (${hhmm(u.at)}):`);
         out.push(quote(u.text));
       }
     }
@@ -340,10 +342,10 @@
       out.push('Пусто: досье успело разобрать всё, что было сказано.');
     } else {
       out.push('Разбери: новые правила и замечания — в досье; на неотвеченные вопросы — ответь; неисполненные просьбы — подтверди у человека, прежде чем делать.');
-      if (tail.dropped) out.push(`(${tail.dropped} ранних реплик агента и сворма выпали по длине; слова человека — все.)`);
+      if (tail.dropped) out.push(`(${tail.dropped} ранних реплик агента и Svarmo выпали по длине; слова человека — все.)`);
       for (const x of tail.items) {
         out.push('');
-        out.push(`**${x.who === 'human' ? 'Человек' : x.who === 'swarm' ? 'Сворм' : 'Агент'}** (${hhmm(x.at)}):`);
+        out.push(`**${x.who === 'human' ? 'Человек' : x.who === 'swarm' ? 'Svarmo' : 'Агент'}** (${hhmm(x.at)}):`);
         out.push(quote(x.text));
       }
     }

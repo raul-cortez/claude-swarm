@@ -1,6 +1,6 @@
 name: Publish npm installer
 
-# Публикует пакет-установщик `claude-swarm` (папка npm/) в реестр npm.
+# Публикует пакет-установщик `svarmo` (папка npm/) в реестр npm.
 #
 # Токена в секретах нет и не должно быть: реестр доверяет этому workflow напрямую
 # (npm Trusted Publishing). Гитхаб выдаёт заданию короткоживущий OIDC-токен, npm меняет
@@ -12,7 +12,7 @@ name: Publish npm installer
 # этого файла ломает публикацию, и чинится оно только там же, на сайте.
 #
 # Запуск только руками. Пакет-установщик живёт своей жизнью: его версия не связана с
-# версией Swarm, и переиздавать его надо не на каждый релиз, а только когда поменялся
+# версией Svarmo, и переиздавать его надо не на каждый релиз, а только когда поменялся
 # scripts/install.sh. Автозапуск по тегу выпускал бы одно и то же снова и снова.
 
 on:
@@ -51,12 +51,12 @@ jobs:
       - name: Версия ещё не занята
         run: |
           v=$(node -p "require('./package.json').version")
-          if npm view "claude-swarm@$v" version >/dev/null 2>&1; then
-            echo "claude-swarm@$v уже в реестре." >&2
+          if npm view "svarmo@$v" version >/dev/null 2>&1; then
+            echo "svarmo@$v уже в реестре." >&2
             echo "Поднимите версию в npm/package.json (npm version patch) и запустите снова." >&2
             exit 1
           fi
-          echo "публикуем claude-swarm@$v"
+          echo "публикуем svarmo@$v"
 
       # Зависимостей у пакета нет, ставить нечего. prepack сам положит рядом свежий
       # scripts/install.sh — ради него тут и нужен полный чекаут репозитория.

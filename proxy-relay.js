@@ -11,24 +11,24 @@
 // Seen live 2026-11-08 after a VPN config change on the router: CONNECT hung 15 s+, the same
 // request with `Host: <proxy>` went through in 0.9 s. Claude has no knob for that header.
 //
-// So Swarm listens on 127.0.0.1 and hands tabs that address as their proxy. Each request head
+// So Svarmo listens on 127.0.0.1 and hands tabs that address as their proxy. Each request head
 // gets two edits and goes on to the real proxy, untouched otherwise:
 //  - Host names the proxy itself (CONNECT only: the target stays in the request line, which is
 //    what a proxy actually reads — RFC 9110 §9.3.6). A sniffer sees "traffic for the proxy" and
 //    leaves the destination alone.
 //  - Proxy-Authorization comes from the real proxy URL, so the login and password never have to
 //    sit in a tab's environment or in the subscription's settings.json.
-// The bytes after the head (TLS to Anthropic) pass through as they are: Swarm can't read them.
+// The bytes after the head (TLS to Anthropic) pass through as they are: Svarmo can't read them.
 //
 // For a proxy nobody sniffs (no VPN, VPN in plain tunnel mode) the edits change nothing: a proxy
 // ignores Host on CONNECT. Only http:// proxies get a relay — an https:// proxy hides the CONNECT
-// inside TLS, there is nothing to sniff. (Relaying one would also mean Swarm's own TLS to the
+// inside TLS, there is nothing to sniff. (Relaying one would also mean Svarmo's own TLS to the
 // proxy, with Node's CA list instead of the one Claude trusts — a corporate CA would break.)
 //
 // Two relays per proxy:
 //  - the main one (split off) sends everything to the proxy. Claude itself talks to it: whatever
 //    host Claude calls, it never leaves the proxy.
-//  - the split one is for the commands Claude runs — git, gh, npm, curl. The Swarm hook points
+//  - the split one is for the commands Claude runs — git, gh, npm, curl. The Svarmo hook points
 //    their proxy variables here (hooks/swarm-signal.mjs, proxyEnvLine). Anthropic's hosts still go
 //    to the proxy (a nested `claude -p`, curl to the API); everything else goes straight from the
 //    Mac. If the direct way fails (a corporate firewall that only lets the proxy out, a name only
@@ -288,7 +288,7 @@ function startRelay(proxyUrl, port, opts) {
 }
 
 // The same proxy gets the same port from one launch to the next, so a Claude started by hand
-// from settings.json between two Swarm runs still finds the relay. 20000–39999: above the
+// from settings.json between two Svarmo runs still finds the relay. 20000–39999: above the
 // usual dev-server ports, below the ephemeral range macOS and Linux hand out.
 function stablePort(proxyUrl) {
   let h = 2166136261;

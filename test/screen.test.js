@@ -668,10 +668,10 @@ const QUIZ_REAL = [
 const QUIZ_WRAPPED = [
   ' ☐ Починка ',
   '',
-  'Что починить в сворме?',
+  'Что починить в Svarmo?',
   '',
   '❯ 1. Конфиг вкладки целиком',
-  '     Сворм узнаёт, с каким CLAUDE_CONFIG_DIR запущена вкладка, ищет',
+  '     Svarmo узнаёт, с каким CLAUDE_CONFIG_DIR запущена вкладка, ищет',
   '     стенограмму в его projects и ставит туда свои хуки.',
   '  2. Только стенограмма',
   '     Искать файл разговора во всех конфигах. Мусор в чате уйдёт, но статус',
@@ -1041,7 +1041,7 @@ test('снимок без времени остаётся главным', () =>
   assert.strictEqual(S.ctxPick({ snap: { used: 42, at: 0 }, line: 80, now: 1_700_000_000_000 }), 42);
 });
 
-// --- поле ввода: висит ли там напечатанное сворма ---------------------------------------
+// --- поле ввода: висит ли там напечатанное Svarmo ---------------------------------------
 const BOX = (row) => [
   '⏺ Готово, жду задачу.',
   '',
@@ -1052,7 +1052,7 @@ const BOX = (row) => [
 ].join('\n');
 
 test('inputDraft: текст в поле ввода, пустое поле — пустая строка', () => {
-  assert.strictEqual(S.inputDraft(BOX('❯ [сворм] Вопрос от исполнителя «#679»')), '[сворм] Вопрос от исполнителя «#679»');
+  assert.strictEqual(S.inputDraft(BOX('❯ [svarmo] Вопрос от исполнителя «#679»')), '[svarmo] Вопрос от исполнителя «#679»');
   assert.strictEqual(S.inputDraft(BOX('❯ ')), '');
 });
 
@@ -1066,8 +1066,8 @@ test('inputDraft: вариант диалога «❯ 1. Yes» не приним
 });
 
 test('draftIsOurs: наш текст, свёрнутая вставка — да; черновик человека и пусто — нет', () => {
-  const ours = '[сворм] Вопрос от исполнителя «#679»: какую ветку брать?';
-  assert.ok(S.draftIsOurs('[сворм] Вопрос от исполнителя «#679»: какую', ours));
+  const ours = '[svarmo] Вопрос от исполнителя «#679»: какую ветку брать?';
+  assert.ok(S.draftIsOurs('[svarmo] Вопрос от исполнителя «#679»: какую', ours));
   assert.ok(S.draftIsOurs('[Pasted text #1 +12 lines]', ours));
   assert.ok(!S.draftIsOurs('ок, бери (а)', ours));
   assert.ok(!S.draftIsOurs('', ours));
@@ -1081,8 +1081,8 @@ for (const [name, fn] of tests) {
 console.log(passed + '/' + tests.length + ' screen tests passed');
 
 test('submitState: наш текст — жать, пусто — ушло, черновик человека — не трогать, поля нет — смотреть ещё', () => {
-  const ours = '[сворм] Вопрос от исполнителя «#679»: какую базу брать?';
-  assert.strictEqual(S.submitState('[сворм] Вопрос от исполнителя «#679»', ours), 'ours');
+  const ours = '[svarmo] Вопрос от исполнителя «#679»: какую базу брать?';
+  assert.strictEqual(S.submitState('[svarmo] Вопрос от исполнителя «#679»', ours), 'ours');
   assert.strictEqual(S.submitState('[Pasted text #1 +3 lines]', ours), 'ours');
   assert.strictEqual(S.submitState('', ours), 'empty');
   assert.strictEqual(S.submitState('   ', ours), 'empty');

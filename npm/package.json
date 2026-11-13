@@ -1,9 +1,9 @@
 {
-  "name": "claude-swarm",
+  "name": "svarmo",
   "version": "1.1.0",
-  "description": "Установщик Swarm — пульта для нескольких сессий Claude Code сразу.",
+  "description": "Установщик Svarmo — пульта для нескольких сессий Claude Code сразу.",
   "bin": {
-    "claude-swarm": "bin/cli.mjs"
+    "svarmo": "bin/cli.mjs"
   },
   "type": "module",
   "files": [
@@ -16,10 +16,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/raul-cortez/claude-swarm.git"
+    "url": "git+https://github.com/raul-cortez/svarmo.git"
   },
-  "homepage": "https://github.com/raul-cortez/claude-swarm",
-  "keywords": ["claude", "claude-code", "swarm", "agents", "electron"],
+  "homepage": "https://github.com/raul-cortez/svarmo",
+  "keywords": ["claude-code", "svarmo", "agents", "electron"],
   "license": "MIT",
   "engines": {
     "node": ">=18"

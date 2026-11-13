@@ -44,7 +44,7 @@ function wanted(cards, proxies, normalize) {
   if (!byStem.size) return out;
   for (const c of Array.isArray(cards) ? cards : []) {
     const home = String((c && c.home) || '').trim();
-    if (!home) continue;   // папку ещё не узнали — вкладкам хватает окружения от сворма
+    if (!home) continue;   // папку ещё не узнали — вкладкам хватает окружения от Svarmo
     const url = byStem.get(stemOf(c.line)) || '';
     // У одной папки бывает несколько карточек (`claude` и `claude --model opus`): прокси
     // любой из них — прокси папки.

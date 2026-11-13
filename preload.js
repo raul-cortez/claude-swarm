@@ -88,7 +88,7 @@ contextBridge.exposeInMainWorld('swarm', {
   resumeNow: (id) => ipcRenderer.invoke('tab:resumeNow', { id }),
 
   // В этой вкладке запустили ДРУГОГО агента руками — строка запуска, которой её открыл
-  // сворм, больше не про неё (см. session:forgetLaunch).
+  // Svarmo, больше не про неё (см. session:forgetLaunch).
   forgetLaunch: (id) => ipcRenderer.send('session:forgetLaunch', { id }),
 
   // Bring the app window forward (used when a notification is clicked).

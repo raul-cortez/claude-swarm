@@ -12,7 +12,7 @@
   // Tango defaults, which the app rendered before — so nothing shifts visually).
   const THEMES = [
     {
-      id: 'swarm-dark', name: 'Swarm Dark',
+      id: 'swarm-dark', name: 'Svarmo Dark',
       xterm: {
         background: '#0d0f12', foreground: '#c9d1d9', cursor: '#3fd0c9',
         cursorAccent: '#0d0f12', selectionBackground: '#2b3640',
