@@ -131,6 +131,20 @@ test('projectSlug flattens a Windows path with a drive letter', () => {
   assert.strictEqual(T.projectSlug('D:\\work\\my.app'), 'D--work-my-app');
 });
 
+// Клод заменяет дефисом всё, что не латиница и не цифра: кириллица, пробел, подчёркивание.
+// Папка «Новая папка» у него — дюжина дефисов; мы искали «-Новая папка» и не находили ничего.
+test('projectSlug flattens Cyrillic, spaces and underscores like Claude does', () => {
+  assert.strictEqual(T.projectSlug('/Users/e/WebstormProjects/Новая папка'),
+    '-Users-e-WebstormProjects------------');
+  assert.strictEqual(T.projectSlug('/Users/e/my_app v2'), '-Users-e-my-app-v2');
+});
+
+test('projectSlugPrefix is empty for normal paths and a cut prefix for long ones', () => {
+  assert.strictEqual(T.projectSlugPrefix('/Users/e/app'), '');
+  const long = '/x'.repeat(150);
+  assert.strictEqual(T.projectSlugPrefix(long), '-x'.repeat(100) + '-');
+});
+
 // Конфиг Клода у вкладки не обязательно ~/.claude: `CLAUDE_CONFIG_DIR` (у человека алиас
 // `claude-my`) уводит и разговоры, и настройки в другую папку. Приложение складывало путь из
 // зашитого ~/.claude и файла такой вкладки не находило никогда — в телегу вместо ответа агента

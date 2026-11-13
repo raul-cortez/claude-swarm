@@ -17,17 +17,26 @@
 // This module is pure — it takes already-read text and returns a verdict, so it's
 // unit-testable on fixtures. The file I/O and the tab↔file matching live in main.js.
 
-// Claude Code's folder name for a project: the absolute path with every separator
-// (and dot) flattened to '-'. We don't rely on this being exact — main.js verifies a
-// candidate file by the `cwd` recorded INSIDE it — but it gets us to the right
+// Claude Code's folder name for a project: the absolute path with every character that is not
+// a Latin letter or a digit flattened to '-'. We don't rely on this being exact — main.js
+// verifies a candidate file by the `cwd` recorded INSIDE it — but it gets us to the right
 // directory on the first try.
 //
-// The colon is in the class for Windows: a path starts with a drive (`C:\Users\me`), and
-// ':' is illegal in a folder name, so Claude flattens it like everything else —
-// `C--Users-me`. Miss it and every Windows path lands one folder off, which means the
-// transcript channel silently never finds a file there.
+// Not just separators: Claude flattens EVERYTHING outside [a-zA-Z0-9]. A folder named in
+// Cyrillic («Новая папка») becomes a run of dashes, and so do spaces, underscores and the
+// Windows drive colon (`C:\Users\me` → `C--Users-me`). We used to flatten only / \ . : —
+// and for such folders looked in a directory that never exists: the past-conversations
+// window stayed empty for the very folder the tab was in.
+//
+// Paths longer than SLUG_MAX are cut by Claude and get a hash of the path appended, which we
+// can't reproduce; projectSlugPrefix gives the part to match by (see main.js projectDirs).
+const SLUG_MAX = 200;
 function projectSlug(cwd) {
-  return String(cwd || '').replace(/[/\\.:]/g, '-');
+  return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
+}
+function projectSlugPrefix(cwd) {
+  const s = projectSlug(cwd);
+  return s.length > SLUG_MAX ? s.slice(0, SLUG_MAX) + '-' : '';
 }
 
 // Обратная дорога: по адресу стенограммы — КОНФИГ, в котором она лежит. Адрес выглядит как
@@ -471,7 +480,7 @@ function historyHead(text, cwd, same) {
 module.exports = {
   searchEntries, SEARCH_MAX,
   READY_DEBOUNCE_MS, BIND_MTIME_SLACK_MS, SCREEN_KEY_LEN, INJECTED_MIN, screenKey, pickByScreen,
-  projectSlug, homeOfTranscript, parseEntries, blockTypes, entryText, lastMain, tsOf, isPastLife, classify, cwdOf, pickBinding, isInterrupt,
+  projectSlug, projectSlugPrefix, SLUG_MAX, homeOfTranscript, parseEntries, blockTypes, entryText, lastMain, tsOf, isPastLife, classify, cwdOf, pickBinding, isInterrupt,
   belongsToTurn, turnText, currentTool, turnTokens,
   pickByInjected,
   historyHead, HISTORY_PROMPT_LEN,

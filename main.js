@@ -1343,7 +1343,17 @@ function configRoots() {
 }
 
 function projectDir(cwd, home) {
-  return path.join(home || CLAUDE_HOME, 'projects', transcript.projectSlug(cwd));
+  const base = path.join(home || CLAUDE_HOME, 'projects');
+  const exact = path.join(base, transcript.projectSlug(cwd));
+  // Длинный путь Клод обрезает и дописывает хэш, которого нам не повторить: ищем по началу.
+  const prefix = transcript.projectSlugPrefix(cwd);
+  if (prefix) {
+    try {
+      const hit = fs.readdirSync(base).find((n) => n.startsWith(prefix));
+      if (hit) return path.join(base, hit);
+    } catch (_) {}
+  }
+  return exact;
 }
 
 // Папки этого проекта во ВСЕХ конфигах: сначала та, где разговор уже находили.
