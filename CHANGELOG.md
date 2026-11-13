@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.83.2 — 2026-11-13
+
+- feat(plan): sub-steps fold in the plan panel
+- fix(history): a resumed conversation brings back its tab's dossier and plan
+
 ## 0.83.1 — 2026-11-13
 
 - fix(tabs): status dot is a setting again; foreman card loses the empty dot slot
