@@ -4354,10 +4354,13 @@ function rememberHistory() {
       summary: s.summaryText || (h[s.claudeSessionId] && h[s.claudeSessionId].summary) || '',
       cmd: s.cmd || null,
       flags: s.flags != null ? s.flags : null,
+      // Ключ вкладки — по нему досье (план, правила) вернётся вместе с разговором.
+      tabKey: s.tabKey || null,
     };
     const old = h[s.claudeSessionId];
     if (old && old.cwd === rec.cwd && old.name === rec.name && old.named === rec.named && (old.color || null) === rec.color
-      && old.digest === rec.digest && (old.summary || '') === rec.summary && old.cmd === rec.cmd && old.flags === rec.flags) continue;
+      && old.digest === rec.digest && (old.summary || '') === rec.summary && old.cmd === rec.cmd && old.flags === rec.flags
+      && (old.tabKey || null) === rec.tabKey) continue;
     h[s.claudeSessionId] = { ...rec, at: Date.now() };
     changed = true;
   }
@@ -4514,6 +4517,10 @@ function resumeFromHistory(cwd, f, rec) {
     name: rec && rec.name ? rec.name : undefined,
     named: !!(rec && rec.named),
     color: rec && rec.color ? rec.color : undefined,
+    // Досье вкладки — то же, что было у неё: план в панели виден сразу, правила задачи на месте.
+    // Но не когда этот ключ сейчас носит живая вкладка: после перезапуска по контексту у неё
+    // новый разговор, а старый лежит в истории — делить одно досье на двоих нельзя.
+    tabKey: rec && rec.tabKey && ![...sessions.values()].some((x) => x.tabKey === rec.tabKey) ? rec.tabKey : undefined,
   });
 }
 window.swarm.onHistoryRequest(({ id }) => {
@@ -7945,9 +7952,17 @@ function planFits() {
   return stageEl.clientWidth - planWidth - sideTerm >= PLAN_AGENT_MIN;
 }
 
-function planNode(n) {
+// Подпункты сворачиваются. По умолчанию раскрыта только ветка, где идёт работа (в ней есть [>]):
+// сделанное и будущее видно одной строкой со счётчиком подпунктов. Что человек раскрыл или
+// свернул сам, помним по вкладке и по тексту пути — план перечитывается при каждой правке
+// агента, и без этой памяти дерево схлопывалось бы обратно у него под рукой.
+const planFold = new Map();           // tabId → Map<путь, раскрыт ли>
+function planHasNow(n) { return n.state === 'now' || n.children.some(planHasNow); }
+
+function planNode(n, trail = '') {
   const li = document.createElement('li');
   li.className = n.state;
+  const pathKey = trail + '\u203a' + n.text;
   const row = document.createElement('div');
   row.className = 'pp-row';
   const bx = document.createElement('span');
@@ -7960,8 +7975,25 @@ function planNode(n) {
   li.append(row);
   if (n.children.length) {
     const ul = document.createElement('ul');
-    for (const c of n.children) ul.append(planNode(c));
+    for (const c of n.children) ul.append(planNode(c, pathKey));
     li.append(ul);
+    const sub = document.createElement('span');
+    sub.className = 'pp-sub';
+    sub.textContent = `${n.children.filter((c) => c.state === 'done').length}/${n.children.length}`;
+    const chev = document.createElement('span');
+    chev.className = 'pp-chev';
+    chev.innerHTML = ICONS.chevron;
+    row.append(sub, chev);
+    row.classList.add('has-kids');
+    const tabId = activeId;
+    const mine = planFold.get(tabId);
+    const open = mine && mine.has(pathKey) ? mine.get(pathKey) : planHasNow(n);
+    li.classList.toggle('folded', !open);
+    row.addEventListener('click', () => {
+      const nowOpen = li.classList.toggle('folded') === false;
+      if (!planFold.has(tabId)) planFold.set(tabId, new Map());
+      planFold.get(tabId).set(pathKey, nowOpen);
+    });
   }
   return li;
 }

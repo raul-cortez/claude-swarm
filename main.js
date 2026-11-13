@@ -6496,9 +6496,25 @@ function dossierSaveState(p, st) {
 
 // Seed both files once per tab. The mark starts at creation: everything said from now on is
 // «not yet digested», the brief included.
+// Вкладку закрыли, а потом подняли её разговор из истории (renderer resumeFromHistory отдаёт тот
+// же tabKey): досье за это время могло уехать в архив (dossierSweep, сутки тишины). Возвращаем
+// самую свежую копию на место — иначе вкладка начинала с пустого досье, и план в панели
+// появлялся, только когда агент заново писал его по памяти.
+function dossierUnarchive(dir) {
+  if (fs.existsSync(dir)) return;
+  const arch = path.join(path.dirname(dir), dossier.ARCHIVE);
+  const prefix = path.basename(dir) + '--';
+  let names = [];
+  try { names = fs.readdirSync(arch).filter((n) => n.startsWith(prefix)); } catch (_) { return; }
+  if (!names.length) return;
+  names.sort();                     // штамп ISO в имени — сортировка по строке = по времени
+  try { fs.renameSync(path.join(arch, names[names.length - 1]), dir); } catch (e) { reportMainError(e); }
+}
+
 function dossierEnsure(id, d) {
   if (d.dsReady) return dossierPaths(id, d);
   const p = dossierPaths(id, d);
+  dossierUnarchive(p.dir);
   try {
     fs.mkdirSync(p.dir, { recursive: true });
     const tp = dossier.templates();
