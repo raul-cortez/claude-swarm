@@ -7942,11 +7942,15 @@ const planFile  = document.getElementById('plan-file');
 const planById  = new Map();            // id вкладки → {tree, done, total, nowIndex, at}
 // Вторая секция — вопросы человеку и ответы (main: questions.js). Одна лента, новые сверху.
 const qaFile    = document.getElementById('qa-file');
-const qaList    = planPanel.querySelector('.qa-list');
-const qaById    = new Map();            // id вкладки → {items: [{q, a, at, aAt, src}], waiting, total}
+const qaById    = new Map();            // id вкладки → {items: [{q, a, who, at, aAt, src}], waiting, total}
 const accPlan   = document.getElementById('acc-plan');
-const accQa     = document.getElementById('acc-qa');
-let qaDrawn = '';
+// Две секции вопросов: who — чей вопрос (questions.js). «ждёт» бывает только у вопросов агента.
+const qaSecs = [
+  { name: 'mine',  who: 'person', sec: document.getElementById('acc-mine'),  drawn: '' },
+  { name: 'agent', who: 'agent',  sec: document.getElementById('acc-agent'), drawn: '' },
+];
+for (const s of qaSecs) s.list = s.sec.querySelector('.qa-list');
+const qaAgent = qaSecs[1];
 const PLAN_W_MIN = 220;
 const PLAN_AGENT_MIN = 480;             // уже этого агенту (~60 колонок) не оставляем — панель сворачивается в кнопку
 let planWanted = localStorage.getItem('swarm.planOpen') === '1';
@@ -8027,8 +8031,8 @@ function qaWhen(ms) {
   return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}, ${hhmm(ms)}`;
 }
 
-// Кто спрашивал — в строке времени: «Ты спросил · 14:32», «Агент спросил · 14:32». Ждёт человека
-// только вопрос агента — он и выделен рамкой; свой вопрос без ответа — долг агента, тихо.
+// Кто спрашивал, говорит секция. Ждёт человека только вопрос агента — он и выделен рамкой; свой
+// вопрос без ответа — долг агента, тихо.
 function qaItem(it) {
   const li = document.createElement('li');
   const mine = it.who === 'person';
@@ -8043,26 +8047,30 @@ function qaItem(it) {
   a.textContent = it.a !== null ? it.a : mine ? 'агент ещё не ответил' : 'ждёт ответа';
   const t = document.createElement('div');
   t.className = 't';
-  const when = qaWhen(it.a === null ? it.at : (it.aAt || it.at));
-  t.textContent = (mine ? 'Ты спросил' : 'Агент спросил') + (when ? ' · ' + when : '');
+  t.textContent = qaWhen(it.a === null ? it.at : (it.aAt || it.at));
   li.append(q, a, t);
   return li;
 }
 
-function renderQa(q, open) {
-  accQa.hidden = !q;
+function renderQa(q) {
   qaFile.hidden = !q;
-  if (!q) { qaDrawn = ''; return; }
-  const n = accQa.querySelector('.qa-n');
-  n.innerHTML = q.waiting
-    ? `<span class="wt" title="Показать вопрос, который ждёт ответа">${q.waiting} ждёт</span> · ${q.total}`
-    : String(q.total);
-  if (!open) return;
-  const key = activeId + '|' + JSON.stringify(q.items);
-  if (key === qaDrawn) return;
-  qaDrawn = key;
-  qaList.textContent = '';
-  q.items.forEach((it) => qaList.append(qaItem(it)));
+  for (const s of qaSecs) {
+    const items = q ? q.items.filter((it) => (it.who || 'agent') === s.who) : [];
+    // Пустая секция не показывается: пока никто не спрашивал, ей нечего сказать.
+    s.sec.hidden = !items.length;
+    if (!items.length) { s.drawn = ''; continue; }
+    const waiting = items.filter((it) => it.a === null && s.who === 'agent').length;
+    s.sec.querySelector('.qa-n').innerHTML = waiting
+      ? `<span class="wt" title="Показать вопрос, который ждёт ответа">${waiting} ждёт</span> · ${items.length}`
+      : String(items.length);
+    s.sec.classList.toggle('open', accOpen(s.name));
+    if (!accOpen(s.name)) continue;
+    const key = activeId + '|' + JSON.stringify(items);
+    if (key === s.drawn) continue;
+    s.drawn = key;
+    s.list.textContent = '';
+    items.forEach((it) => s.list.append(qaItem(it)));
+  }
 }
 
 function renderPlan() {
@@ -8076,7 +8084,7 @@ function renderPlan() {
   planPanel.hidden = !open;
   planSplit.hidden = !open;
   planBtn.classList.toggle('is-active', open);
-  if (!has) { planDrawn = ''; qaDrawn = ''; return; }
+  if (!has) { planDrawn = ''; for (const s of qaSecs) s.drawn = ''; return; }
   // Кнопка: счётчик плана и число вопросов, ждущих ответа. Вопросы без ждущих на кнопке не
   // видны, пока есть план, — иначе она росла бы ради того, что уже решено.
   let html = ICONS.panelRight;
@@ -8091,11 +8099,12 @@ function renderPlan() {
   accPlan.hidden = !p;
   planFile.hidden = !p;
   accPlan.classList.toggle('open', accOpen('plan'));
-  accQa.classList.toggle('open', accOpen('qa'));
-  renderQa(q, accOpen('qa'));
+  renderQa(q);
   if (!p) { planDrawn = ''; return; }
   accPlan.querySelector('.pp-n').textContent = `${p.done} из ${p.total}`;
-  planFile.textContent = p.at ? `Файл работы · обновлено ${hhmm(p.at)}` : 'Файл работы';
+  // Коротко: рядом «Файл вопросов», и в узкой панели длинное «обновлено» съедало бы само время.
+  planFile.textContent = p.at ? `Файл работы · ${hhmm(p.at)}` : 'Файл работы';
+  planFile.title = p.at ? `Открыть файл работы — обновлён в ${hhmm(p.at)}` : 'Открыть файл работы';
   const key = activeId + '|' + JSON.stringify(p.tree) + '|' + p.nowIndex;
   if (key === planDrawn) return;
   planDrawn = key;
@@ -8103,14 +8112,14 @@ function renderPlan() {
   p.tree.forEach((n) => planTree.append(planNode(n)));
 }
 
-for (const [name, sec] of [['plan', accPlan], ['qa', accQa]]) {
+for (const [name, sec] of [['plan', accPlan], ...qaSecs.map((s) => [s.name, s.sec])]) {
   const h = sec.querySelector('.acc-h');
   h.addEventListener('click', (e) => {
     // «N ждёт» — не свернуть секцию, а показать ждущий вопрос.
-    if (name === 'qa' && e.target.closest('.wt')) {
-      if (!accOpen('qa')) accToggle('qa', sec);
+    if (name === 'agent' && e.target.closest('.wt')) {
+      if (!accOpen('agent')) accToggle('agent', sec);
       renderPlan();
-      const w = qaList.querySelector('li.wait');
+      const w = qaAgent.list.querySelector('li.wait');
       if (w) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       return;
     }

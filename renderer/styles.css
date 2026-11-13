@@ -4334,7 +4334,7 @@ body.has-plan #digest-strip { padding-right: calc(var(--panel-btn-w, 120px) + 24
 #plan-panel .acc { display: flex; flex-direction: column; min-height: 0; flex: none; border-bottom: 1px solid var(--hairline); }
 #plan-panel .acc[hidden] { display: none; }
 #plan-panel #acc-plan.open { flex: 0 1 auto; }
-#plan-panel #acc-qa.open { flex: 1 1 auto; min-height: 120px; }
+#plan-panel .acc-qa.open { flex: 1 1 auto; min-height: 120px; }
 #plan-panel .acc-h {
   flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px;
   font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer; user-select: none;
@@ -4400,10 +4400,14 @@ body.has-plan #digest-strip { padding-right: calc(var(--panel-btn-w, 120px) + 24
 #plan-panel li.done > .pp-row .bx { background: var(--ready); border-color: var(--ready); color: #0b1a10; }
 #plan-panel li.now > .pp-row .bx { border-color: var(--run); box-shadow: 0 0 0 3px color-mix(in srgb, var(--run) 25%, transparent); }
 #plan-panel li.now > .pp-row { background: color-mix(in srgb, var(--run) 8%, transparent); border-radius: 6px; }
+/* Две кнопки подвала в узкой панели: «Файл вопросов» короткая и не сжимается, а «Файл работы ·
+   обновлено 14:32» уступает место многоточием — иначе вторая уезжала за край и резалась. */
 #plan-panel .pp-f {
-  flex: none; text-align: left; padding: 10px 14px; font-size: 11.5px; color: var(--muted);
+  flex: 0 1 auto; min-width: 0; text-align: left; padding: 10px 14px; font-size: 11.5px; color: var(--muted);
   background: transparent; border: 0; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+#plan-panel #qa-file { flex: none; }
 #plan-panel .pp-f[hidden] { display: none; }
 #plan-panel #qa-file { margin-left: auto; }
 #plan-panel .pp-f:hover { color: var(--text); }

@@ -69,8 +69,14 @@
         <div class="acc-h" role="button" tabindex="0"><span>План</span><span class="n pp-n"></span><span class="cv"></span></div>
         <div class="acc-b"><ul class="pp-tree"></ul></div>
       </section>
-      <section id="acc-qa" class="acc">
-        <div class="acc-h" role="button" tabindex="0"><span>Вопросы</span><span class="n qa-n"></span><span class="cv"></span></div>
+      <!-- Вопросы — две секции: свои вопросы человека с ответами агента и вопросы агента с
+           ответами человека. «ждёт» — только во второй: там ждут человека. -->
+      <section id="acc-mine" class="acc acc-qa">
+        <div class="acc-h" role="button" tabindex="0"><span>Твои вопросы</span><span class="n qa-n"></span><span class="cv"></span></div>
+        <div class="acc-b"><ul class="qa-list"></ul></div>
+      </section>
+      <section id="acc-agent" class="acc acc-qa">
+        <div class="acc-h" role="button" tabindex="0"><span>Вопросы агента</span><span class="n qa-n"></span><span class="cv"></span></div>
         <div class="acc-b"><ul class="qa-list"></ul></div>
       </section>
       <div class="pp-foot">
