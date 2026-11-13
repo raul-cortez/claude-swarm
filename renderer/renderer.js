@@ -221,7 +221,7 @@ const TABSTYLE_CLASSES = [
   'tabs-compact', 'tabs-normal', 'tabs-roomy',
   'status-lane-bg', 'status-lane-border', 'status-lane-stripe', 'status-lane-dot',
   'color-lane-bg', 'color-lane-border', 'color-lane-stripe',
-  'tab-no-ctx', 'tab-no-sub',
+  'tab-no-dot', 'tab-no-ctx', 'tab-no-sub',
 ];
 
 // Restyle every tab card at once: vars on <html>, classes on <body>. No DOM
@@ -2314,6 +2314,15 @@ function showSettingsModal(tab) {
           </div>
           <div class="set-row">
             <label class="set-check">
+              <input type="checkbox" id="set-tab-dot" />
+              <span class="set-check-tx">Точка статуса</span>
+            </label>
+            <button type="button" class="set-q" aria-label="подсказка">?</button>
+            <span class="set-hint" hidden>Цветная точка слева от имени. Без неё статус виден по тому, что выбрано
+              выше, — фону, рамке или полоске. При статусе «только точкой» её не выключить.</span>
+          </div>
+          <div class="set-row">
+            <label class="set-check">
               <input type="checkbox" id="set-tab-ctx" />
               <span class="set-check-tx">Метр контекста</span>
             </label>
@@ -3642,6 +3651,7 @@ function showSettingsModal(tab) {
   const statusSel = overlay.querySelector('#set-tab-status');
   const colorLaneSel = overlay.querySelector('#set-tab-colorlane');
   const showInputs = {
+    dot: overlay.querySelector('#set-tab-dot'),
     ctx: overlay.querySelector('#set-tab-ctx'),
     sub: overlay.querySelector('#set-tab-sub'),
   };
@@ -3832,9 +3842,18 @@ function showSettingsModal(tab) {
       renderTabPreview();
     });
   });
+  // «Только точкой» без точки — статуса не видно вовсе: там галочка стоит и не снимается.
+  function syncDotInput() {
+    const forced = tabDraft.statusLane === 'dot';
+    if (forced) tabDraft.show.dot = true;
+    showInputs.dot.checked = tabDraft.show.dot;
+    showInputs.dot.disabled = forced;
+  }
+  syncDotInput();
   function pickLane(which, lane) {
     Object.assign(tabDraft, TABSTYLE.setLane(tabDraft, which, lane));
     syncLaneSelects();
+    syncDotInput();
     renderTabPreview();
   }
   statusSel.addEventListener('change', () => pickLane('status', statusSel.value));

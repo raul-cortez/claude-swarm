@@ -512,7 +512,10 @@ body.layout-top:not(.status-lane-dot):not(.status-lane-border) #tabs .tab:not(.a
   border-color: color-mix(in srgb, var(--crew) 60%, transparent);
   background: color-mix(in srgb, var(--crew) 12%, var(--tile));
 }
-.tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) .dot { background: transparent; box-shadow: none; }
+/* Точку прораба не красим прозрачной, а убираем: прозрачная держала место, и имя со знаком
+   бригады отъезжало вправо от пустоты. Статус у прораба — пурпур карточки и точки бригады. */
+.tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) .dot { display: none; }
+.tab.is-crew:not(.status-waiting):not(.is-auto):not(.is-geo) .ctx { left: var(--tab-pad-x); }
 
 /* --- развёрнутая бригада: пилюли на месте точек ---------------------------- */
 /* Отдельной ленты рядом с карточкой нет: стрелка в подвале (.crew-toggle) превращает точки в
@@ -636,6 +639,13 @@ body.tabs-compact.layout-rail .tab:not(#set-tab-preview *) .foot,
 
 /* Видимость элементов. У .ctx !important обязателен: updateCtx() снимает атрибут
    hidden, а правило .tab .ctx[hidden] имеет ту же специфичность, что это. */
+body.tab-no-dot .tab:not(#set-tab-preview *) .dot,
+#set-tab-preview.tab-no-dot .tab .dot { display: none; }
+body.tab-no-dot .tab:not(#set-tab-preview *) .ctx,
+#set-tab-preview.tab-no-dot .tab .ctx { left: var(--tab-pad-x); }
+/* Луна ночного режима стоит на месте точки: без точки ночь видна по цвету карточки. */
+body.tab-no-dot .tab.is-auto:not(#set-tab-preview *) .dot-moon,
+#set-tab-preview.tab-no-dot .tab.is-auto .dot-moon { display: none; }
 body.tab-no-ctx .tab:not(#set-tab-preview *) .ctx,
 #set-tab-preview.tab-no-ctx .tab .ctx { display: none !important; }
 body.tab-no-sub .tab:not(#set-tab-preview *) .sub,

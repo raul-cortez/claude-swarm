@@ -46,7 +46,7 @@ test('normalizeTabStyle fills defaults from empty/garbage input', () => {
     assert.strictEqual(s.density, 'normal', String(bad));
     assert.strictEqual(s.statusLane, 'bg', String(bad));
     assert.strictEqual(s.colorLane, 'stripe', String(bad));
-    assert.deepStrictEqual(s.show, { ctx: true, sub: true });
+    assert.deepStrictEqual(s.show, { dot: true, ctx: true, sub: true });
     assert.deepStrictEqual(s.colors, T.DEFAULT_TABSTYLE.colors);
   }
 });
@@ -105,6 +105,21 @@ test('normalizeTabStyle переносит и совсем старые show.dot
   }
 });
 
+// Живой промах 0.83: точку сделали постоянной, и у выбравших «только заливкой» она появилась
+// без способа убрать. Теперь это своя галочка; прежнее «заливкой» переезжает в «без точки».
+test('точка статуса — своя галочка, «заливкой» переезжает в «без точки»', () => {
+  assert.strictEqual(T.normalizeTabStyle({ status: 'fill' }).show.dot, false);
+  assert.strictEqual(T.normalizeTabStyle({ status: 'both' }).show.dot, true);
+  assert.strictEqual(T.normalizeTabStyle({ show: { dot: false, statusFill: true } }).show.dot, false);
+  assert.strictEqual(T.normalizeTabStyle({ statusLane: 'bg', show: { dot: false } }).show.dot, false);
+  assert.ok(T.bodyClasses({ show: { dot: false } }).includes('tab-no-dot'));
+});
+
+test('статус «только точкой» точку не теряет', () => {
+  assert.strictEqual(T.normalizeTabStyle({ statusLane: 'dot', show: { dot: false } }).show.dot, true);
+  assert.strictEqual(T.normalizeTabStyle({ status: 'dot' }).show.dot, true);
+});
+
 test('новое поле statusLane побеждает прежние', () => {
   assert.strictEqual(T.normalizeTabStyle({ statusLane: 'stripe', status: 'dot' }).statusLane, 'stripe');
 });
@@ -152,7 +167,7 @@ test('setLane: любой выбор оставляет разные дорож�
 
 test('снятые настройки больше не возвращаются из нормализации', () => {
   const s = T.normalizeTabStyle({ show: { agents: false, agentOrange: false }, labelSize: 15, subSize: 9 });
-  assert.deepStrictEqual(Object.keys(s.show), ['ctx', 'sub'], 'значок и оранжевый сабагент сняты');
+  assert.deepStrictEqual(Object.keys(s.show), ['dot', 'ctx', 'sub'], 'значок и оранжевый сабагент сняты');
   assert.strictEqual(s.labelSize, undefined, 'размеры несёт пресет плотности');
   assert.strictEqual(s.subSize, undefined);
 });
