@@ -1,57 +1,17 @@
 #!/usr/bin/env python3
-"""Generate build/icon.png (1024) for Swarm — dark console squircle
-with a teal terminal chevron and a row of status dots. Also writes build/icon.ico
-as classic BMP entries (not PNG-compressed) so Wine/rcedit on CI can embed it."""
+"""Svarmo icon: build/icon.svg is the source. build/render-icon.cjs (npx electron) rasterises it
+to build/icon.png (1024); this script turns that PNG into build/icon.ico — classic BMP entries,
+not PNG-compressed, so Wine/rcedit on CI can embed it — and build/icon.icns via iconutil."""
 import os
+import shutil
 import struct
-from PIL import Image, ImageDraw
+import subprocess
+import tempfile
+from PIL import Image
 
-S = 1024
-img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-
-# --- vertical gradient background ------------------------------------------
-grad = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-gd = ImageDraw.Draw(grad)
-top = (27, 32, 39)     # #1b2027
-bot = (13, 15, 18)     # #0d0f12
-for y in range(S):
-    t = y / (S - 1)
-    r = round(top[0] + (bot[0] - top[0]) * t)
-    g = round(top[1] + (bot[1] - top[1]) * t)
-    b = round(top[2] + (bot[2] - top[2]) * t)
-    gd.line([(0, y), (S, y)], fill=(r, g, b, 255))
-
-# rounded-rect mask (Big Sur style: ~96px margin, r~186)
-m = 96
-rect = [m, m, S - m, S - m]
-radius = 186
-mask = Image.new("L", (S, S), 0)
-ImageDraw.Draw(mask).rounded_rectangle(rect, radius=radius, fill=255)
-img.paste(grad, (0, 0), mask)
-
-d = ImageDraw.Draw(img)
-# subtle border
-d.rounded_rectangle(rect, radius=radius, outline=(42, 51, 60, 255), width=3)
-
-# --- teal terminal chevron ❯ ------------------------------------------------
-teal = (63, 208, 201, 255)
-w = 72
-chev = [(430, 352), (612, 470), (430, 588)]
-d.line(chev, fill=teal, width=w, joint="curve")
-# rounded caps
-for (cx, cy) in (chev[0], chev[2]):
-    d.ellipse([cx - w // 2, cy - w // 2, cx + w // 2, cy + w // 2], fill=teal)
-
-# --- status dots row (green / amber / teal) --------------------------------
-dots = [(392, 690, (74, 222, 128)), (512, 690, (224, 165, 63)), (632, 690, (63, 208, 201))]
-rr = 46
-for (cx, cy, col) in dots:
-    d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=col + (255,))
-
-here = os.path.dirname(__file__)
-out = os.path.join(here, "icon.png")
-img.save(out)
-print("wrote", out)
+here = os.path.dirname(os.path.abspath(__file__))
+img = Image.open(os.path.join(here, "icon.png")).convert("RGBA")
+assert img.size == (1024, 1024), f"icon.png должен быть 1024×1024, а он {img.size}"
 
 
 def dib_for(im: Image.Image) -> bytes:
@@ -91,3 +51,21 @@ def write_bmp_ico(path: str, source: Image.Image, sizes=(16, 24, 32, 48, 64, 128
 ico_path = os.path.join(here, "icon.ico")
 write_bmp_ico(ico_path, img)
 print("wrote", ico_path)
+
+
+# macOS: iconutil собирает .icns из папки .iconset со стандартным набором размеров.
+if shutil.which("iconutil"):
+    tmp = tempfile.mkdtemp()
+    iconset = os.path.join(tmp, "icon.iconset")
+    os.mkdir(iconset)
+    for base in (16, 32, 128, 256, 512):
+        for scale in (1, 2):
+            px = base * scale
+            name = f"icon_{base}x{base}{'@2x' if scale == 2 else ''}.png"
+            img.resize((px, px), Image.Resampling.LANCZOS).save(os.path.join(iconset, name))
+    icns_path = os.path.join(here, "icon.icns")
+    subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns_path], check=True)
+    shutil.rmtree(tmp)
+    print("wrote", icns_path)
+else:
+    print("iconutil нет (не macOS) — icon.icns не пересобран")
