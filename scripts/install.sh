@@ -122,8 +122,9 @@ if [ -z "$DEST" ]; then
 fi
 mkdir -p "$DEST"
 
-# Подменять файлы работающего приложения нельзя: оно живёт в них прямо сейчас.
-if pgrep -x Svarmo >/dev/null 2>&1; then
+# Подменять файлы работающего приложения нельзя: оно живёт в них прямо сейчас. До 0.84
+# приложение звалось Swarm — и процесс, и бандл; старую копию тоже надо закрыть, её убираем ниже.
+if pgrep -x Svarmo >/dev/null 2>&1 || pgrep -x Swarm >/dev/null 2>&1; then
   die "Svarmo сейчас запущен — закройте его и повторите"
 fi
 
@@ -156,6 +157,15 @@ rm -rf "$DEST/$name"
 ditto "$app" "$DEST/$name"
 # На всякий случай: если папку назначения когда-то пометили карантином, снимаем.
 xattr -dr com.apple.quarantine "$DEST/$name" >/dev/null 2>&1 || true
+# Старый Swarm.app — то же приложение под прежним именем (настройки у них общие). Оставь его —
+# и в «Программах» две иконки, а запускаться будет то одна, то другая. Убираем, только если это
+# точно он: по идентификатору бандла, а не по одному имени.
+old="$DEST/Swarm.app"
+if [ "$name" != "Swarm.app" ] && [ -d "$old" ] &&
+   [ "$(defaults read "$old/Contents/Info" CFBundleIdentifier 2>/dev/null)" = "io.swarm.claude-swarm-lite" ]; then
+  rm -rf "$old"
+  step "убрал прежнюю копию под старым именем (Swarm.app)"
+fi
 
 printf '\n✔ Готово: %s/%s\n' "$DEST" "$name"
 printf '  Открыть: open "%s/%s"\n' "$DEST" "$name"

@@ -25,11 +25,15 @@ if (process.platform !== 'darwin') {
 }
 
 // Работающее приложение подменять нельзя — оно прямо сейчас выполняется из этих файлов.
-try {
-  execFileSync('/usr/bin/pgrep', ['-x', 'Svarmo'], { stdio: 'ignore' });
+// До 0.84 процесс звался Swarm: старую копию тоже надо закрыть, её убираем ниже.
+for (const proc of ['Svarmo', 'Swarm']) {
+  try {
+    execFileSync('/usr/bin/pgrep', ['-x', proc], { stdio: 'ignore' });
+  } catch (e) {
+    if (e && e.status !== 1) throw e;   // status 1 у pgrep = «не найдено», это и нужно
+    continue;
+  }
   die('Svarmo сейчас запущен — закройте его и повторите');
-} catch (e) {
-  if (e && e.status !== 1) throw e;   // status 1 у pgrep = «не найдено», это и нужно
 }
 
 step('собираю приложение (первый раз дольше — качается Electron)');
@@ -51,6 +55,17 @@ step('ставлю в ' + dest);
 rmSync(target, { recursive: true, force: true });
 // ditto, а не cp: сохраняет подпись и права внутри бандла как есть.
 sh('/usr/bin/ditto', [path.join(outDir, appName), target]);
+// Swarm.app — то же приложение под прежним именем, с общими настройками: рядом с новым оно
+// давало бы две иконки в «Программах». Убираем, только если это точно он — по id бандла.
+const old = path.join(dest, 'Swarm.app');
+if (appName !== 'Swarm.app' && existsSync(old)) {
+  let bid = '';
+  try { bid = execFileSync('/usr/bin/defaults', ['read', path.join(old, 'Contents', 'Info'), 'CFBundleIdentifier'], { encoding: 'utf8' }).trim(); } catch (_) {}
+  if (bid === 'io.swarm.claude-swarm-lite') {
+    rmSync(old, { recursive: true, force: true });
+    step('убрал прежнюю копию под старым именем (Swarm.app)');
+  }
+}
 
 console.log(`\n✔ Готово: ${target}`);
 console.log(`  Открыть: open "${target}"`);

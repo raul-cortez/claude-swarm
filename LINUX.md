@@ -22,13 +22,13 @@ Svarmo появится в меню приложений и как команд�
 
 ### Пакетом для Debian, Ubuntu, Kubuntu, KDE neon
 
-Скачайте `swarm-<версия>-x64.deb` из [релизов](https://github.com/raul-cortez/svarmo/releases/latest)
+Скачайте `svarmo-<версия>-x64.deb` из [релизов](https://github.com/raul-cortez/svarmo/releases/latest)
 и откройте его двойным кликом: поставит Discover или центр приложений. Из терминала то же
 самое делает `sudo apt install ./swarm-*.deb`.
 
 ### AppImage, для остальных дистрибутивов
 
-Скачайте `swarm-<версия>-x64.AppImage` оттуда же, в свойствах файла поставьте галку
+Скачайте `svarmo-<версия>-x64.AppImage` оттуда же, в свойствах файла поставьте галку
 «Исполняемый» и запустите.
 
 Если AppImage не открывается и жалуется на `libfuse.so.2`, поставьте пакет `libfuse2` (на
