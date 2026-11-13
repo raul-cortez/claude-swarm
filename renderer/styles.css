@@ -157,10 +157,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .layout-rail .group-tabs { flex-direction: column; }
 .layout-top  .group-tabs { flex-direction: row; align-items: stretch; }
 .group-head {
-  /* position + левый паддинг — место под ручку переноса (см. .grip): она лежит
-     поверх этого паддинга, поэтому её появление не двигает заголовок. Ширина
-     паддинга та же, что у карточек, так что ручки папки и вкладок стоят на одной
-     вертикали. */
+  /* Левый паддинг тот же, что у карточек: имя папки стоит на одной вертикали с ними.
+     Ручки и стрелки у шапки нет — тянется она вся (см. relayoutTabs). */
   position: relative;
   display: flex;
   align-items: center;
@@ -175,14 +173,8 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
   border-radius: 6px;
 }
 .group-head:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
-/* Стрелка — по наведению на группу (и всегда у свёрнутой: иначе не видно, что она свёрнута).
-   Место под неё держится, чтобы название не прыгало. */
-.group-chev { display: inline-flex; flex: none; opacity: 0; transition: opacity 0.12s ease; }
-.tab-group:hover .group-chev, .tab-group.collapsed .group-chev { opacity: 1; }
 /* Значок папки у названия убран: подложка группы и так говорит, что это папка. */
 .group-name svg { display: none; }
-.group-chev svg { width: 12px; height: 12px; transition: transform 0.15s ease; }
-.tab-group.collapsed .group-chev svg { transform: rotate(-90deg); }
 .group-name { display: inline-flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; }
 .group-count {
   flex: none;
@@ -207,6 +199,13 @@ body.layout-top  { grid-template-columns: 1fr;        grid-template-rows: auto 1
 .group-add svg { width: 13px !important; height: 13px !important; }
 /* Часы прошлых разговоров стоят перед «+» и забирают его auto-отступ: пара жмётся вправо вместе. */
 .group-hist + .group-add { margin-left: 0; }
+/* Тихая шапка: в покое только имя и счётчик, кнопки — по наведению на папку (или когда под
+   «+» открыто меню, иначе оно висело бы под пропавшей кнопкой). Место под них держится. */
+.group-head .group-add { opacity: 0; transition: opacity 0.12s ease; }
+.tab-group:hover .group-head .group-add,
+.group-head .group-add:focus-visible,
+.group-head:has(.group-add.menu-open) .group-add { opacity: 1; }
+.group-head[draggable="true"] { cursor: grabbing; }
 .group-dots { display: none; align-items: center; gap: 4px; margin-left: 2px; }
 /* When dots are shown (collapsed), the "+" no longer eats the auto-margin. */
 .tab-group.collapsed .group-dots { margin-left: auto; }
@@ -746,23 +745,7 @@ body.tab-no-sub .tab:not(#set-tab-preview *) .sub,
   width: var(--tab-pad-x);
   z-index: 2;
 }
-.tab:hover .grip, .group-head:hover .grip { opacity: 1; }
-/* В шапке папки — то же самое, что на карточке, и по той же причине: ручка вне
-   потока поверх левого паддинга, место под неё зарезервировано всегда. Раньше её
-   ширина была нулевой, а на ховере она раздвигала заголовок — то есть шапка
-   ползла в сторону ровно тогда, когда в неё целятся. Заголовков папок мало, но
-   промахнуться по движущейся цели это не помогает.
-   Во время переноса держим ручку видимой: курсор уходит с шапки, и без этого
-   пустой слот папки схлопывался бы прямо посреди drag. */
-.group-head > .grip {
-  position: absolute;
-  left: 0;
-  top: 1px;
-  bottom: 1px;
-  width: var(--tab-pad-x);
-  z-index: 2;
-}
-.tab-group.dragging .group-head > .grip { opacity: 1; }
+.tab:hover .grip { opacity: 1; }
 .grip:hover { color: var(--text); }
 .grip:active { cursor: grabbing; }
 

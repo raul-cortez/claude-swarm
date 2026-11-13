@@ -1164,6 +1164,7 @@ function openLaunchMenu(anchor, cwd, toggle) {
     }
     const close = (val) => {
       launchMenu.classList.add('hidden');
+      anchor.classList.remove('menu-open');
       launchMenuClose = null;
       launchMenuAnchor = null;
       document.removeEventListener('mousedown', outside);
@@ -1177,6 +1178,8 @@ function openLaunchMenu(anchor, cwd, toggle) {
     };
     launchMenuClose = close;
     launchMenuAnchor = anchor;
+    // «+» на шапке папки виден только по наведению — пока под ним меню, он не пропадает.
+    anchor.classList.add('menu-open');
     const outside = (ev) => {
       if (!launchMenu.contains(ev.target) && !anchor.contains(ev.target)) close(null);
     };
@@ -4742,17 +4745,17 @@ function relayoutTabs() {
 
     const head = document.createElement('div');
     head.className = 'group-head';
-    head.title = railMini ? `${folderName} — ${collapsed ? 'развернуть' : 'свернуть'}` : (collapsed ? 'Развернуть' : 'Свернуть');
+    head.title = railMini ? `${folderName} — ${collapsed ? 'развернуть' : 'свернуть'}`
+      : `${collapsed ? 'Развернуть' : 'Свернуть'} — клик, переставить — потянуть`;
     head.dataset.cwd = cwd;
     head.dataset.mini = RAILMINI.folderAbbr(folderName);
-    const grip = document.createElement('span');
-    grip.className = 'grip';
-    grip.title = 'Перетащить папку';
-    grip.innerHTML = ICONS.grip;
-    attachDragHandle(head, grip, () => ({ kind: 'unit', cwd }));
-    const chev = document.createElement('span');
-    chev.className = 'group-chev';
-    chev.innerHTML = ICONS.chevron;
+    // Тихая шапка: ни ручки, ни стрелки. Тянется вся шапка (клик без движения — свернуть), а
+    // свёрнутость и так видна — вместо карточек точки статусов. Часы и «+» — по наведению на
+    // папку (styles.css). Кнопки сами перенос не начинают: нажал «+» и чуть повёл — это клик.
+    head.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('.group-add')) head.draggable = true;
+    });
+    head.addEventListener('dragstart', (e) => startDrag(e, { kind: 'unit', cwd }));
     const nameEl = document.createElement('span');
     nameEl.className = 'group-name';
     setFolderLabel(nameEl, folderName);
@@ -4781,7 +4784,7 @@ function relayoutTabs() {
     hist.title = 'Прошлые разговоры этой папки';
     hist.innerHTML = ICONS.clock;
     hist.addEventListener('click', (e) => { e.stopPropagation(); openHistoryModal(cwd); });
-    head.append(grip, chev, nameEl, count, dots, hist, add);
+    head.append(nameEl, count, dots, hist, add);
     head.addEventListener('click', () => toggleFolder(cwd));
 
     const inner = document.createElement('div');
