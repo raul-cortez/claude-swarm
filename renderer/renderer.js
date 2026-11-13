@@ -8103,7 +8103,7 @@ function renderPlan() {
   if (!p) { planDrawn = ''; return; }
   accPlan.querySelector('.pp-n').textContent = `${p.done} из ${p.total}`;
   // Коротко: рядом «Файл вопросов», и в узкой панели длинное «обновлено» съедало бы само время.
-  planFile.textContent = p.at ? `Файл работы · ${hhmm(p.at)}` : 'Файл работы';
+  planFile.innerHTML = p.at ? `Файл работы <span class="pp-at">· ${hhmm(p.at)}</span>` : 'Файл работы';
   planFile.title = p.at ? `Открыть файл работы — обновлён в ${hhmm(p.at)}` : 'Открыть файл работы';
   const key = activeId + '|' + JSON.stringify(p.tree) + '|' + p.nowIndex;
   if (key === planDrawn) return;

@@ -4408,6 +4408,8 @@ body.has-plan #digest-strip { padding-right: calc(var(--panel-btn-w, 120px) + 24
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #plan-panel #qa-file { flex: none; }
+/* Время обновления — справка, не надпись кнопки: мельче и тише. */
+#plan-panel .pp-f .pp-at { font-size: 10.5px; opacity: .6; }
 #plan-panel .pp-f[hidden] { display: none; }
 #plan-panel #qa-file { margin-left: auto; }
 #plan-panel .pp-f:hover { color: var(--text); }
