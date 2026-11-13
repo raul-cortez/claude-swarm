@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.84.0 — 2026-11-13
+
+- feat: Swarm is now Svarmo — new name and icon; settings and tabs stay where they were
+- fix(rename): installers handle the old Swarm.app; installer names in Linux/Windows docs
+- feat(icon): Svarmo icon — six arrowheads in an even ring, SVG as the source
+- fix(panel): panel button sits on the digest's first line, and below the pult strip
+- feat(panel): questions and answers next to the plan in the right panel
+
 ## 0.83.2 — 2026-11-13
 
 - feat(plan): sub-steps fold in the plan panel
