@@ -10,13 +10,13 @@
        Руками не править: разъехавшись, шапка предложит с первого экрана версию,
        которой уже нет. -->
 <!--DLTOP-->
-  <a href="https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
+  <a href="https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-arm64.dmg"><b>⬇&nbsp;&nbsp;Скачать для macOS</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
+  <a href="https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-x64.exe"><b>⬇&nbsp;&nbsp;Скачать для Windows</b></a>
   &nbsp;·&nbsp;
   <a href="LINUX.md"><b>⬇&nbsp;&nbsp;Скачать для Linux</b></a>
   <br>
-  <sub>v0.84.0 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
+  <sub>v0.84.1 · Apple Silicon · <a href="#установка">macOS: один шаг после скачивания</a></sub>
   <!--/DLTOP-->
 </p>
 
@@ -66,11 +66,11 @@
 ### Образ
 
 <!--DL-->
-**Последняя версия: 0.84.0** · [все релизы](https://github.com/raul-cortez/svarmo/releases)
+**Последняя версия: 0.84.1** · [все релизы](https://github.com/raul-cortez/svarmo/releases)
 
-- **macOS** (Apple Silicon): [`svarmo-0.84.0-arm64.dmg`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-arm64.dmg)
-- **Windows**: [`svarmo-0.84.0-x64.exe`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-x64.exe) — собирается в CI после тега
-- **Linux** (x64): [`svarmo-0.84.0-x64.AppImage`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-x64.AppImage) или [`svarmo-0.84.0-x64.deb`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.0/svarmo-0.84.0-x64.deb) для Debian/Ubuntu/Kubuntu — собираются в CI после тега
+- **macOS** (Apple Silicon): [`svarmo-0.84.1-arm64.dmg`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-arm64.dmg)
+- **Windows**: [`svarmo-0.84.1-x64.exe`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-x64.exe) — собирается в CI после тега
+- **Linux** (x64): [`svarmo-0.84.1-x64.AppImage`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-x64.AppImage) или [`svarmo-0.84.1-x64.deb`](https://github.com/raul-cortez/svarmo/releases/download/v0.84.1/svarmo-0.84.1-x64.deb) для Debian/Ubuntu/Kubuntu — собираются в CI после тега
 <!--/DL-->
 
 > [!WARNING]

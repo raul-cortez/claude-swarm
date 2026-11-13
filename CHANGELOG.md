@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.84.1 — 2026-11-13
+
+- feat(panel): questions as two accordion sections; the footer no longer cuts «Файл вопросов»
+- feat(panel): questions in both directions — the person's questions with the agent's answers too
+
 ## 0.84.0 — 2026-11-13
 
 - feat: Swarm is now Svarmo — new name and icon; settings and tabs stay where they were
