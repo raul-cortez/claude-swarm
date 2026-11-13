@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.83.1 — 2026-11-13
+
+- fix(tabs): status dot is a setting again; foreman card loses the empty dot slot
+- fix(history): find Claude's folder for paths with Cyrillic, spaces or underscores
+
 ## 0.83.0 — 2026-11-12
 
 - feat(tabs): past conversations in a window with search; agent keeps a per-tab summary
