@@ -4287,14 +4287,19 @@ body.layout-rail.rail-mini { grid-template-columns: 64px 1fr; }
    терминал, и он перерисовывается один раз); --plan-live — живая ширина самой панели во
    время перетаскивания, терминал при этом не дёргается. */
 #stage.plan-open { padding-right: var(--plan-w, 300px); }
+/* Кнопка стоит по середине ПЕРВОЙ строки дайджеста: полоска даёт 10px сверху и строку 16.8px,
+   центр — на 18.4px; кнопке в 24px нужен верх в 6px. Так она ровно посередине однострочной
+   полоски и вровень с первой строкой двухстрочной. При пульте полоска дайджеста съезжает на его
+   34px — и кнопка с ней, иначе она садится поверх фишек пульта. Мерено стендом. */
 #plan-btn {
-  position: absolute; top: 8px; right: 14px; z-index: 5;
+  position: absolute; top: 6px; right: 14px; z-index: 5;
   display: inline-flex; align-items: center; gap: 6px;
   height: 24px; padding: 0 9px 0 7px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
   font-size: 11px; box-shadow: 0 2px 8px -3px #000; cursor: pointer;
 }
 #plan-btn[hidden] { display: none; }
+body.pult-on #plan-btn { top: 40px; }
 #plan-btn:hover { color: var(--text); }
 #plan-btn.is-active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 #plan-btn svg { width: 14px; height: 14px; }
